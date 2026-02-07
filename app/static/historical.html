@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Historical Data</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header class="header">
+        <h1 id="symbol-title">Historical Data</h1>
+        <p id="symbol-subtitle">Loading...</p>
+      </header>
+
+      <section class="card history-toolbar">
+        <a href="/" class="back-link">Back To Monitor</a>
+        <div class="row">
+          <button id="refresh-history" type="button" class="secondary">Refresh Historical</button>
+        </div>
+        <div class="status-row">
+          <div><span class="label">Daily credits left</span> <span id="credits-left">-</span></div>
+          <div><span class="label">Credits updated</span> <span id="credits-updated">-</span></div>
+          <div><span class="label">Data source</span> <span id="history-source">-</span></div>
+          <div><span class="label">Range</span> <span id="history-range">-</span></div>
+          <div><span class="label">Points</span> <span id="history-count">-</span></div>
+        </div>
+        <details class="minor-tools">
+          <summary>補助操作</summary>
+          <div class="minor-tools-body">
+            <button id="refresh-credits" type="button" class="minor-action">Refresh Credits</button>
+          </div>
+        </details>
+      </section>
+
+      <section class="card">
+        <div class="chart-actions">
+          <button id="zoom-in" type="button" class="secondary">Zoom In</button>
+          <button id="zoom-out" type="button" class="secondary">Zoom Out</button>
+          <button id="reset-zoom" type="button" class="secondary">Reset Zoom (5Y)</button>
+          <span class="hint">Wheel: zoom / Drag: pan / Hover: date &amp; price</span>
+        </div>
+        <div class="chart-shell">
+          <canvas id="history-canvas"></canvas>
+          <div id="history-tooltip" class="chart-tooltip hidden"></div>
+        </div>
+        <p id="history-meta" class="hint">Loading historical data...</p>
+      </section>
+    </main>
+
+    <script src="/static/historical.js" defer></script>
+  </body>
+</html>
