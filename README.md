@@ -54,7 +54,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 右上の `Pages` ボタンから各ページに遷移できます。
 
 - `/`: US Stock Live Monitor（リアルタイム監視）
-- `/ml-lab`: ML Forecast Lab（将来予測機能の準備ページ）
+- `/ml-lab`: ML Forecast Lab（Quantile LSTMで翌営業日分布を推定）
 - `/strategy-lab`: Strategy Lab（戦略検証の準備ページ）
 - `/historical/{symbol}`: ヒストリカル表示ページ（例: `/historical/AAPL`）
 
@@ -67,6 +67,10 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 5. 下のテーブルの `Symbol` 欄にある `x` を押すと監視対象から除外
 6. テーブルに価格・更新時刻が表示され、取得ソース（`websocket` / `rest` / `stored`）は更新時刻の下に小さく表示
 7. `Refresh Credits` で日次の残APIクレジットを手動更新（`/api_usage` を呼ぶため 1 クレジット消費）
+8. `/ml-lab` では Quantile LSTM を実行し、以下を表示:
+   - 1%〜99%分位点の分位点関数プロット（代表日を複数比較）
+   - ファンチャート（q50, q25-q75, q05-q95, 実測値）
+   - test の平均ピンボール損失 / 被覆率（q05-q95, q25-q75）
 
 補足:
 - 起動時に `/api_usage` を1回呼び、日次残量を初期化します（1クレジット消費）。
@@ -102,9 +106,10 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `GET /api/symbol-catalog`: 検索候補用シンボル一覧（キャッシュ）
 - `GET /api/symbol-catalog?refresh=true`: シンボル一覧を強制再取得
 - `GET /api/historical/{symbol}?years=5`: 過去N年ヒストリカルデータ（デフォルト5年）
+- `GET /api/ml/quantile-lstm?...`: Quantile LSTM を学習・推論し、分位点/評価/描画データを返却
 - `GET /api/stream`: SSE でリアルタイム配信
 - `GET /historical/{symbol}`: ヒストリカル表示専用ページ
-- `GET /ml-lab`: 機械学習ページ（準備用）
+- `GET /ml-lab`: Quantile LSTM 分位点予測ページ
 - `GET /strategy-lab`: 戦略検証ページ（準備用）
 
 ## 注意

@@ -18,6 +18,8 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from .quantile_lstm import run_quantile_lstm_forecast
+
 load_dotenv()
 
 LOGGER = logging.getLogger("market-data-analyzer")
@@ -744,11 +746,39 @@ class MarketDataHub:
             close_raw = item.get("close")
             if not dt or close_raw is None:
                 continue
-            try:
-                close_value = float(close_raw)
-            except (TypeError, ValueError):
+            close_value = self._try_parse_float(close_raw)
+            if close_value is None or close_value <= 0:
                 continue
-            points.append({"t": dt, "c": close_value})
+
+            open_value = self._try_parse_float(item.get("open"))
+            high_value = self._try_parse_float(item.get("high"))
+            low_value = self._try_parse_float(item.get("low"))
+            volume_value = self._try_parse_float(item.get("volume"))
+
+            if open_value is None or open_value <= 0:
+                open_value = close_value
+            if high_value is None or high_value <= 0:
+                high_value = max(open_value, close_value)
+            if low_value is None or low_value <= 0:
+                low_value = min(open_value, close_value)
+
+            high_value = max(high_value, open_value, close_value)
+            low_value = min(low_value, open_value, close_value)
+            if low_value <= 0:
+                low_value = min(open_value, close_value)
+                if low_value <= 0:
+                    low_value = close_value
+
+            points.append(
+                {
+                    "t": dt,
+                    "o": open_value,
+                    "h": high_value,
+                    "l": low_value,
+                    "c": close_value,
+                    "v": volume_value,
+                }
+            )
 
         if not points:
             raise HTTPException(status_code=404, detail="No historical data found for this symbol.")
@@ -1035,6 +1065,59 @@ async def symbol_catalog(refresh: bool = False) -> JSONResponse:
 async def historical(symbol: str, years: int = HISTORICAL_DEFAULT_YEARS, refresh: bool = False) -> JSONResponse:
     payload = await hub.historical_payload(symbol=symbol, years=years, refresh=refresh)
     return JSONResponse({"ok": True, **payload})
+
+
+@app.get("/api/ml/quantile-lstm")
+async def quantile_lstm_forecast(
+    symbol: str,
+    years: int = HISTORICAL_DEFAULT_YEARS,
+    sequence_length: int = 60,
+    hidden_size: int = 64,
+    num_layers: int = 2,
+    dropout: float = 0.2,
+    learning_rate: float = 1e-3,
+    batch_size: int = 64,
+    max_epochs: int = 80,
+    patience: int = 10,
+    representative_days: int = 5,
+    seed: int = 42,
+    refresh: bool = False,
+) -> JSONResponse:
+    historical_data = await hub.historical_payload(symbol=symbol, years=years, refresh=refresh)
+    points = historical_data.get("points")
+    if not isinstance(points, list):
+        raise HTTPException(status_code=502, detail="Unexpected historical payload format.")
+
+    config_payload = {
+        "sequence_length": sequence_length,
+        "hidden_size": hidden_size,
+        "num_layers": num_layers,
+        "dropout": dropout,
+        "learning_rate": learning_rate,
+        "batch_size": batch_size,
+        "max_epochs": max_epochs,
+        "patience": patience,
+        "representative_days": representative_days,
+        "seed": seed,
+    }
+
+    try:
+        model_payload = await asyncio.to_thread(run_quantile_lstm_forecast, points, config_payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        LOGGER.exception("Quantile LSTM training failed for %s", symbol, exc_info=exc)
+        raise HTTPException(status_code=500, detail="Quantile LSTM training failed.") from exc
+
+    return JSONResponse(
+        {
+            "ok": True,
+            "symbol": historical_data.get("symbol"),
+            "years": historical_data.get("years"),
+            "historical_source": historical_data.get("source"),
+            **model_payload,
+        }
+    )
 
 
 @app.get("/api/sparkline")

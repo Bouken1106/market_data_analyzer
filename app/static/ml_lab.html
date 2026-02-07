@@ -21,31 +21,114 @@
             </nav>
           </details>
         </div>
-        <p>将来予測モデルを組み込むための専用ページ（準備段階）</p>
+        <p>Quantile LSTMで翌営業日のリターン分布（1%〜99%分位点）を推定します。</p>
       </header>
 
-      <section class="card page-card">
-        <span class="pill">ML Ready</span>
-        <h2>Forecast Workspace</h2>
-        <p class="hint">
-          今後ここに、予測期間・特徴量セット・モデル種別を設定して予測結果を表示するUIを実装できます。
-        </p>
+      <section class="card">
+        <span class="pill">Quantile LSTM</span>
+        <h2>Forecast Config</h2>
+        <form id="ml-form" class="ml-form">
+          <div class="ml-form-grid">
+            <label>
+              Symbol
+              <input id="ml-symbol" type="text" value="AAPL" placeholder="AAPL" maxlength="15" />
+            </label>
+            <label>
+              Years
+              <input id="ml-years" type="number" value="5" min="1" max="10" />
+            </label>
+            <label>
+              Sequence Length
+              <input id="ml-seq-len" type="number" value="60" min="20" max="240" />
+            </label>
+            <label>
+              Hidden Size
+              <input id="ml-hidden-size" type="number" value="64" min="16" max="256" />
+            </label>
+            <label>
+              Layers
+              <input id="ml-num-layers" type="number" value="2" min="1" max="4" />
+            </label>
+            <label>
+              Dropout
+              <input id="ml-dropout" type="number" value="0.2" min="0" max="0.6" step="0.05" />
+            </label>
+            <label>
+              Epochs
+              <input id="ml-max-epochs" type="number" value="80" min="10" max="400" />
+            </label>
+            <label>
+              Patience
+              <input id="ml-patience" type="number" value="10" min="2" max="80" />
+            </label>
+          </div>
+          <div class="row ml-form-actions">
+            <button id="ml-run-btn" type="submit">Run Quantile LSTM</button>
+            <label class="ml-checkbox">
+              <input id="ml-refresh" type="checkbox" />
+              Force refresh historical data
+            </label>
+          </div>
+        </form>
+        <p id="ml-status" class="hint">設定後に実行してください。</p>
       </section>
 
-      <section class="page-grid">
-        <article class="card page-card">
-          <h3>Model Config</h3>
-          <p class="hint">Ticker / Horizon / Retrain interval / Version 管理</p>
-        </article>
-        <article class="card page-card">
-          <h3>Inference Queue</h3>
-          <p class="hint">推論ジョブの状態表示 (queued / running / completed / failed)</p>
-        </article>
-        <article class="card page-card">
-          <h3>Prediction Output</h3>
-          <p class="hint">予測値・信頼区間・ベースライン比較をチャート表示</p>
-        </article>
+      <section class="card">
+        <h2>Distribution Metrics (Test)</h2>
+        <div class="ml-metric-grid">
+          <div class="risk-item">
+            <span class="label">Mean Pinball Loss</span>
+            <span id="metric-pinball">-</span>
+          </div>
+          <div class="risk-item">
+            <span class="label">Coverage q05-q95</span>
+            <span id="metric-cov90">-</span>
+          </div>
+          <div class="risk-item">
+            <span class="label">Coverage q25-q75</span>
+            <span id="metric-cov50">-</span>
+          </div>
+          <div class="risk-item">
+            <span class="label">Samples (train / val / test)</span>
+            <span id="metric-samples">-</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="ml-section-head">
+          <h2>Quantile Function Plot</h2>
+          <label class="ml-inline-select">
+            <span>Scale</span>
+            <select id="quantile-scale">
+              <option value="returns">Returns</option>
+              <option value="prices">Prices</option>
+            </select>
+          </label>
+        </div>
+        <div class="ml-canvas-shell">
+          <canvas id="quantile-function-canvas" class="ml-canvas" height="340"></canvas>
+        </div>
+        <p id="quantile-legend" class="hint">テスト期間の代表日を表示します。</p>
+      </section>
+
+      <section class="card">
+        <div class="ml-section-head">
+          <h2>Fan Chart</h2>
+          <label class="ml-inline-select">
+            <span>Scale</span>
+            <select id="fan-scale">
+              <option value="returns">Returns</option>
+              <option value="prices">Prices</option>
+            </select>
+          </label>
+        </div>
+        <div class="ml-canvas-shell">
+          <canvas id="fan-chart-canvas" class="ml-canvas" height="360"></canvas>
+        </div>
+        <p id="fan-meta" class="hint">q50（中央値）、50%帯、90%帯、実測値を表示します。</p>
       </section>
     </main>
+    <script src="/static/ml_lab.js"></script>
   </body>
 </html>

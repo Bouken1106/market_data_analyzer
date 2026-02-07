@@ -156,7 +156,9 @@ body {
   flex-wrap: wrap;
 }
 
-input[type="text"] {
+input[type="text"],
+input[type="number"],
+select {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -167,11 +169,14 @@ input[type="text"] {
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-input[type="text"]::placeholder {
+input[type="text"]::placeholder,
+input[type="number"]::placeholder {
   color: #75839a;
 }
 
-input[type="text"]:focus {
+input[type="text"]:focus,
+input[type="number"]:focus,
+select:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(19, 199, 255, 0.18);
@@ -208,6 +213,8 @@ button:disabled {
 
 button:focus-visible,
 input[type="text"]:focus-visible,
+input[type="number"]:focus-visible,
+select:focus-visible,
 .technical-toggle:focus-visible,
 .back-link:focus-visible,
 .page-menu-btn:focus-visible,
@@ -477,6 +484,86 @@ input[type="text"]:focus-visible,
   margin: 2px 0 6px;
 }
 
+.ml-form {
+  margin-top: 8px;
+  display: grid;
+  gap: 12px;
+}
+
+.ml-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+.ml-form-grid label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.84rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ml-form-actions {
+  align-items: center;
+}
+
+.ml-checkbox {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.ml-checkbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+}
+
+.ml-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.ml-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.ml-inline-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.ml-inline-select select {
+  width: auto;
+  min-width: 110px;
+  padding: 8px 10px;
+  font-size: 0.84rem;
+  border-radius: 10px;
+}
+
+.ml-canvas-shell {
+  margin-top: 8px;
+  position: relative;
+}
+
+.ml-canvas {
+  width: 100%;
+  display: block;
+  border: 1px solid #2b3b52;
+  border-radius: 12px;
+  background: #0b111d;
+}
+
 .pill {
   display: inline-block;
   border: 1px solid #2d4868;
@@ -672,6 +759,20 @@ tr.flash {
   .minor-tools-body {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .ml-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ml-section-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .ml-inline-select {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .toolbar-top {
