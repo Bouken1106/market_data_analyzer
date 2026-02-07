@@ -1083,7 +1083,8 @@ async def quantile_lstm_forecast(
     seed: int = 42,
     refresh: bool = False,
 ) -> JSONResponse:
-    historical_data = await hub.historical_payload(symbol=symbol, years=years, refresh=refresh)
+    effective_years = max(5, years)
+    historical_data = await hub.historical_payload(symbol=symbol, years=effective_years, refresh=refresh)
     points = historical_data.get("points")
     if not isinstance(points, list):
         raise HTTPException(status_code=502, detail="Unexpected historical payload format.")
@@ -1113,7 +1114,7 @@ async def quantile_lstm_forecast(
         {
             "ok": True,
             "symbol": historical_data.get("symbol"),
-            "years": historical_data.get("years"),
+            "years": effective_years,
             "historical_source": historical_data.get("source"),
             **model_payload,
         }

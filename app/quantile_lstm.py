@@ -127,7 +127,7 @@ def run_quantile_lstm_forecast(points: list[dict[str, Any]], config_payload: dic
         sequence_length=config.sequence_length,
     )
 
-    split = _split_by_recent_months(target_dates)
+    split = _split_by_recent_months(target_dates, lookback_months=60)
     train_idx = split["train_idx"]
     val_idx = split["val_idx"]
     test_idx = split["test_idx"]
@@ -447,7 +447,7 @@ def _subtract_months(value: date, months: int) -> date:
     return date(year, month, day)
 
 
-def _split_by_recent_months(target_dates: np.ndarray) -> dict[str, np.ndarray]:
+def _split_by_recent_months(target_dates: np.ndarray, lookback_months: int = 60) -> dict[str, np.ndarray]:
     if target_dates.shape[0] < 40:
         raise ValueError("分割に必要なサンプル数が不足しています。")
 
@@ -455,6 +455,7 @@ def _split_by_recent_months(target_dates: np.ndarray) -> dict[str, np.ndarray]:
     if not isinstance(last_date, date):
         raise ValueError("日付データの形式が不正です。")
 
+    window_start = _subtract_months(last_date, max(12, lookback_months))
     test_start = _subtract_months(last_date, 3)
     val_start = _subtract_months(last_date, 6)
 
@@ -462,6 +463,8 @@ def _split_by_recent_months(target_dates: np.ndarray) -> dict[str, np.ndarray]:
     val_idx: list[int] = []
     test_idx: list[int] = []
     for idx, dt in enumerate(target_dates):
+        if dt < window_start:
+            continue
         if dt >= test_start:
             test_idx.append(idx)
         elif dt >= val_start:
