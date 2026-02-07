@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Strategy Lab</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header class="header">
+        <div class="header-top">
+          <h1>Strategy Lab</h1>
+          <details class="page-menu">
+            <summary class="page-menu-btn">Pages</summary>
+            <nav class="page-menu-list" aria-label="Page navigation">
+              <a href="/">US Stock Live Monitor</a>
+              <a href="/ml-lab">ML Forecast Lab</a>
+              <a href="/strategy-lab">Strategy Lab</a>
+              <a href="/historical/AAPL">Historical Chart</a>
+            </nav>
+          </details>
+        </div>
+        <p>将来のバックテストやシグナル評価を収容する拡張ページ</p>
+      </header>
+
+      <section class="page-grid">
+        <article class="card page-card">
+          <h2>Signal Rules</h2>
+          <p class="hint">エントリー/イグジット条件やフィルタを定義する領域</p>
+        </article>
+        <article class="card page-card">
+          <h2>Backtest Summary</h2>
+          <p class="hint">収益率・Sharpe・ドローダウン・勝率などのサマリー表示を想定</p>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

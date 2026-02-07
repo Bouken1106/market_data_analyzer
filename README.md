@@ -39,6 +39,8 @@ HISTORICAL_MAX_YEARS=10
 HISTORICAL_CACHE_TTL_SEC=43200
 HISTORICAL_INTERVAL=1day
 HISTORICAL_MAX_POINTS=2000
+SPARKLINE_CACHE_TTL_SEC=21600
+SPARKLINE_POINTS=30
 ```
 
 ## 起動
@@ -48,6 +50,15 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ブラウザで `http://localhost:8000` を開くと、ダッシュボードが表示されます。
+
+## ページ構成
+
+右上の `Pages` ボタンから各ページに遷移できます。
+
+- `/`: US Stock Live Monitor（リアルタイム監視）
+- `/ml-lab`: ML Forecast Lab（将来予測機能の準備ページ）
+- `/strategy-lab`: Strategy Lab（戦略検証の準備ページ）
+- `/historical/{symbol}`: ヒストリカル表示ページ（例: `/historical/AAPL`）
 
 ## 使い方
 
@@ -93,8 +104,11 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `GET /api/symbol-catalog`: 検索候補用シンボル一覧（キャッシュ）
 - `GET /api/symbol-catalog?refresh=true`: シンボル一覧を強制再取得
 - `GET /api/historical/{symbol}?years=5`: 過去N年ヒストリカルデータ（デフォルト5年）
+- `GET /api/sparkline?symbols=AAPL,MSFT`: 前日終値と30日トレンド（小型グラフ用）
 - `GET /api/stream`: SSE でリアルタイム配信
 - `GET /historical/{symbol}`: ヒストリカル表示専用ページ
+- `GET /ml-lab`: 機械学習ページ（準備用）
+- `GET /strategy-lab`: 戦略検証ページ（準備用）
 
 ## 注意
 

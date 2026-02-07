@@ -64,6 +64,8 @@ HISTORICAL_MAX_YEARS = _int_env("HISTORICAL_MAX_YEARS", default=10, minimum=1)
 HISTORICAL_CACHE_TTL_SEC = _int_env("HISTORICAL_CACHE_TTL_SEC", default=43200, minimum=60)
 HISTORICAL_INTERVAL = os.getenv("HISTORICAL_INTERVAL", "1day").strip() or "1day"
 HISTORICAL_MAX_POINTS = _int_env("HISTORICAL_MAX_POINTS", default=2000, minimum=100)
+SPARKLINE_CACHE_TTL_SEC = _int_env("SPARKLINE_CACHE_TTL_SEC", default=21600, minimum=300)
+SPARKLINE_POINTS = _int_env("SPARKLINE_POINTS", default=30, minimum=10)
 
 
 def normalize_symbols(raw: str | list[str]) -> list[str]:
@@ -390,6 +392,8 @@ class MarketDataHub:
         self._credits_lock = asyncio.Lock()
         self._historical_cache: dict[tuple[str, int], dict[str, Any]] = {}
         self._historical_lock = asyncio.Lock()
+        self._sparkline_cache: dict[str, dict[str, Any]] = {}
+        self._sparkline_lock = asyncio.Lock()
 
     async def start(self) -> None:
         await self._hydrate_prices_from_store(self.symbols)
@@ -768,6 +772,105 @@ class MarketDataHub:
 
         return historical_payload
 
+    async def sparkline_payload(self, symbols: list[str], refresh: bool = False) -> list[dict[str, Any]]:
+        target_symbols = normalize_symbols(symbols)
+        if not target_symbols:
+            return []
+
+        items_by_symbol: dict[str, dict[str, Any]] = {}
+        missing_symbols: list[str] = []
+
+        async with self._sparkline_lock:
+            for symbol in target_symbols:
+                cached = self._sparkline_cache.get(symbol)
+                if (
+                    cached
+                    and not refresh
+                    and (time.time() - float(cached.get("cached_epoch", 0.0))) <= SPARKLINE_CACHE_TTL_SEC
+                ):
+                    items_by_symbol[symbol] = dict(cached["payload"])
+                else:
+                    missing_symbols.append(symbol)
+
+        if missing_symbols:
+            timeout = httpx.Timeout(20.0, connect=10.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                for symbol in missing_symbols:
+                    item = await self._fetch_sparkline_item(client, symbol)
+                    if not item:
+                        continue
+                    items_by_symbol[symbol] = item
+                    async with self._sparkline_lock:
+                        self._sparkline_cache[symbol] = {
+                            "cached_epoch": time.time(),
+                            "payload": item,
+                        }
+
+        return [items_by_symbol[symbol] for symbol in target_symbols if symbol in items_by_symbol]
+
+    async def _fetch_sparkline_item(self, client: httpx.AsyncClient, symbol: str) -> dict[str, Any] | None:
+        try:
+            response = await client.get(
+                TIME_SERIES_URL,
+                params={
+                    "apikey": self.api_key,
+                    "symbol": symbol,
+                    "interval": "1day",
+                    "order": "DESC",
+                    "outputsize": max(SPARKLINE_POINTS + 2, 32),
+                },
+            )
+            payload = response.json()
+        except Exception as exc:
+            LOGGER.warning("Sparkline fetch failed for %s: %s", symbol, exc)
+            return None
+
+        async with self._credits_lock:
+            await self._update_minute_credits_from_response(response)
+            await self._consume_daily_credit_estimate(1, source=f"sparkline:{symbol}")
+
+        if isinstance(payload, dict) and payload.get("status") == "error":
+            LOGGER.warning("Sparkline API error for %s: %s", symbol, payload.get("message"))
+            return None
+
+        raw_values = payload.get("values") if isinstance(payload, dict) else None
+        if not isinstance(raw_values, list):
+            return None
+
+        values: list[tuple[str, float]] = []
+        for item in raw_values:
+            if not isinstance(item, dict):
+                continue
+            dt = str(item.get("datetime", "")).strip()
+            close_value = self._try_parse_float(item.get("close"))
+            if not dt or close_value is None:
+                continue
+            values.append((dt, close_value))
+
+        if len(values) < 2:
+            return None
+
+        today_iso = date.today().isoformat()
+        start_index = 1 if values[0][0].startswith(today_iso) and len(values) >= 2 else 0
+        completed = values[start_index:]
+        if len(completed) < 2:
+            return None
+
+        previous_close = completed[0][1]
+        recent_desc = completed[:SPARKLINE_POINTS]
+        recent_asc = list(reversed(recent_desc))
+
+        trend_values = [point[1] for point in recent_asc]
+        return {
+            "symbol": symbol,
+            "previous_close": previous_close,
+            "trend_30d": trend_values,
+            "trend_from": recent_asc[0][0],
+            "trend_to": recent_asc[-1][0],
+            "points": len(trend_values),
+            "source": "twelvedata-live",
+        }
+
     async def _update_minute_credits_from_response(self, response: httpx.Response) -> None:
         used_value = self._try_parse_int(response.headers.get("api-credits-used"))
         left_value = self._try_parse_int(response.headers.get("api-credits-left"))
@@ -822,6 +925,13 @@ class MarketDataHub:
         except (TypeError, ValueError):
             return None
 
+    @staticmethod
+    def _try_parse_float(value: Any) -> float | None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
 
 API_KEY = os.getenv("TWELVE_DATA_API_KEY", "").strip()
 DEFAULT_SYMBOLS = normalize_symbols(
@@ -862,6 +972,16 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 @app.get("/", include_in_schema=False)
 async def root() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/ml-lab", include_in_schema=False)
+async def ml_lab_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "ml_lab.html")
+
+
+@app.get("/strategy-lab", include_in_schema=False)
+async def strategy_lab_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "strategy_lab.html")
 
 
 @app.get("/historical/{symbol}", include_in_schema=False)
@@ -915,6 +1035,24 @@ async def symbol_catalog(refresh: bool = False) -> JSONResponse:
 async def historical(symbol: str, years: int = HISTORICAL_DEFAULT_YEARS, refresh: bool = False) -> JSONResponse:
     payload = await hub.historical_payload(symbol=symbol, years=years, refresh=refresh)
     return JSONResponse({"ok": True, **payload})
+
+
+@app.get("/api/sparkline")
+async def sparkline(symbols: str, refresh: bool = False) -> JSONResponse:
+    target_symbols = normalize_symbols(symbols)
+    if not target_symbols:
+        raise HTTPException(status_code=400, detail="At least one valid symbol is required.")
+    if len(target_symbols) > MAX_BASIC_SYMBOLS:
+        raise HTTPException(status_code=400, detail=f"You can request up to {MAX_BASIC_SYMBOLS} symbols at once.")
+
+    items = await hub.sparkline_payload(target_symbols, refresh=refresh)
+    return JSONResponse(
+        {
+            "ok": True,
+            "symbols": target_symbols,
+            "items": items,
+        }
+    )
 
 
 @app.get("/api/stream")

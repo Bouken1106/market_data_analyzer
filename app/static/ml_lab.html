@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ML Forecast Lab</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header class="header">
+        <div class="header-top">
+          <h1>ML Forecast Lab</h1>
+          <details class="page-menu">
+            <summary class="page-menu-btn">Pages</summary>
+            <nav class="page-menu-list" aria-label="Page navigation">
+              <a href="/">US Stock Live Monitor</a>
+              <a href="/ml-lab">ML Forecast Lab</a>
+              <a href="/strategy-lab">Strategy Lab</a>
+              <a href="/historical/AAPL">Historical Chart</a>
+            </nav>
+          </details>
+        </div>
+        <p>将来予測モデルを組み込むための専用ページ（準備段階）</p>
+      </header>
+
+      <section class="card page-card">
+        <span class="pill">ML Ready</span>
+        <h2>Forecast Workspace</h2>
+        <p class="hint">
+          今後ここに、予測期間・特徴量セット・モデル種別を設定して予測結果を表示するUIを実装できます。
+        </p>
+      </section>
+
+      <section class="page-grid">
+        <article class="card page-card">
+          <h3>Model Config</h3>
+          <p class="hint">Ticker / Horizon / Retrain interval / Version 管理</p>
+        </article>
+        <article class="card page-card">
+          <h3>Inference Queue</h3>
+          <p class="hint">推論ジョブの状態表示 (queued / running / completed / failed)</p>
+        </article>
+        <article class="card page-card">
+          <h3>Prediction Output</h3>
+          <p class="hint">予測値・信頼区間・ベースライン比較をチャート表示</p>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>

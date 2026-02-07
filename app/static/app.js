@@ -16,6 +16,10 @@ const MAX_SYMBOLS = 8;
 const MAX_DROPDOWN_ITEMS = 120;
 
 const rowsBySymbol = new Map();
+const latestRowsBySymbol = new Map();
+const symbolInsightsBySymbol = new Map();
+const sparklineFetchInFlight = new Set();
+
 let eventSource;
 let symbolCatalog = [];
 let selectedSymbols = [];
@@ -56,6 +60,11 @@ function formatTime(value) {
   return date.toLocaleTimeString("ja-JP", { hour12: false });
 }
 
+function formatChangePercent(value) {
+  if (!Number.isFinite(value)) return "-";
+  return `${Math.abs(value).toFixed(2)}%`;
+}
+
 function setSelectionError(message) {
   selectionErrorEl.textContent = message || "";
 }
@@ -85,6 +94,64 @@ function goHistorical(symbol) {
   window.location.href = `/historical/${encodeURIComponent(symbol)}`;
 }
 
+function renderSparklineSvg(values) {
+  const points = (Array.isArray(values) ? values : [])
+    .map((item) => Number(item))
+    .filter((num) => Number.isFinite(num));
+
+  if (points.length < 2) {
+    return '<span class="sparkline-empty">-</span>';
+  }
+
+  const width = 100;
+  const height = 16;
+  const pad = 1;
+  let min = Math.min(...points);
+  let max = Math.max(...points);
+  if (min === max) {
+    min -= 1;
+    max += 1;
+  }
+
+  const coords = points
+    .map((value, index) => {
+      const x = pad + ((index / Math.max(points.length - 1, 1)) * (width - (pad * 2)));
+      const ratio = (value - min) / (max - min);
+      const y = (height - pad) - (ratio * (height - (pad * 2)));
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+
+  return `<svg class="sparkline-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true"><polyline fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" points="${coords}"></polyline></svg>`;
+}
+
+function applyInsightToRow(tr, symbol, priceValue) {
+  const changeEl = tr.querySelector(".change");
+  const sparklineEl = tr.querySelector(".sparkline");
+  const insight = symbolInsightsBySymbol.get(symbol);
+
+  changeEl.classList.remove("up", "down");
+
+  const currentPrice = Number(priceValue);
+  const previousClose = Number(insight?.previous_close);
+  if (Number.isFinite(currentPrice) && Number.isFinite(previousClose) && previousClose > 0) {
+    const pct = ((currentPrice - previousClose) / previousClose) * 100;
+    if (pct > 0) {
+      changeEl.classList.add("up");
+      changeEl.textContent = `▲ ${formatChangePercent(pct)}`;
+    } else if (pct < 0) {
+      changeEl.classList.add("down");
+      changeEl.textContent = `▼ ${formatChangePercent(pct)}`;
+    } else {
+      changeEl.textContent = formatChangePercent(0);
+    }
+  } else {
+    changeEl.textContent = "-";
+  }
+
+  sparklineEl.innerHTML = renderSparklineSvg(insight?.trend_30d ?? []);
+}
+
 function ensureRow(symbol) {
   if (rowsBySymbol.has(symbol)) {
     return rowsBySymbol.get(symbol);
@@ -100,6 +167,8 @@ function ensureRow(symbol) {
       </div>
     </td>
     <td class="price">-</td>
+    <td class="change">-</td>
+    <td class="sparkline-cell"><div class="sparkline"><span class="sparkline-empty">-</span></div></td>
     <td class="updated-cell">
       <div class="time">-</div>
       <div class="source-meta">source: -</div>
@@ -127,23 +196,104 @@ function refreshRowActionState() {
   }
 }
 
-function renderRow(update) {
-  const tr = ensureRow(update.symbol);
-  tr.querySelector(".price").textContent = formatPrice(update.price);
-  tr.querySelector(".time").textContent = formatTime(update.timestamp);
-  tr.querySelector(".source-meta").textContent = `source: ${update.source || "-"}`;
+function renderRow(update, options = {}) {
+  const symbol = normalizeSymbol(update?.symbol);
+  if (!symbol) return;
 
-  tr.classList.remove("flash");
-  void tr.offsetWidth;
-  tr.classList.add("flash");
+  const normalizedUpdate = {
+    symbol,
+    price: update?.price ?? null,
+    timestamp: update?.timestamp ?? null,
+    source: update?.source ?? null,
+  };
+
+  latestRowsBySymbol.set(symbol, normalizedUpdate);
+
+  const tr = ensureRow(symbol);
+  tr.querySelector(".price").textContent = formatPrice(normalizedUpdate.price);
+  tr.querySelector(".time").textContent = formatTime(normalizedUpdate.timestamp);
+  tr.querySelector(".source-meta").textContent = `source: ${normalizedUpdate.source || "-"}`;
+  applyInsightToRow(tr, symbol, normalizedUpdate.price);
+
+  if (options.flash !== false) {
+    tr.classList.remove("flash");
+    void tr.offsetWidth;
+    tr.classList.add("flash");
+  }
 
   refreshRowActionState();
 }
 
+function refreshRowsForInsights(symbols) {
+  const targets = uniqueSymbols(symbols);
+  targets.forEach((symbol) => {
+    const tr = rowsBySymbol.get(symbol);
+    if (!tr) return;
+    const latest = latestRowsBySymbol.get(symbol);
+    if (latest) {
+      renderRow(latest, { flash: false });
+      return;
+    }
+    applyInsightToRow(tr, symbol, null);
+  });
+}
+
+async function loadSymbolInsights(symbols, refresh = false) {
+  const targets = uniqueSymbols(symbols)
+    .slice(0, MAX_SYMBOLS)
+    .filter((symbol) => refresh || !symbolInsightsBySymbol.has(symbol))
+    .filter((symbol) => !sparklineFetchInFlight.has(symbol));
+
+  if (targets.length === 0) {
+    refreshRowsForInsights(symbols);
+    return;
+  }
+
+  targets.forEach((symbol) => sparklineFetchInFlight.add(symbol));
+
+  try {
+    const params = new URLSearchParams({ symbols: targets.join(",") });
+    if (refresh) {
+      params.set("refresh", "true");
+    }
+
+    const response = await fetch(`/api/sparkline?${params.toString()}`);
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !Array.isArray(result.items)) {
+      return;
+    }
+
+    result.items.forEach((item) => {
+      const symbol = normalizeSymbol(item?.symbol);
+      if (!symbol) return;
+
+      const previousClose = Number(item?.previous_close);
+      const trend = (Array.isArray(item?.trend_30d) ? item.trend_30d : [])
+        .map((point) => Number(point))
+        .filter((num) => Number.isFinite(num));
+
+      symbolInsightsBySymbol.set(symbol, {
+        previous_close: Number.isFinite(previousClose) ? previousClose : null,
+        trend_30d: trend,
+      });
+    });
+  } catch (_error) {
+    // Keep market rows functional even if sparkline fetch fails.
+  } finally {
+    targets.forEach((symbol) => sparklineFetchInFlight.delete(symbol));
+  }
+
+  refreshRowsForInsights(symbols);
+}
+
 function resetRows(symbols) {
   rowsBySymbol.clear();
+  latestRowsBySymbol.clear();
   tableBody.innerHTML = "";
-  symbols.forEach((symbol) => ensureRow(symbol));
+  symbols.forEach((symbol) => {
+    const tr = ensureRow(symbol);
+    applyInsightToRow(tr, symbol, null);
+  });
   refreshRowActionState();
 }
 
@@ -151,7 +301,7 @@ function renderRows(rows, fallbackSymbols = []) {
   const safeRows = Array.isArray(rows) ? rows : [];
   const symbols = safeRows.length > 0 ? safeRows.map((row) => row.symbol) : fallbackSymbols;
   resetRows(symbols);
-  safeRows.forEach((row) => renderRow(row));
+  safeRows.forEach((row) => renderRow(row, { flash: false }));
 }
 
 function applySymbolsFromServer(symbols) {
@@ -264,6 +414,7 @@ async function updateSymbolsOnServer() {
       const serverSymbols = Array.isArray(result.symbols) ? result.symbols : payloadSymbols;
       renderRows(result.rows, serverSymbols);
       applySymbolsFromServer(serverSymbols);
+      await loadSymbolInsights(serverSymbols, false);
     } while (syncQueued);
   } finally {
     syncInFlight = false;
@@ -346,6 +497,7 @@ function handleEvent(event) {
     renderRows(rows, symbols);
     setStatus(payload.data?.status ?? {});
     applySymbolsFromServer(symbols);
+    void loadSymbolInsights(symbols, false);
     return;
   }
 
@@ -358,6 +510,7 @@ function handleEvent(event) {
     const symbols = payload.data?.symbols ?? [];
     renderRows(payload.data?.rows ?? [], symbols);
     applySymbolsFromServer(symbols);
+    void loadSymbolInsights(symbols, false);
     return;
   }
 

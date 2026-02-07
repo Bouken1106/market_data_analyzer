@@ -3,19 +3,29 @@ const CHART_HEIGHT = 320;
 const ZOOM_MIN_POINTS = 20;
 const ZOOM_IN_FACTOR = 0.8;
 const ZOOM_OUT_FACTOR = 1.25;
+const CHART_COLORS = {
+  placeholderBg: "#0f1726",
+  placeholderText: "#8fa1bb",
+  canvasBg: "#0a121f",
+  axis: "#324158",
+  grid: "#1d2a3c",
+  line: "#13c7ff",
+  label: "#9cadc4",
+  crosshair: "#4f6e8d",
+  point: "#13c7ff",
+};
 
 const symbolTitleEl = document.getElementById("symbol-title");
 const symbolSubtitleEl = document.getElementById("symbol-subtitle");
+const backBtn = document.getElementById("go-back");
 const refreshHistoryBtn = document.getElementById("refresh-history");
-const refreshCreditsBtn = document.getElementById("refresh-credits");
 const zoomInBtn = document.getElementById("zoom-in");
 const zoomOutBtn = document.getElementById("zoom-out");
 const resetZoomBtn = document.getElementById("reset-zoom");
-const creditsLeftEl = document.getElementById("credits-left");
-const creditsUpdatedEl = document.getElementById("credits-updated");
-const historySourceEl = document.getElementById("history-source");
-const historyRangeEl = document.getElementById("history-range");
-const historyCountEl = document.getElementById("history-count");
+const currentPriceEl = document.getElementById("current-price");
+const riskVol30El = document.getElementById("risk-vol30");
+const riskDd30El = document.getElementById("risk-dd30");
+const riskVar95El = document.getElementById("risk-var95");
 const historyMetaEl = document.getElementById("history-meta");
 const historyCanvas = document.getElementById("history-canvas");
 const historyTooltipEl = document.getElementById("history-tooltip");
@@ -35,13 +45,6 @@ const chartState = {
   renderInfo: null,
 };
 
-function formatTime(value) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return date.toLocaleTimeString("ja-JP", { hour12: false });
-}
-
 function formatPrice(value) {
   const num = Number(value);
   if (!Number.isFinite(num)) {
@@ -55,18 +58,86 @@ function setHistoryMeta(message, isError = false) {
   historyMetaEl.classList.toggle("error", Boolean(isError));
 }
 
-function setCredits(status) {
-  const dailyLeft = status?.daily_credits_left;
-  const dailyLimit = status?.daily_credits_limit;
-  const isEstimated = Boolean(status?.daily_credits_is_estimated);
-  if (dailyLeft === null || dailyLeft === undefined) {
-    creditsLeftEl.textContent = "-";
-  } else if (dailyLimit === null || dailyLimit === undefined) {
-    creditsLeftEl.textContent = `${dailyLeft}${isEstimated ? " (est)" : ""}`;
-  } else {
-    creditsLeftEl.textContent = `${dailyLeft} / ${dailyLimit}${isEstimated ? " (est)" : ""}`;
+function formatPercent(value) {
+  if (!Number.isFinite(value)) return "-";
+  return `${value.toFixed(2)}%`;
+}
+
+function setCurrentPrice(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    currentPriceEl.textContent = "-";
+    return;
   }
-  creditsUpdatedEl.textContent = formatTime(status?.daily_credits_updated_at);
+  currentPriceEl.textContent = `$${formatPrice(num)}`;
+}
+
+function quantile(sortedValues, q) {
+  if (!Array.isArray(sortedValues) || sortedValues.length === 0) return null;
+  const clamped = Math.min(1, Math.max(0, q));
+  const pos = (sortedValues.length - 1) * clamped;
+  const low = Math.floor(pos);
+  const high = Math.ceil(pos);
+  if (low === high) return sortedValues[low];
+  const weight = pos - low;
+  return sortedValues[low] * (1 - weight) + (sortedValues[high] * weight);
+}
+
+function setRiskMetrics(points) {
+  const closes = (Array.isArray(points) ? points : [])
+    .map((item) => Number(item?.c))
+    .filter((num) => Number.isFinite(num));
+
+  if (closes.length < 3) {
+    riskVol30El.textContent = "-";
+    riskDd30El.textContent = "-";
+    riskVar95El.textContent = "-";
+    if (closes.length > 0) {
+      setCurrentPrice(closes[closes.length - 1]);
+    }
+    return;
+  }
+
+  setCurrentPrice(closes[closes.length - 1]);
+
+  const returns = [];
+  for (let index = 1; index < closes.length; index += 1) {
+    const prev = closes[index - 1];
+    const curr = closes[index];
+    if (prev <= 0) continue;
+    returns.push((curr / prev) - 1);
+  }
+
+  const recentReturns = returns.slice(-30);
+  if (recentReturns.length >= 2) {
+    const mean = recentReturns.reduce((acc, value) => acc + value, 0) / recentReturns.length;
+    const variance = recentReturns.reduce((acc, value) => acc + ((value - mean) ** 2), 0) / (recentReturns.length - 1);
+    const annualizedVol = Math.sqrt(Math.max(0, variance)) * Math.sqrt(252) * 100;
+    riskVol30El.textContent = formatPercent(annualizedVol);
+
+    const sortedReturns = [...recentReturns].sort((a, b) => a - b);
+    const p05 = quantile(sortedReturns, 0.05);
+    const var95 = Number.isFinite(p05) ? Math.max(0, -p05 * 100) : null;
+    riskVar95El.textContent = formatPercent(var95);
+  } else {
+    riskVol30El.textContent = "-";
+    riskVar95El.textContent = "-";
+  }
+
+  const closes30 = closes.slice(-30);
+  if (closes30.length >= 2) {
+    let peak = closes30[0];
+    let maxDrawdown = 0;
+    for (const close of closes30) {
+      peak = Math.max(peak, close);
+      if (peak <= 0) continue;
+      const drawdown = ((peak - close) / peak) * 100;
+      maxDrawdown = Math.max(maxDrawdown, drawdown);
+    }
+    riskDd30El.textContent = formatPercent(maxDrawdown);
+  } else {
+    riskDd30El.textContent = "-";
+  }
 }
 
 function fitCanvas(canvas, cssHeight = CHART_HEIGHT) {
@@ -116,9 +187,9 @@ function showTooltip(index, x, y, chartWidth, chartHeight) {
 function drawPlaceholder(message) {
   const { ctx, width, height } = fitCanvas(historyCanvas, CHART_HEIGHT);
   ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = "#eef3ef";
+  ctx.fillStyle = CHART_COLORS.placeholderBg;
   ctx.fillRect(0, 0, width, height);
-  ctx.fillStyle = "#66737d";
+  ctx.fillStyle = CHART_COLORS.placeholderText;
   ctx.font = "14px sans-serif";
   ctx.textAlign = "center";
   ctx.fillText(message, width / 2, height / 2);
@@ -189,7 +260,7 @@ function drawChartFromState() {
 
   const { ctx, width, height } = fitCanvas(historyCanvas, CHART_HEIGHT);
   ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = "#fbfcfa";
+  ctx.fillStyle = CHART_COLORS.canvasBg;
   ctx.fillRect(0, 0, width, height);
 
   const left = 64;
@@ -224,7 +295,7 @@ function drawChartFromState() {
   const xFromIndex = (index) => left + (((index - chartState.viewportStart) / viewSpan) * plotWidth);
   const yFromValue = (value) => bottom - ((value - min) * yScale);
 
-  ctx.strokeStyle = "#d9e0d7";
+  ctx.strokeStyle = CHART_COLORS.axis;
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(left, top);
@@ -232,7 +303,7 @@ function drawChartFromState() {
   ctx.lineTo(right, bottom);
   ctx.stroke();
 
-  ctx.strokeStyle = "#e8eee7";
+  ctx.strokeStyle = CHART_COLORS.grid;
   ctx.lineWidth = 1;
   for (let step = 1; step <= 3; step += 1) {
     const y = top + ((plotHeight / 4) * step);
@@ -242,7 +313,7 @@ function drawChartFromState() {
     ctx.stroke();
   }
 
-  ctx.strokeStyle = "#1d6f62";
+  ctx.strokeStyle = CHART_COLORS.line;
   ctx.lineWidth = 2;
   ctx.beginPath();
   let started = false;
@@ -264,7 +335,7 @@ function drawChartFromState() {
     ctx.stroke();
   }
 
-  ctx.fillStyle = "#55626f";
+  ctx.fillStyle = CHART_COLORS.label;
   ctx.font = "12px sans-serif";
   ctx.textAlign = "left";
   ctx.fillText(formatPrice(max), 8, top + 6);
@@ -288,14 +359,14 @@ function drawChartFromState() {
       const hoverX = xFromIndex(hoverIndex);
       const hoverY = yFromValue(hoverValue);
 
-      ctx.strokeStyle = "#6b8793";
+      ctx.strokeStyle = CHART_COLORS.crosshair;
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(hoverX, top);
       ctx.lineTo(hoverX, bottom);
       ctx.stroke();
 
-      ctx.fillStyle = "#1d6f62";
+      ctx.fillStyle = CHART_COLORS.point;
       ctx.beginPath();
       ctx.arc(hoverX, hoverY, 4, 0, Math.PI * 2);
       ctx.fill();
@@ -434,13 +505,25 @@ function endDrag() {
   historyCanvas.classList.remove("dragging");
 }
 
-async function loadCredits(refresh = false) {
-  const response = await fetch(refresh ? "/api/credits?refresh=true" : "/api/credits");
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok || !result.status) {
+async function loadCurrentPrice() {
+  if (!currentSymbol) {
     return;
   }
-  setCredits(result.status);
+  try {
+    const response = await fetch("/api/snapshot");
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return;
+    }
+    const rows = Array.isArray(result?.data?.rows) ? result.data.rows : [];
+    const row = rows.find((item) => String(item?.symbol || "").toUpperCase() === currentSymbol);
+    if (!row) {
+      return;
+    }
+    setCurrentPrice(row.price);
+  } catch (_error) {
+    // Keep chart and risk metrics usable even if snapshot fetch fails.
+  }
 }
 
 async function loadHistorical(refresh = false) {
@@ -464,14 +547,12 @@ async function loadHistorical(refresh = false) {
     }
 
     currentPayload = result;
-    historySourceEl.textContent = result.source || "-";
-    historyRangeEl.textContent = `${result.from} - ${result.to}`;
-    historyCountEl.textContent = String(result.count ?? "-");
     symbolSubtitleEl.textContent = `${result.years}Y ${result.interval} (${result.from} - ${result.to})`;
     setHistoryMeta("Loaded historical data.");
     chartState.hoveredIndex = null;
     applyPayloadToChart(result, true);
-    await loadCredits(false);
+    setRiskMetrics(result.points);
+    await loadCurrentPrice();
   } finally {
     refreshHistoryBtn.disabled = false;
   }
@@ -484,17 +565,16 @@ function getSymbolFromPath() {
   return decodeURIComponent(parts[1] || "").trim().toUpperCase();
 }
 
-refreshHistoryBtn.addEventListener("click", async () => {
-  await loadHistorical(true);
+backBtn.addEventListener("click", () => {
+  if (window.history.length > 1) {
+    window.history.back();
+    return;
+  }
+  window.location.href = "/";
 });
 
-refreshCreditsBtn.addEventListener("click", async () => {
-  refreshCreditsBtn.disabled = true;
-  try {
-    await loadCredits(true);
-  } finally {
-    refreshCreditsBtn.disabled = false;
-  }
+refreshHistoryBtn.addEventListener("click", async () => {
+  await loadHistorical(true);
 });
 
 zoomInBtn.addEventListener("click", () => {
@@ -574,7 +654,6 @@ async function init() {
   symbolSubtitleEl.textContent = `Loading ${HISTORICAL_YEARS}Y history...`;
   drawPlaceholder("Loading...");
 
-  await loadCredits(false);
   await loadHistorical(false);
 }
 

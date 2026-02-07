@@ -9,31 +9,47 @@
   <body>
     <main class="container">
       <header class="header">
-        <h1 id="symbol-title">Historical Data</h1>
+        <div class="header-top">
+          <h1 id="symbol-title">Historical Data</h1>
+          <details class="page-menu">
+            <summary class="page-menu-btn">Pages</summary>
+            <nav class="page-menu-list" aria-label="Page navigation">
+              <a href="/">US Stock Live Monitor</a>
+              <a href="/ml-lab">ML Forecast Lab</a>
+              <a href="/strategy-lab">Strategy Lab</a>
+              <a href="/historical/AAPL">Historical Chart</a>
+            </nav>
+          </details>
+        </div>
         <p id="symbol-subtitle">Loading...</p>
       </header>
 
       <section class="card history-toolbar">
-        <a href="/" class="back-link">Back To Monitor</a>
-        <div class="row">
-          <button id="refresh-history" type="button" class="secondary">Refresh Historical</button>
+        <div class="toolbar-top row">
+          <button id="go-back" type="button" class="secondary">Back</button>
         </div>
-        <div class="status-row">
-          <div><span class="label">Daily credits left</span> <span id="credits-left">-</span></div>
-          <div><span class="label">Credits updated</span> <span id="credits-updated">-</span></div>
-          <div><span class="label">Data source</span> <span id="history-source">-</span></div>
-          <div><span class="label">Range</span> <span id="history-range">-</span></div>
-          <div><span class="label">Points</span> <span id="history-count">-</span></div>
-        </div>
-        <details class="minor-tools">
-          <summary>補助操作</summary>
-          <div class="minor-tools-body">
-            <button id="refresh-credits" type="button" class="minor-action">Refresh Credits</button>
+        <div class="risk-strip">
+          <div class="risk-item">
+            <span class="label">Current</span>
+            <span id="current-price">-</span>
           </div>
-        </details>
+          <div class="risk-item">
+            <span class="label">30D Volatility</span>
+            <span id="risk-vol30">-</span>
+          </div>
+          <div class="risk-item">
+            <span class="label">30D Max Drawdown</span>
+            <span id="risk-dd30">-</span>
+          </div>
+          <div class="risk-item">
+            <span class="label">1D VaR (95%)</span>
+            <span id="risk-var95">-</span>
+          </div>
+        </div>
       </section>
 
-      <section class="card">
+      <section class="card chart-card">
+        <button id="refresh-history" type="button" class="minor-action chart-refresh-btn">Refresh</button>
         <div class="chart-actions">
           <button id="zoom-in" type="button" class="secondary">Zoom In</button>
           <button id="zoom-out" type="button" class="secondary">Zoom Out</button>
