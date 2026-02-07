@@ -503,6 +503,81 @@ select:focus-visible,
   font-size: 0.84rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  position: relative;
+}
+
+.ml-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.param-help {
+  position: relative;
+}
+
+.param-help summary {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid #3f5878;
+  background: #12233a;
+  color: #9fdfff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+}
+
+.param-help summary::-webkit-details-marker {
+  display: none;
+}
+
+.param-help[open] > p {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  margin: 0;
+  width: 230px;
+  padding: 8px 10px;
+  border: 1px solid #304762;
+  border-radius: 10px;
+  background: rgba(8, 14, 24, 0.96);
+  color: #d8e4f7;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.param-guide {
+  margin-top: 8px;
+  border: 1px solid #2c3f56;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(13, 20, 33, 0.82);
+}
+
+.param-guide > summary {
+  cursor: pointer;
+  color: #c7d8ee;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.param-guide > p {
+  margin: 8px 0 0;
+  color: #a9b8cd;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  text-transform: none;
+  letter-spacing: normal;
 }
 
 .ml-form-actions {
@@ -535,6 +610,14 @@ select:focus-visible,
   gap: 10px;
 }
 
+.ml-section-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .ml-inline-select {
   display: inline-flex;
   align-items: center;
@@ -562,6 +645,20 @@ select:focus-visible,
   border: 1px solid #2b3b52;
   border-radius: 12px;
   background: #0b111d;
+}
+
+.ml-canvas.ml-draggable {
+  cursor: grab;
+}
+
+.ml-canvas.ml-draggable.dragging {
+  cursor: grabbing;
+}
+
+.ml-zoom-actions {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
 }
 
 .pill {
@@ -765,12 +862,27 @@ tr.flash {
     grid-template-columns: 1fr;
   }
 
+  .param-help[open] > p {
+    width: min(240px, 80vw);
+    right: 0;
+  }
+
   .ml-section-head {
     flex-direction: column;
     align-items: flex-start;
   }
 
   .ml-inline-select {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .ml-section-tools {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .ml-zoom-actions {
     width: 100%;
     justify-content: space-between;
   }

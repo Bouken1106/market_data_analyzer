@@ -4,7 +4,7 @@ import calendar
 import math
 import random
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 import numpy as np
@@ -171,6 +171,28 @@ def run_quantile_lstm_forecast(points: list[dict[str, Any]], config_payload: dic
     test_base_close = base_closes[test_idx]
     test_realized_close = realized_closes[test_idx]
     test_pred_price_quantiles = test_base_close[:, None] * np.exp(test_pred_quantiles)
+    scaler_mean, scaler_std = _fit_feature_scaler(train_x)
+
+    latest_input = features[-config.sequence_length :].astype(np.float32).reshape(1, config.sequence_length, -1)
+    latest_input_scaled = _apply_feature_scaler(latest_input, scaler_mean, scaler_std)
+    next_return_quantiles = _predict_quantiles_sorted(model=model, device=device, features=latest_input_scaled)[0]
+    next_price_quantiles = closes[-1] * np.exp(next_return_quantiles)
+    next_cdf_at_zero = _estimate_cdf_at_zero(next_return_quantiles, quantiles)
+    next_up_prob = float(max(0.0, min(1.0, 1.0 - next_cdf_at_zero)))
+    next_down_prob = float(max(0.0, min(1.0, next_cdf_at_zero)))
+    investment_projection_60d = _project_rational_investment_60d(
+        next_return_quantiles=next_return_quantiles,
+        seed=config.seed,
+        horizon_days=60,
+        initial_capital=10000.0,
+    )
+    realized_backtest_60d = _backtest_recent_days(
+        pred_return_quantiles=test_pred_quantiles,
+        realized_log_returns=test_y.astype(np.float64),
+        dates=target_dates[test_idx],
+        lookback_days=60,
+        initial_capital=10000.0,
+    )
 
     representative_curves = _build_representative_curves(
         quantiles=quantiles,
@@ -233,6 +255,24 @@ def run_quantile_lstm_forecast(points: list[dict[str, Any]], config_payload: dic
             "epochs_trained": epochs_trained,
             "best_val_pinball_loss": float(best_val_loss),
             "device": str(device),
+        },
+        "backtest_60d": realized_backtest_60d,
+        "next_day_forecast": {
+            "as_of_date": dates[-1].isoformat() if isinstance(dates[-1], date) else str(dates[-1]),
+            "target_date": _next_business_day(dates[-1]).isoformat() if isinstance(dates[-1], date) else None,
+            "current_close": float(closes[-1]),
+            "up_probability": next_up_prob,
+            "down_probability": next_down_prob,
+            "taus": _to_float_list(quantiles),
+            "return_quantiles": _to_float_list(next_return_quantiles),
+            "price_quantiles": _to_float_list(next_price_quantiles),
+            "q05_return": float(next_return_quantiles[q05_index]),
+            "q50_return": float(next_return_quantiles[q50_index]),
+            "q95_return": float(next_return_quantiles[q95_index]),
+            "q05_price": float(next_price_quantiles[q05_index]),
+            "q50_price": float(next_price_quantiles[q50_index]),
+            "q95_price": float(next_price_quantiles[q95_index]),
+            "investment_60d": investment_projection_60d,
         },
     }
 
@@ -484,24 +524,33 @@ def _split_by_recent_months(target_dates: np.ndarray, lookback_months: int = 60)
     }
 
 
-def _scale_features(
-    train_x: np.ndarray,
-    val_x: np.ndarray,
-    test_x: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _fit_feature_scaler(train_x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     feature_dim = train_x.shape[-1]
     train_2d = train_x.reshape(-1, feature_dim)
     mean = train_2d.mean(axis=0, keepdims=True)
     std = train_2d.std(axis=0, keepdims=True)
     std = np.where(std < 1e-8, 1.0, std)
+    return mean, std
 
-    def normalize(values: np.ndarray) -> np.ndarray:
-        out = (values - mean.reshape(1, 1, -1)) / std.reshape(1, 1, -1)
-        out = out.astype(np.float32)
-        out[~np.isfinite(out)] = 0.0
-        return out
 
-    return normalize(train_x), normalize(val_x), normalize(test_x)
+def _apply_feature_scaler(values: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
+    out = (values - mean.reshape(1, 1, -1)) / std.reshape(1, 1, -1)
+    out = out.astype(np.float32)
+    out[~np.isfinite(out)] = 0.0
+    return out
+
+
+def _scale_features(
+    train_x: np.ndarray,
+    val_x: np.ndarray,
+    test_x: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    mean, std = _fit_feature_scaler(train_x)
+    return (
+        _apply_feature_scaler(train_x, mean, std),
+        _apply_feature_scaler(val_x, mean, std),
+        _apply_feature_scaler(test_x, mean, std),
+    )
 
 
 def _pinball_loss_torch(y_true: torch.Tensor, y_pred: torch.Tensor, quantiles: torch.Tensor) -> torch.Tensor:
@@ -656,3 +705,176 @@ def _build_representative_curves(
             }
         )
     return curves
+
+
+def _next_business_day(value: date) -> date:
+    out = value
+    while True:
+        out = out + timedelta(days=1)
+        if out.weekday() < 5:
+            return out
+
+
+def _estimate_cdf_at_zero(quantile_values: np.ndarray, quantiles: np.ndarray) -> float:
+    if quantile_values.size == 0:
+        return 0.5
+    if 0.0 < quantile_values[0]:
+        return 0.0
+    if 0.0 > quantile_values[-1]:
+        return 1.0
+
+    for idx in range(quantile_values.shape[0]):
+        q_value = float(quantile_values[idx])
+        tau_value = float(quantiles[idx])
+        if q_value == 0.0:
+            return tau_value
+        if q_value > 0.0:
+            left_idx = max(0, idx - 1)
+            left_q = float(quantile_values[left_idx])
+            left_tau = float(quantiles[left_idx])
+            if q_value == left_q:
+                return tau_value
+            weight = (0.0 - left_q) / (q_value - left_q)
+            return float(left_tau + ((tau_value - left_tau) * weight))
+
+    return 0.5
+
+
+def _project_rational_investment_60d(
+    next_return_quantiles: np.ndarray,
+    seed: int,
+    horizon_days: int,
+    initial_capital: float,
+) -> dict[str, Any]:
+    if next_return_quantiles.size == 0:
+        return {
+            "horizon_days": int(horizon_days),
+            "initial_capital": float(initial_capital),
+            "optimal_stock_fraction": 0.0,
+            "expected_return": 0.0,
+            "expected_capital": float(initial_capital),
+            "median_return": 0.0,
+            "p10_return": 0.0,
+            "p90_return": 0.0,
+            "median_capital": float(initial_capital),
+            "p10_capital": float(initial_capital),
+            "p90_capital": float(initial_capital),
+            "profit_probability": 0.5,
+            "assumption": "distribution_fixed_and_iid",
+        }
+
+    asset_simple_returns = np.expm1(next_return_quantiles.astype(np.float64))
+    best_fraction, best_expected_log_growth = _optimal_fraction_log_growth(asset_simple_returns)
+
+    horizon = max(1, int(horizon_days))
+    expected_return = float(np.exp(best_expected_log_growth * horizon) - 1.0)
+
+    rng = np.random.default_rng(seed=seed)
+    path_count = 20000
+    sampled_idx = rng.integers(0, asset_simple_returns.shape[0], size=(path_count, horizon))
+    sampled_asset_returns = asset_simple_returns[sampled_idx]
+    wealth_paths = np.prod(1.0 + (best_fraction * sampled_asset_returns), axis=1) * float(initial_capital)
+    returns_paths = (wealth_paths / float(initial_capital)) - 1.0
+
+    p10_return = float(np.quantile(returns_paths, 0.10))
+    p50_return = float(np.quantile(returns_paths, 0.50))
+    p90_return = float(np.quantile(returns_paths, 0.90))
+    expected_capital = float(np.mean(wealth_paths))
+    p10_capital = float(np.quantile(wealth_paths, 0.10))
+    p50_capital = float(np.quantile(wealth_paths, 0.50))
+    p90_capital = float(np.quantile(wealth_paths, 0.90))
+    profit_probability = float(np.mean(returns_paths > 0.0))
+
+    return {
+        "horizon_days": int(horizon),
+        "initial_capital": float(initial_capital),
+        "optimal_stock_fraction": best_fraction,
+        "expected_return": expected_return,
+        "expected_capital": expected_capital,
+        "median_return": p50_return,
+        "p10_return": p10_return,
+        "p90_return": p90_return,
+        "median_capital": p50_capital,
+        "p10_capital": p10_capital,
+        "p90_capital": p90_capital,
+        "profit_probability": profit_probability,
+        "assumption": "distribution_fixed_and_iid",
+    }
+
+
+def _optimal_fraction_log_growth(asset_simple_returns: np.ndarray) -> tuple[float, float]:
+    grid = np.linspace(0.0, 1.0, 201, dtype=np.float64)
+    best_fraction = 0.0
+    best_expected_log_growth = -np.inf
+    for fraction in grid:
+        wealth_step = 1.0 + (fraction * asset_simple_returns)
+        wealth_step = np.clip(wealth_step, 1e-12, None)
+        expected_log_growth = float(np.mean(np.log(wealth_step)))
+        if expected_log_growth > best_expected_log_growth:
+            best_expected_log_growth = expected_log_growth
+            best_fraction = float(fraction)
+    return best_fraction, best_expected_log_growth
+
+
+def _backtest_recent_days(
+    pred_return_quantiles: np.ndarray,
+    realized_log_returns: np.ndarray,
+    dates: np.ndarray,
+    lookback_days: int,
+    initial_capital: float,
+) -> dict[str, Any]:
+    if pred_return_quantiles.shape[0] == 0:
+        return {
+            "days": 0,
+            "initial_capital": float(initial_capital),
+            "final_capital_strategy": float(initial_capital),
+            "final_capital_buy_hold": float(initial_capital),
+            "final_return_strategy": 0.0,
+            "final_return_buy_hold": 0.0,
+            "outperformance": 0.0,
+            "path": [],
+        }
+
+    sample_count = pred_return_quantiles.shape[0]
+    window = max(1, min(int(lookback_days), sample_count))
+    start_idx = sample_count - window
+
+    strategy_capital = float(initial_capital)
+    buy_hold_capital = float(initial_capital)
+    path: list[dict[str, Any]] = []
+
+    for idx in range(start_idx, sample_count):
+        pred_simple_returns = np.expm1(pred_return_quantiles[idx].astype(np.float64))
+        fraction, _ = _optimal_fraction_log_growth(pred_simple_returns)
+        realized_simple_return = float(np.expm1(realized_log_returns[idx]))
+
+        strategy_capital *= max(1e-12, 1.0 + (fraction * realized_simple_return))
+        buy_hold_capital *= max(1e-12, 1.0 + realized_simple_return)
+
+        dt = dates[idx]
+        path.append(
+            {
+                "date": dt.isoformat() if isinstance(dt, date) else str(dt),
+                "allocation_stock": float(fraction),
+                "realized_return": realized_simple_return,
+                "strategy_capital": float(strategy_capital),
+                "buy_hold_capital": float(buy_hold_capital),
+                "cash_capital": float(initial_capital),
+            }
+        )
+
+    final_return_strategy = (strategy_capital / float(initial_capital)) - 1.0
+    final_return_buy_hold = (buy_hold_capital / float(initial_capital)) - 1.0
+
+    return {
+        "days": int(window),
+        "initial_capital": float(initial_capital),
+        "from": path[0]["date"] if path else None,
+        "to": path[-1]["date"] if path else None,
+        "final_capital_strategy": float(strategy_capital),
+        "final_capital_buy_hold": float(buy_hold_capital),
+        "final_return_strategy": float(final_return_strategy),
+        "final_return_buy_hold": float(final_return_buy_hold),
+        "outperformance": float(final_return_strategy - final_return_buy_hold),
+        "path": path,
+    }

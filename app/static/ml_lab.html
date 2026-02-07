@@ -30,35 +30,83 @@
         <form id="ml-form" class="ml-form">
           <div class="ml-form-grid">
             <label>
-              Symbol
+              <span class="ml-label-row">
+                <span>Symbol</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>予測対象のティッカー。米国株シンボル（例: AAPL）。</p>
+                </details>
+              </span>
               <input id="ml-symbol" type="text" value="AAPL" placeholder="AAPL" maxlength="15" />
             </label>
             <label>
-              Years
+              <span class="ml-label-row">
+                <span>Years</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>学習に使うヒストリカル期間。現在の分割仕様では最低5年が必要。</p>
+                </details>
+              </span>
               <input id="ml-years" type="number" value="5" min="5" max="10" />
             </label>
             <label>
-              Sequence Length
+              <span class="ml-label-row">
+                <span>Sequence Length</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>1サンプルに使う過去営業日数（L）。例: 60なら過去60営業日から翌日を予測。</p>
+                </details>
+              </span>
               <input id="ml-seq-len" type="number" value="60" min="20" max="240" />
             </label>
             <label>
-              Hidden Size
+              <span class="ml-label-row">
+                <span>Hidden Size</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>LSTM隠れ状態の次元。大きいほど表現力は上がるが学習時間も増える。</p>
+                </details>
+              </span>
               <input id="ml-hidden-size" type="number" value="64" min="16" max="256" />
             </label>
             <label>
-              Layers
+              <span class="ml-label-row">
+                <span>Layers</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>LSTMの層数。増やすと複雑な時系列を捉えやすいが過学習リスクも増える。</p>
+                </details>
+              </span>
               <input id="ml-num-layers" type="number" value="2" min="1" max="4" />
             </label>
             <label>
-              Dropout
+              <span class="ml-label-row">
+                <span>Dropout</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>過学習抑制のための無効化率。0.1〜0.3程度が一般的。</p>
+                </details>
+              </span>
               <input id="ml-dropout" type="number" value="0.2" min="0" max="0.6" step="0.05" />
             </label>
             <label>
-              Epochs
+              <span class="ml-label-row">
+                <span>Epochs</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>学習データ全体を何回繰り返すかの上限。実際はEarlyStoppingで早く止まることがある。</p>
+                </details>
+              </span>
               <input id="ml-max-epochs" type="number" value="80" min="10" max="400" />
             </label>
             <label>
-              Patience
+              <span class="ml-label-row">
+                <span>Patience</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>検証損失が改善しない状態を何epoch許容するか（EarlyStopping）。</p>
+                </details>
+              </span>
               <input id="ml-patience" type="number" value="10" min="2" max="80" />
             </label>
           </div>
@@ -70,6 +118,14 @@
             </label>
           </div>
         </form>
+        <details class="param-guide">
+          <summary>Parameter Guide（まとめ）</summary>
+          <p>`Sequence Length`: 過去何日を見るか。長いほど長期文脈を拾う。</p>
+          <p>`Hidden Size` / `Layers`: モデル容量。大きいと表現力は上がるが重くなる。</p>
+          <p>`Dropout`: 過学習対策。大きすぎると学習不足になりやすい。</p>
+          <p>`Epochs` / `Patience`: 学習回数上限と早期終了条件。計算時間とのトレードオフ。</p>
+          <p>`Years`: 学習データ期間。現仕様では5年以上を前提。</p>
+        </details>
         <p id="ml-status" class="hint">設定後に実行してください。</p>
       </section>
 
@@ -97,35 +153,128 @@
 
       <section class="card">
         <div class="ml-section-head">
-          <h2>Quantile Function Plot</h2>
-          <label class="ml-inline-select">
-            <span>Scale</span>
-            <select id="quantile-scale">
-              <option value="returns">Returns</option>
-              <option value="prices">Prices</option>
-            </select>
-          </label>
+          <h2>Next Business Day Distribution (From Latest Close)</h2>
+          <div class="ml-section-tools">
+            <label class="ml-inline-select">
+              <span>Scale</span>
+              <select id="next-day-scale">
+                <option value="returns">Returns</option>
+                <option value="prices">Prices</option>
+              </select>
+            </label>
+            <label class="ml-inline-select">
+              <span>Distribution</span>
+              <select id="next-day-dist-type">
+                <option value="pdf">PDF</option>
+                <option value="cdf">CDF</option>
+              </select>
+            </label>
+          </div>
         </div>
         <div class="ml-canvas-shell">
-          <canvas id="quantile-function-canvas" class="ml-canvas" height="340"></canvas>
+          <canvas id="next-day-canvas" class="ml-canvas" height="320"></canvas>
         </div>
+        <p id="next-day-meta" class="hint">最新終値から翌営業日の上昇/下落確率を表示します。</p>
+      </section>
+
+      <section class="card">
+        <h2>Past 60-Day Realized Backtest (If You Followed Daily Forecasts)</h2>
+        <div class="ml-metric-grid">
+          <div class="risk-item">
+            <span class="label">Strategy Return (60D)</span>
+            <span id="bt-return-strategy">-</span>
+          </div>
+          <div class="risk-item">
+            <span class="label">Buy & Hold Return (60D)</span>
+            <span id="bt-return-buyhold">-</span>
+          </div>
+          <div class="risk-item">
+            <span class="label">Outperformance</span>
+            <span id="bt-outperf">-</span>
+          </div>
+          <div class="risk-item">
+            <span class="label">Final Capital Strategy</span>
+            <span id="bt-capital-strategy">-</span>
+          </div>
+          <div class="risk-item">
+            <span class="label">Final Capital Buy & Hold</span>
+            <span id="bt-capital-buyhold">-</span>
+          </div>
+          <div class="risk-item">
+            <span class="label">Backtest Window</span>
+            <span id="bt-window">-</span>
+          </div>
+        </div>
+        <div class="ml-canvas-shell">
+          <canvas id="backtest-canvas" class="ml-canvas" height="280"></canvas>
+        </div>
+        <details class="param-guide">
+          <summary>Assumptions</summary>
+          <p>各日で、その日に予測した翌営業日分布のみを使って投資比率を決定。</p>
+          <p>実績リターンで日次更新して、直近60営業日の実現パフォーマンスを算出。</p>
+          <p>戦略はキャッシュ＋株式（レバレッジなし）で、比較対象はBuy & Hold。</p>
+        </details>
+      </section>
+
+      <section class="card">
+        <div class="ml-section-head">
+          <h2>Quantile Function Plot</h2>
+          <div class="ml-section-tools">
+            <label class="ml-inline-select">
+              <span>Scale</span>
+              <select id="quantile-scale">
+                <option value="returns">Returns</option>
+                <option value="prices">Prices</option>
+              </select>
+            </label>
+            <div class="ml-zoom-actions">
+              <button id="quantile-zoom-in" type="button" class="secondary">Zoom In</button>
+              <button id="quantile-zoom-out" type="button" class="secondary">Zoom Out</button>
+              <button id="quantile-zoom-reset" type="button" class="minor-action">Reset Zoom</button>
+            </div>
+          </div>
+        </div>
+        <div class="ml-canvas-shell">
+          <canvas id="quantile-function-canvas" class="ml-canvas ml-draggable" height="340"></canvas>
+        </div>
+        <details class="param-guide">
+          <summary>Plot Guide（Quantile Function）</summary>
+          <p>各色の線: テスト期間の代表日ごとの分位点カーブ（1本=1日）。</p>
+          <p>横軸: 分位点 τ（0.01〜0.99）。右に行くほど「高い値側」の予測。</p>
+          <p>縦軸: 予測値（Scaleで Returns / Prices を切替）。</p>
+          <p>凡例の actual: その代表日に対する翌営業日の実測値。</p>
+        </details>
         <p id="quantile-legend" class="hint">テスト期間の代表日を表示します。</p>
       </section>
 
       <section class="card">
         <div class="ml-section-head">
           <h2>Fan Chart</h2>
-          <label class="ml-inline-select">
-            <span>Scale</span>
-            <select id="fan-scale">
-              <option value="returns">Returns</option>
-              <option value="prices">Prices</option>
-            </select>
-          </label>
+          <div class="ml-section-tools">
+            <label class="ml-inline-select">
+              <span>Scale</span>
+              <select id="fan-scale">
+                <option value="returns">Returns</option>
+                <option value="prices">Prices</option>
+              </select>
+            </label>
+            <div class="ml-zoom-actions">
+              <button id="fan-zoom-in" type="button" class="secondary">Zoom In</button>
+              <button id="fan-zoom-out" type="button" class="secondary">Zoom Out</button>
+              <button id="fan-zoom-reset" type="button" class="minor-action">Reset Zoom</button>
+            </div>
+          </div>
         </div>
         <div class="ml-canvas-shell">
-          <canvas id="fan-chart-canvas" class="ml-canvas" height="360"></canvas>
+          <canvas id="fan-chart-canvas" class="ml-canvas ml-draggable" height="360"></canvas>
         </div>
+        <details class="param-guide">
+          <summary>Plot Guide（Fan Chart）</summary>
+          <p>水色の線: 中央値予測（q50）。</p>
+          <p>濃い帯: 50%予測区間（q25〜q75）。</p>
+          <p>薄い帯: 90%予測区間（q05〜q95）。</p>
+          <p>黄色の点: 実測値（翌営業日の実現値）。帯内に入るほど被覆が良い。</p>
+        </details>
         <p id="fan-meta" class="hint">q50（中央値）、50%帯、90%帯、実測値を表示します。</p>
       </section>
     </main>
