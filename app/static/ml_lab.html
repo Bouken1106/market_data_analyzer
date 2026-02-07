@@ -21,7 +21,7 @@
             </nav>
           </details>
         </div>
-        <p>Quantile LSTMで翌営業日のリターン分布（1%〜99%分位点）を推定します。</p>
+        <p>Quantile LSTMで翌営業日のリターン分布（0.1%〜99.9%分位点）を推定します。</p>
       </header>
 
       <section class="card">
@@ -37,7 +37,17 @@
                   <p>予測対象のティッカー。米国株シンボル（例: AAPL）。</p>
                 </details>
               </span>
-              <input id="ml-symbol" type="text" value="AAPL" placeholder="AAPL" maxlength="15" />
+              <div id="ml-symbol-search-area" class="symbol-search-area">
+                <input
+                  id="ml-symbol"
+                  type="text"
+                  value="AAPL"
+                  placeholder="Click and search: AAPL, MSFT, NVDA..."
+                  maxlength="15"
+                  autocomplete="off"
+                />
+                <div id="ml-symbol-dropdown" class="symbol-dropdown hidden"></div>
+              </div>
             </label>
             <label>
               <span class="ml-label-row">
@@ -118,6 +128,10 @@
             </label>
           </div>
         </form>
+        <div class="row">
+          <p id="ml-catalog-meta" class="hint">Loading symbol catalog...</p>
+          <button id="ml-refresh-catalog" type="button" class="minor-action">Refresh Symbol List</button>
+        </div>
         <details class="param-guide">
           <summary>Parameter Guide（まとめ）</summary>
           <p>`Sequence Length`: 過去何日を見るか。長いほど長期文脈を拾う。</p>
@@ -185,7 +199,7 @@
             <span id="bt-return-strategy">-</span>
           </div>
           <div class="risk-item">
-            <span class="label">Buy & Hold Return (60D)</span>
+            <span class="label">Fixed-Shares Hold Return (60D)</span>
             <span id="bt-return-buyhold">-</span>
           </div>
           <div class="risk-item">
@@ -197,11 +211,11 @@
             <span id="bt-capital-strategy">-</span>
           </div>
           <div class="risk-item">
-            <span class="label">Final Capital Buy & Hold</span>
+            <span class="label">Final Capital Fixed-Shares Hold</span>
             <span id="bt-capital-buyhold">-</span>
           </div>
           <div class="risk-item">
-            <span class="label">Backtest Window</span>
+            <span class="label">Backtest Window / Allocation</span>
             <span id="bt-window">-</span>
           </div>
         </div>
@@ -211,8 +225,10 @@
         <details class="param-guide">
           <summary>Assumptions</summary>
           <p>各日で、その日に予測した翌営業日分布のみを使って投資比率を決定。</p>
+          <p>リスク上限: 翌日で資産の1%超損失となる確率が3%を超えない株式比率までに制限。</p>
+          <p>その上限内で期待リターン最大（0〜100%）の比率を採用。</p>
           <p>実績リターンで日次更新して、直近60営業日の実現パフォーマンスを算出。</p>
-          <p>戦略はキャッシュ＋株式（レバレッジなし）で、比較対象はBuy & Hold。</p>
+          <p>比較対象は、初日に買った株数を売買せず持ち続ける固定株数ホールド。</p>
         </details>
       </section>
 
@@ -240,7 +256,7 @@
         <details class="param-guide">
           <summary>Plot Guide（Quantile Function）</summary>
           <p>各色の線: テスト期間の代表日ごとの分位点カーブ（1本=1日）。</p>
-          <p>横軸: 分位点 τ（0.01〜0.99）。右に行くほど「高い値側」の予測。</p>
+          <p>横軸: 分位点 τ（0.001〜0.999）。右に行くほど「高い値側」の予測。</p>
           <p>縦軸: 予測値（Scaleで Returns / Prices を切替）。</p>
           <p>凡例の actual: その代表日に対する翌営業日の実測値。</p>
         </details>

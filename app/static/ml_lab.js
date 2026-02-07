@@ -1,4 +1,9 @@
 const mlForm = document.getElementById("ml-form");
+const mlSymbolSearchArea = document.getElementById("ml-symbol-search-area");
+const mlSymbolInput = document.getElementById("ml-symbol");
+const mlSymbolDropdown = document.getElementById("ml-symbol-dropdown");
+const mlCatalogMetaEl = document.getElementById("ml-catalog-meta");
+const mlRefreshCatalogBtn = document.getElementById("ml-refresh-catalog");
 const runBtn = document.getElementById("ml-run-btn");
 const statusEl = document.getElementById("ml-status");
 const quantileCanvas = document.getElementById("quantile-function-canvas");
@@ -42,6 +47,8 @@ const COLORS = {
 };
 
 let latestPayload = null;
+let mlSymbolCatalog = [];
+const MAX_DROPDOWN_ITEMS = 120;
 
 function createZoomState() {
   return {
@@ -64,6 +71,104 @@ const chartViewState = {
 
 function normalizeSymbol(raw) {
   return String(raw || "").trim().toUpperCase().replace(/[^A-Z0-9.\-]/g, "");
+}
+
+function setMlCatalogMeta(message) {
+  if (!mlCatalogMetaEl) return;
+  mlCatalogMetaEl.textContent = message || "";
+}
+
+function showMlDropdown() {
+  if (!mlSymbolDropdown) return;
+  mlSymbolDropdown.classList.remove("hidden");
+}
+
+function hideMlDropdown() {
+  if (!mlSymbolDropdown) return;
+  mlSymbolDropdown.classList.add("hidden");
+}
+
+function pickMlCandidates(query) {
+  const needle = String(query || "").trim().toUpperCase();
+  const candidates = [];
+  for (const item of mlSymbolCatalog) {
+    if (!needle || item.symbol.startsWith(needle)) {
+      candidates.push(item);
+    }
+    if (candidates.length >= MAX_DROPDOWN_ITEMS) {
+      break;
+    }
+  }
+  return candidates;
+}
+
+function renderMlDropdown() {
+  if (!mlSymbolDropdown || !mlSymbolInput) return;
+  mlSymbolDropdown.innerHTML = "";
+
+  if (mlSymbolCatalog.length === 0) {
+    const row = document.createElement("div");
+    row.className = "dropdown-empty";
+    row.textContent = "Symbol list is not loaded yet.";
+    mlSymbolDropdown.appendChild(row);
+    showMlDropdown();
+    return;
+  }
+
+  const candidates = pickMlCandidates(mlSymbolInput.value);
+  if (candidates.length === 0) {
+    const row = document.createElement("div");
+    row.className = "dropdown-empty";
+    row.textContent = "No matching symbols";
+    mlSymbolDropdown.appendChild(row);
+    showMlDropdown();
+    return;
+  }
+
+  for (const item of candidates) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "dropdown-item";
+    btn.dataset.symbol = item.symbol;
+    btn.textContent = `${item.symbol} | ${item.name} (${item.exchange})`;
+    mlSymbolDropdown.appendChild(btn);
+  }
+
+  showMlDropdown();
+}
+
+async function loadMlSymbolCatalog(refresh = false) {
+  if (mlRefreshCatalogBtn) {
+    mlRefreshCatalogBtn.disabled = true;
+  }
+  setMlCatalogMeta(refresh ? "Refreshing symbol catalog..." : "Loading symbol catalog...");
+
+  try {
+    const response = await fetch(refresh ? "/api/symbol-catalog?refresh=true" : "/api/symbol-catalog");
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      setMlCatalogMeta(result.detail || "Failed to load symbol catalog");
+      return;
+    }
+
+    const rawSymbols = Array.isArray(result.symbols) ? result.symbols : [];
+    mlSymbolCatalog = rawSymbols.map((item) => ({
+      symbol: normalizeSymbol(item?.symbol),
+      name: String(item?.name || "").trim(),
+      exchange: String(item?.exchange || "").trim(),
+    }));
+
+    const updatedText = result.updated_at ? `updated ${new Date(result.updated_at).toLocaleTimeString("ja-JP", { hour12: false })}` : "updated -";
+    setMlCatalogMeta(`${mlSymbolCatalog.length.toLocaleString()} symbols loaded (${result.source || "unknown"}, ${updatedText})`);
+
+    if (document.activeElement === mlSymbolInput) {
+      renderMlDropdown();
+    }
+  } finally {
+    if (mlRefreshCatalogBtn) {
+      mlRefreshCatalogBtn.disabled = false;
+    }
+  }
 }
 
 function setStatus(message, isError = false) {
@@ -213,6 +318,224 @@ function yAt(value, min, max, top, bottom) {
   return bottom - (ratio * (bottom - top));
 }
 
+function integrateDensity(points) {
+  if (!Array.isArray(points) || points.length < 2) return 0;
+  let area = 0;
+  for (let i = 1; i < points.length; i += 1) {
+    const left = points[i - 1];
+    const right = points[i];
+    const dx = Number(right?.x) - Number(left?.x);
+    if (!Number.isFinite(dx) || dx <= 0) continue;
+    const dLeft = Number(left?.d);
+    const dRight = Number(right?.d);
+    if (!Number.isFinite(dLeft) || !Number.isFinite(dRight)) continue;
+    area += 0.5 * (dLeft + dRight) * dx;
+  }
+  return area;
+}
+
+function interpolateQuantileAtTau(values, taus, targetTau) {
+  if (!Array.isArray(values) || !Array.isArray(taus) || values.length !== taus.length || values.length === 0) {
+    return Number.NaN;
+  }
+
+  const pairs = [];
+  for (let i = 0; i < values.length; i += 1) {
+    const x = Number(values[i]);
+    const t = Number(taus[i]);
+    if (!Number.isFinite(x) || !Number.isFinite(t)) continue;
+    pairs.push({ x, t });
+  }
+  if (pairs.length === 0) return Number.NaN;
+
+  pairs.sort((a, b) => a.t - b.t);
+  if (targetTau <= pairs[0].t) return pairs[0].x;
+  if (targetTau >= pairs[pairs.length - 1].t) return pairs[pairs.length - 1].x;
+
+  for (let i = 1; i < pairs.length; i += 1) {
+    const left = pairs[i - 1];
+    const right = pairs[i];
+    if (targetTau > right.t) continue;
+    const span = right.t - left.t;
+    if (span <= 1e-12) return right.x;
+    const w = clamp((targetTau - left.t) / span, 0, 1);
+    return left.x + ((right.x - left.x) * w);
+  }
+
+  return pairs[pairs.length - 1].x;
+}
+
+function interpolateByX(points, xTarget, yKey) {
+  if (!Array.isArray(points) || points.length === 0) return Number.NaN;
+
+  const rows = points
+    .map((p) => ({ x: Number(p?.x), y: Number(p?.[yKey]) }))
+    .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y))
+    .sort((a, b) => a.x - b.x);
+  if (rows.length === 0) return Number.NaN;
+
+  if (xTarget <= rows[0].x) return rows[0].y;
+  if (xTarget >= rows[rows.length - 1].x) return rows[rows.length - 1].y;
+
+  for (let i = 1; i < rows.length; i += 1) {
+    const left = rows[i - 1];
+    const right = rows[i];
+    if (xTarget > right.x) continue;
+    const span = right.x - left.x;
+    if (span <= 1e-12) return right.y;
+    const w = clamp((xTarget - left.x) / span, 0, 1);
+    return left.y + ((right.y - left.y) * w);
+  }
+
+  return rows[rows.length - 1].y;
+}
+
+function buildGaussianKernel(radius, sigma = Math.max(0.8, radius / 2)) {
+  if (!Number.isFinite(radius) || radius <= 0) return [1];
+  const r = Math.max(1, Math.floor(radius));
+  const kernel = [];
+  let sum = 0;
+  for (let i = -r; i <= r; i += 1) {
+    const weight = Math.exp(-(i * i) / (2 * sigma * sigma));
+    kernel.push(weight);
+    sum += weight;
+  }
+  if (sum <= 0) return [1];
+  return kernel.map((w) => w / sum);
+}
+
+function smoothSeries(values, radius) {
+  if (!Array.isArray(values) || values.length === 0) return [];
+  const kernel = buildGaussianKernel(radius);
+  if (kernel.length === 1) return values.slice();
+
+  const out = new Array(values.length);
+  const center = Math.floor(kernel.length / 2);
+  const lastIdx = values.length - 1;
+
+  for (let i = 0; i < values.length; i += 1) {
+    let weightedSum = 0;
+    let weightSum = 0;
+    for (let k = 0; k < kernel.length; k += 1) {
+      const idx = clamp(i + (k - center), 0, lastIdx);
+      const value = Number(values[idx]);
+      if (!Number.isFinite(value)) continue;
+      const weight = kernel[k];
+      weightedSum += value * weight;
+      weightSum += weight;
+    }
+    out[i] = weightSum > 0 ? (weightedSum / weightSum) : Number(values[i] || 0);
+  }
+  return out;
+}
+
+function buildSmoothPdfFromQuantiles(values, taus, normalizeArea) {
+  if (!Array.isArray(values) || !Array.isArray(taus) || values.length !== taus.length || values.length < 3) {
+    return [];
+  }
+
+  const pairs = [];
+  for (let i = 0; i < values.length; i += 1) {
+    const x = Number(values[i]);
+    const t = Number(taus[i]);
+    if (!Number.isFinite(x) || !Number.isFinite(t)) continue;
+    pairs.push({ x, t: clamp(t, 0, 1) });
+  }
+  if (pairs.length < 3) return [];
+
+  pairs.sort((a, b) => a.x - b.x);
+
+  const dedup = [];
+  for (const point of pairs) {
+    const last = dedup[dedup.length - 1];
+    if (!last) {
+      dedup.push({ x: point.x, t: point.t });
+      continue;
+    }
+    if (Math.abs(point.x - last.x) <= 1e-12) {
+      last.t = Math.max(last.t, point.t);
+      continue;
+    }
+    dedup.push({ x: point.x, t: point.t });
+  }
+  if (dedup.length < 3) return [];
+
+  let runningTau = 0;
+  for (let i = 0; i < dedup.length; i += 1) {
+    runningTau = Math.max(runningTau, dedup[i].t);
+    dedup[i].t = clamp(runningTau, 0, 1);
+  }
+
+  const xStart = dedup[0].x;
+  const xEnd = dedup[dedup.length - 1].x;
+  if (!Number.isFinite(xStart) || !Number.isFinite(xEnd) || xEnd <= xStart) return [];
+
+  const gridCount = Math.max(160, Math.min(420, dedup.length * 2));
+  const xs = new Array(gridCount);
+  const cdfRaw = new Array(gridCount);
+
+  let segIdx = 1;
+  for (let i = 0; i < gridCount; i += 1) {
+    const ratio = i / Math.max(1, gridCount - 1);
+    const x = xStart + (ratio * (xEnd - xStart));
+    xs[i] = x;
+
+    while (segIdx < dedup.length && dedup[segIdx].x < x) {
+      segIdx += 1;
+    }
+
+    if (segIdx <= 0) {
+      cdfRaw[i] = dedup[0].t;
+      continue;
+    }
+    if (segIdx >= dedup.length) {
+      cdfRaw[i] = dedup[dedup.length - 1].t;
+      continue;
+    }
+
+    const left = dedup[segIdx - 1];
+    const right = dedup[segIdx];
+    const span = Math.max(1e-12, right.x - left.x);
+    const w = clamp((x - left.x) / span, 0, 1);
+    cdfRaw[i] = left.t + ((right.t - left.t) * w);
+  }
+
+  const cdfSmoothed = smoothSeries(cdfRaw, 4);
+  let cdfPrev = 0;
+  for (let i = 0; i < cdfSmoothed.length; i += 1) {
+    const clamped = clamp(Number(cdfSmoothed[i]), 0, 1);
+    cdfPrev = Math.max(cdfPrev, clamped);
+    cdfSmoothed[i] = cdfPrev;
+  }
+
+  const density = new Array(gridCount);
+  for (let i = 0; i < gridCount; i += 1) {
+    if (i === 0) {
+      const dx = xs[1] - xs[0];
+      density[i] = dx > 0 ? (cdfSmoothed[1] - cdfSmoothed[0]) / dx : 0;
+      continue;
+    }
+    if (i === gridCount - 1) {
+      const dx = xs[i] - xs[i - 1];
+      density[i] = dx > 0 ? (cdfSmoothed[i] - cdfSmoothed[i - 1]) / dx : 0;
+      continue;
+    }
+    const dx = xs[i + 1] - xs[i - 1];
+    density[i] = dx > 0 ? (cdfSmoothed[i + 1] - cdfSmoothed[i - 1]) / dx : 0;
+  }
+
+  const densitySmoothed = smoothSeries(density.map((d) => Math.max(0, Number(d) || 0)), 3);
+  let pdfPoints = xs.map((x, idx) => ({ x, d: Math.max(0, Number(densitySmoothed[idx]) || 0) }));
+
+  if (normalizeArea) {
+    const area = integrateDensity(pdfPoints);
+    if (!Number.isFinite(area) || area <= 1e-12) return [];
+    pdfPoints = pdfPoints.map((p) => ({ x: p.x, d: p.d / area }));
+  }
+
+  return pdfPoints;
+}
+
 function drawBaseAxes(ctx, width, height, yBounds, yFormatter, xTicks) {
   const left = 70;
   const right = width - 24;
@@ -312,7 +635,7 @@ function renderQuantileFunction() {
     height,
     yBounds,
     (value) => (mode === "prices" ? formatCompact(value) : `${(value * 100).toFixed(2)}%`),
-    buildIndexTicks(taus.map((item) => Number(item).toFixed(2)), xWindow)
+    buildIndexTicks(taus.map((item) => Number(item).toFixed(3)), xWindow)
   );
 
   curves.forEach((curve, curveIdx) => {
@@ -481,13 +804,21 @@ function renderBacktest60d(payload) {
   const days = Number(backtest.days);
   const from = String(backtest.from || "-");
   const to = String(backtest.to || "-");
+  const avgAlloc = Number(backtest.avg_allocation_stock);
+  const avgCap = Number(backtest.avg_cap_stock);
+  const cappedDays = Number(backtest.capped_days);
+  const safeAvgAlloc = Number.isFinite(avgAlloc) ? avgAlloc : 0;
+  const safeAvgCap = Number.isFinite(avgCap) ? avgCap : 0;
+  const safeCappedDays = Number.isFinite(cappedDays) ? cappedDays : 0;
 
   btReturnStrategyEl.textContent = `${(strategyReturn * 100).toFixed(2)}%`;
   btReturnBuyholdEl.textContent = `${(buyHoldReturn * 100).toFixed(2)}%`;
   btOutperfEl.textContent = `${(outperf * 100).toFixed(2)}%`;
   btCapitalStrategyEl.textContent = formatMoney(strategyCapital);
   btCapitalBuyholdEl.textContent = formatMoney(buyHoldCapital);
-  btWindowEl.textContent = `${days}D (${from} → ${to})`;
+  btWindowEl.textContent =
+    `${days}D (${from} → ${to}) | avg alloc ${(safeAvgAlloc * 100).toFixed(1)}% `
+    + `/ avg cap ${(safeAvgCap * 100).toFixed(1)}% / capped ${safeCappedDays}D`;
 
   const path = Array.isArray(backtest.path) ? backtest.path : [];
   if (path.length < 2) {
@@ -552,7 +883,7 @@ function renderBacktest60d(payload) {
   ctx.fillStyle = "rgba(160, 176, 196, 0.95)";
   ctx.fillText("Cash", chart.left + 4, chart.top + 12);
   ctx.fillStyle = "rgba(255, 165, 0, 0.95)";
-  ctx.fillText("Buy & Hold", chart.left + 64, chart.top + 12);
+  ctx.fillText("Fixed-Shares Hold", chart.left + 64, chart.top + 12);
   ctx.fillStyle = "rgba(71, 213, 148, 0.95)";
   ctx.fillText("Strategy", chart.left + 156, chart.top + 12);
 }
@@ -619,6 +950,20 @@ function renderNextDayDistribution(payload) {
   const xMax = maxRet + pad;
 
   const xAtValue = (value) => left + (((value - xMin) / Math.max(1e-9, xMax - xMin)) * plotWidth);
+  const inRangeX = (value) => Number.isFinite(value) && value >= xMin && value <= xMax;
+  const markerDefs = [
+    { tau: 0.10, label: "10%" },
+    { tau: 0.50, label: "50%" },
+    { tau: 0.90, label: "90%" },
+  ];
+  const quantileMarkers = markerDefs
+    .map((marker) => ({
+      ...marker,
+      x: interpolateQuantileAtTau(retQ, taus, marker.tau),
+    }))
+    .filter((marker) => Number.isFinite(marker.x));
+  const currentLineX = mode === "prices" ? currentClose : 0;
+  const currentLineLabel = mode === "prices" ? "Current Close" : "Current (0%)";
   const cdfPoints = [];
   for (let i = 0; i < retQ.length; i += 1) {
     const x = retQ[i];
@@ -626,35 +971,12 @@ function renderNextDayDistribution(payload) {
     if (!Number.isFinite(x) || !Number.isFinite(t)) continue;
     cdfPoints.push({ x, t: Math.max(0, Math.min(1, t)) });
   }
-
-  const densityPoints = [];
-  for (let i = 1; i < retQ.length; i += 1) {
-    const dx = retQ[i] - retQ[i - 1];
-    const dt = taus[i] - taus[i - 1];
-    if (!Number.isFinite(dx) || !Number.isFinite(dt)) continue;
-    if (dx <= 1e-9) continue;
-    const xMid = (retQ[i] + retQ[i - 1]) / 2;
-    const density = dt / dx;
-    if (!Number.isFinite(xMid) || !Number.isFinite(density) || density < 0) continue;
-    densityPoints.push({ x: xMid, d: density });
+  cdfPoints.sort((a, b) => a.x - b.x);
+  let cdfRunningTau = 0;
+  for (let i = 0; i < cdfPoints.length; i += 1) {
+    cdfRunningTau = Math.max(cdfRunningTau, cdfPoints[i].t);
+    cdfPoints[i].t = cdfRunningTau;
   }
-
-  const smooth = densityPoints.map((point, idx) => {
-    const prev = densityPoints[Math.max(0, idx - 1)]?.d ?? point.d;
-    const next = densityPoints[Math.min(densityPoints.length - 1, idx + 1)]?.d ?? point.d;
-    return {
-      x: point.x,
-      d: ((prev + point.d + next) / 3),
-    };
-  });
-
-  const zeroX = xAtValue(0);
-  ctx.strokeStyle = "rgba(255,255,255,0.2)";
-  ctx.beginPath();
-  ctx.moveTo(zeroX, chartTop);
-  ctx.lineTo(zeroX, bottom);
-  ctx.stroke();
-
   ctx.strokeStyle = COLORS.axis;
   ctx.beginPath();
   ctx.moveTo(left, bottom);
@@ -664,12 +986,13 @@ function renderNextDayDistribution(payload) {
   ctx.stroke();
 
   if (distType === "pdf") {
-    if (smooth.length < 2) {
-      drawPlaceholder(nextDayCanvas, "Not enough points for probability density");
+    const pdfPoints = buildSmoothPdfFromQuantiles(retQ, taus, mode === "prices");
+    if (pdfPoints.length < 2) {
+      drawPlaceholder(nextDayCanvas, "Not enough points for smooth probability density");
       return;
     }
 
-    const maxDensity = Math.max(...smooth.map((p) => p.d), 1e-9);
+    const maxDensity = Math.max(...pdfPoints.map((p) => p.d), 1e-9);
     const yMaxDensity = maxDensity * 1.15;
     const yAtDensity = (density) => bottom - ((density / Math.max(1e-9, yMaxDensity)) * plotHeight);
 
@@ -681,7 +1004,7 @@ function renderNextDayDistribution(payload) {
 
     ctx.fillStyle = "rgba(33, 182, 255, 0.16)";
     ctx.beginPath();
-    smooth.forEach((point, idx) => {
+    pdfPoints.forEach((point, idx) => {
       const x = xAtValue(point.x);
       const y = yAtDensity(point.d);
       if (idx === 0) {
@@ -691,20 +1014,59 @@ function renderNextDayDistribution(payload) {
         ctx.lineTo(x, y);
       }
     });
-    ctx.lineTo(xAtValue(smooth[smooth.length - 1].x), bottom);
+    ctx.lineTo(xAtValue(pdfPoints[pdfPoints.length - 1].x), bottom);
     ctx.closePath();
     ctx.fill();
 
     ctx.strokeStyle = "rgba(33, 182, 255, 0.9)";
     ctx.lineWidth = 2;
     ctx.beginPath();
-    for (let i = 0; i < smooth.length; i += 1) {
-      const x = xAtValue(smooth[i].x);
-      const y = yAtDensity(smooth[i].d);
+    for (let i = 0; i < pdfPoints.length; i += 1) {
+      const x = xAtValue(pdfPoints[i].x);
+      const y = yAtDensity(pdfPoints[i].d);
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
     ctx.stroke();
+
+    if (Number.isFinite(currentLineX)) {
+      const x = xAtValue(clamp(currentLineX, xMin, xMax));
+      ctx.strokeStyle = "rgba(255, 200, 87, 0.95)";
+      ctx.lineWidth = 1.4;
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(x, chartTop);
+      ctx.lineTo(x, bottom);
+      ctx.stroke();
+      ctx.fillStyle = "rgba(255, 220, 136, 0.95)";
+      ctx.font = "11px sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText(currentLineLabel, Math.min(x + 4, right - 56), chartTop - 8);
+    }
+
+    ctx.setLineDash([4, 3]);
+    ctx.textAlign = "center";
+    quantileMarkers.forEach((marker) => {
+      if (!inRangeX(marker.x)) return;
+      const densityAt = interpolateByX(pdfPoints, marker.x, "d");
+      if (!Number.isFinite(densityAt)) return;
+      const x = xAtValue(marker.x);
+      const y = yAtDensity(densityAt);
+      ctx.strokeStyle = "rgba(154, 173, 196, 0.7)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x, chartTop);
+      ctx.lineTo(x, bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = "#cfe0f6";
+      ctx.beginPath();
+      ctx.arc(x, y, 2.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillText(marker.label, x, chartTop - 8);
+      ctx.setLineDash([4, 3]);
+    });
+    ctx.setLineDash([]);
   } else {
     if (cdfPoints.length < 2) {
       drawPlaceholder(nextDayCanvas, "Not enough points for cumulative distribution");
@@ -729,26 +1091,43 @@ function renderNextDayDistribution(payload) {
     }
     ctx.stroke();
 
-    const cdfMarkers = [
-      { idx: 9, label: "10%" },
-      { idx: 49, label: "50%" },
-      { idx: 89, label: "90%" },
-    ];
-    ctx.font = "11px sans-serif";
-    ctx.textAlign = "center";
-    cdfMarkers.forEach((marker) => {
-      if (marker.idx < 0 || marker.idx >= retQ.length) return;
-      const markerValue = Number(retQ[marker.idx]);
-      if (!Number.isFinite(markerValue)) return;
-      const x = xAtValue(markerValue);
-      ctx.strokeStyle = "rgba(154, 173, 196, 0.65)";
+    if (Number.isFinite(currentLineX)) {
+      const x = xAtValue(clamp(currentLineX, xMin, xMax));
+      ctx.strokeStyle = "rgba(255, 200, 87, 0.95)";
+      ctx.lineWidth = 1.4;
+      ctx.setLineDash([]);
       ctx.beginPath();
       ctx.moveTo(x, chartTop);
       ctx.lineTo(x, bottom);
       ctx.stroke();
+      ctx.fillStyle = "rgba(255, 220, 136, 0.95)";
+      ctx.font = "11px sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText(currentLineLabel, Math.min(x + 4, right - 56), chartTop - 8);
+    }
+
+    ctx.font = "11px sans-serif";
+    ctx.textAlign = "center";
+    ctx.setLineDash([4, 3]);
+    quantileMarkers.forEach((marker) => {
+      if (!inRangeX(marker.x)) return;
+      const x = xAtValue(marker.x);
+      ctx.strokeStyle = "rgba(154, 173, 196, 0.65)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x, chartTop);
+      ctx.lineTo(x, bottom);
+      ctx.stroke();
+      const y = yAtCdf(marker.tau);
+      ctx.setLineDash([]);
       ctx.fillStyle = "#cfe0f6";
+      ctx.beginPath();
+      ctx.arc(x, y, 2.4, 0, Math.PI * 2);
+      ctx.fill();
       ctx.fillText(marker.label, x, chartTop - 8);
+      ctx.setLineDash([4, 3]);
     });
+    ctx.setLineDash([]);
   }
 
   ctx.fillStyle = COLORS.label;
@@ -789,7 +1168,7 @@ function parseErrorMessage(body, fallback) {
 }
 
 async function runQuantileForecast() {
-  const symbol = normalizeSymbol(document.getElementById("ml-symbol").value);
+  const symbol = normalizeSymbol(mlSymbolInput?.value || "");
   if (!symbol) {
     setStatus("Symbolを入力してください。", true);
     return;
@@ -913,6 +1292,62 @@ mlForm.addEventListener("submit", async (event) => {
   await runQuantileForecast();
 });
 
+if (mlSymbolInput) {
+  mlSymbolInput.addEventListener("focus", () => {
+    renderMlDropdown();
+  });
+
+  mlSymbolInput.addEventListener("input", () => {
+    renderMlDropdown();
+  });
+
+  mlSymbolInput.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      hideMlDropdown();
+      return;
+    }
+    if (event.key === "Enter") {
+      const firstCandidate = mlSymbolDropdown?.querySelector(".dropdown-item");
+      if (!firstCandidate) return;
+      event.preventDefault();
+      mlSymbolInput.value = firstCandidate.dataset.symbol || "";
+      hideMlDropdown();
+    }
+  });
+}
+
+if (mlSymbolDropdown) {
+  mlSymbolDropdown.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+  });
+
+  mlSymbolDropdown.addEventListener("click", (event) => {
+    const button = event.target.closest(".dropdown-item");
+    if (!button || !mlSymbolInput) return;
+    mlSymbolInput.value = button.dataset.symbol || "";
+    hideMlDropdown();
+    mlSymbolInput.focus();
+  });
+}
+
+if (mlSymbolSearchArea) {
+  document.addEventListener("click", (event) => {
+    if (!mlSymbolSearchArea.contains(event.target)) {
+      hideMlDropdown();
+    }
+  });
+}
+
+if (mlRefreshCatalogBtn) {
+  mlRefreshCatalogBtn.addEventListener("click", async () => {
+    await loadMlSymbolCatalog(true);
+    if (mlSymbolInput) {
+      mlSymbolInput.focus();
+      renderMlDropdown();
+    }
+  });
+}
+
 quantileScaleEl.addEventListener("change", () => {
   resetZoom(quantileZoom);
   if (latestPayload) renderQuantileFunction();
@@ -1015,3 +1450,7 @@ drawPlaceholder(nextDayCanvas, "Run Quantile LSTM to draw next-day distribution"
 drawPlaceholder(backtestCanvas, "Run Quantile LSTM to draw 60-day realized backtest");
 drawPlaceholder(quantileCanvas, "Run Quantile LSTM to draw quantile curves");
 drawPlaceholder(fanCanvas, "Run Quantile LSTM to draw fan chart");
+
+loadMlSymbolCatalog().catch(() => {
+  setMlCatalogMeta("Failed to load symbol catalog");
+});

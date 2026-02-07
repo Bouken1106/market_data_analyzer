@@ -12,7 +12,8 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
-QUANTILES = np.arange(0.01, 1.0, 0.01, dtype=np.float32)
+QUANTILE_STEP = 0.001
+QUANTILES = np.arange(QUANTILE_STEP, 1.0, QUANTILE_STEP, dtype=np.float32)
 FEATURE_NAMES = [
     "log_ret_1d",
     "log_ret_oc",
@@ -153,11 +154,11 @@ def run_quantile_lstm_forecast(points: list[dict[str, Any]], config_payload: dic
     quantiles = QUANTILES.astype(np.float64)
 
     mean_pinball = _pinball_loss_np(test_y.astype(np.float64), test_pred_quantiles, quantiles)
-    q05_index = int(0.05 * 100) - 1
-    q25_index = int(0.25 * 100) - 1
-    q50_index = int(0.50 * 100) - 1
-    q75_index = int(0.75 * 100) - 1
-    q95_index = int(0.95 * 100) - 1
+    q05_index = _nearest_quantile_index(quantiles, target_tau=0.05)
+    q25_index = _nearest_quantile_index(quantiles, target_tau=0.25)
+    q50_index = _nearest_quantile_index(quantiles, target_tau=0.50)
+    q75_index = _nearest_quantile_index(quantiles, target_tau=0.75)
+    q95_index = _nearest_quantile_index(quantiles, target_tau=0.95)
 
     q05 = test_pred_quantiles[:, q05_index]
     q25 = test_pred_quantiles[:, q25_index]
@@ -663,6 +664,13 @@ def _to_float_list(values: np.ndarray | list[float]) -> list[float]:
     return [float(v) for v in np.asarray(values, dtype=np.float64).tolist()]
 
 
+def _nearest_quantile_index(quantiles: np.ndarray, target_tau: float) -> int:
+    if quantiles.size == 0:
+        return 0
+    distances = np.abs(quantiles.astype(np.float64) - float(target_tau))
+    return int(np.argmin(distances))
+
+
 def _split_meta(target_dates: np.ndarray, indices: np.ndarray) -> dict[str, Any]:
     if indices.size == 0:
         return {"count": 0, "from": None, "to": None}
@@ -764,7 +772,11 @@ def _project_rational_investment_60d(
         }
 
     asset_simple_returns = np.expm1(next_return_quantiles.astype(np.float64))
-    best_fraction, best_expected_log_growth = _optimal_fraction_log_growth(asset_simple_returns)
+    best_fraction, cap_fraction = _risk_capped_return_max_fraction(next_return_quantiles)
+    expected_simple_return = float(np.mean(asset_simple_returns))
+    best_expected_log_growth = float(
+        np.mean(np.log(np.clip(1.0 + (best_fraction * asset_simple_returns), 1e-12, None)))
+    )
 
     horizon = max(1, int(horizon_days))
     expected_return = float(np.exp(best_expected_log_growth * horizon) - 1.0)
@@ -789,7 +801,9 @@ def _project_rational_investment_60d(
         "horizon_days": int(horizon),
         "initial_capital": float(initial_capital),
         "optimal_stock_fraction": best_fraction,
+        "cap_stock_fraction": cap_fraction,
         "expected_return": expected_return,
+        "expected_daily_return": expected_simple_return,
         "expected_capital": expected_capital,
         "median_return": p50_return,
         "p10_return": p10_return,
@@ -798,7 +812,11 @@ def _project_rational_investment_60d(
         "p10_capital": p10_capital,
         "p90_capital": p90_capital,
         "profit_probability": profit_probability,
-        "assumption": "distribution_fixed_and_iid",
+        "assumption": "distribution_fixed_and_iid_with_risk_cap",
+        "risk_rule": {
+            "max_loss_fraction_per_day": 0.01,
+            "max_probability": 0.03,
+        },
     }
 
 
@@ -814,6 +832,56 @@ def _optimal_fraction_log_growth(asset_simple_returns: np.ndarray) -> tuple[floa
             best_expected_log_growth = expected_log_growth
             best_fraction = float(fraction)
     return best_fraction, best_expected_log_growth
+
+
+def _risk_capped_return_max_fraction(
+    predicted_log_return_quantiles: np.ndarray,
+    max_loss_fraction: float = 0.01,
+    max_prob: float = 0.03,
+) -> tuple[float, float]:
+    predicted_simple_quantiles = np.expm1(predicted_log_return_quantiles.astype(np.float64))
+    q_tail = _interpolate_quantile(QUANTILES.astype(np.float64), predicted_simple_quantiles, max_prob)
+    cap_fraction = _risk_cap_fraction_from_tail_quantile(q_tail, max_loss_fraction=max_loss_fraction)
+    expected_simple_return = float(np.mean(predicted_simple_quantiles))
+    allocation = cap_fraction if expected_simple_return > 0 else 0.0
+    allocation = float(max(0.0, min(1.0, allocation)))
+    return allocation, float(cap_fraction)
+
+
+def _interpolate_quantile(taus: np.ndarray, values: np.ndarray, target_tau: float) -> float:
+    if taus.size == 0 or values.size == 0:
+        return 0.0
+    if target_tau <= float(taus[0]):
+        return float(values[0])
+    if target_tau >= float(taus[-1]):
+        return float(values[-1])
+
+    for idx in range(1, taus.shape[0]):
+        left_tau = float(taus[idx - 1])
+        right_tau = float(taus[idx])
+        if target_tau > right_tau:
+            continue
+        left_value = float(values[idx - 1])
+        right_value = float(values[idx])
+        if right_tau == left_tau:
+            return right_value
+        weight = (target_tau - left_tau) / (right_tau - left_tau)
+        return float(left_value + ((right_value - left_value) * weight))
+
+    return float(values[-1])
+
+
+def _risk_cap_fraction_from_tail_quantile(q_tail_simple_return: float, max_loss_fraction: float = 0.01) -> float:
+    if not np.isfinite(q_tail_simple_return):
+        return 0.0
+    if q_tail_simple_return >= 0.0:
+        return 1.0
+    # Constraint:
+    # P(portfolio loss >= max_loss_fraction) <= 3%
+    # with portfolio return = f * R, long-only, cash return = 0
+    # => f <= max_loss_fraction / (-q_0.03)
+    cap = max_loss_fraction / max(1e-12, -float(q_tail_simple_return))
+    return float(max(0.0, min(1.0, cap)))
 
 
 def _backtest_recent_days(
@@ -842,20 +910,30 @@ def _backtest_recent_days(
     strategy_capital = float(initial_capital)
     buy_hold_capital = float(initial_capital)
     path: list[dict[str, Any]] = []
+    allocation_sum = 0.0
+    cap_sum = 0.0
+    zero_position_days = 0
+    capped_days = 0
 
     for idx in range(start_idx, sample_count):
-        pred_simple_returns = np.expm1(pred_return_quantiles[idx].astype(np.float64))
-        fraction, _ = _optimal_fraction_log_growth(pred_simple_returns)
+        fraction, cap_fraction = _risk_capped_return_max_fraction(pred_return_quantiles[idx])
         realized_simple_return = float(np.expm1(realized_log_returns[idx]))
 
         strategy_capital *= max(1e-12, 1.0 + (fraction * realized_simple_return))
         buy_hold_capital *= max(1e-12, 1.0 + realized_simple_return)
+        allocation_sum += float(fraction)
+        cap_sum += float(cap_fraction)
+        if fraction <= 1e-12:
+            zero_position_days += 1
+        if cap_fraction < 0.999999:
+            capped_days += 1
 
         dt = dates[idx]
         path.append(
             {
                 "date": dt.isoformat() if isinstance(dt, date) else str(dt),
                 "allocation_stock": float(fraction),
+                "cap_stock": float(cap_fraction),
                 "realized_return": realized_simple_return,
                 "strategy_capital": float(strategy_capital),
                 "buy_hold_capital": float(buy_hold_capital),
@@ -876,5 +954,13 @@ def _backtest_recent_days(
         "final_return_strategy": float(final_return_strategy),
         "final_return_buy_hold": float(final_return_buy_hold),
         "outperformance": float(final_return_strategy - final_return_buy_hold),
+        "avg_allocation_stock": float(allocation_sum / max(1, window)),
+        "avg_cap_stock": float(cap_sum / max(1, window)),
+        "zero_position_days": int(zero_position_days),
+        "capped_days": int(capped_days),
+        "risk_rule": {
+            "max_loss_fraction_per_day": 0.01,
+            "max_probability": 0.03,
+        },
         "path": path,
     }
