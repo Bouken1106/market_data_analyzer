@@ -11,15 +11,22 @@ Twelve Data の **Basic プラン**を使って、米国株の現在価格をリ
 - Python 3.11+
 - Twelve Data API キー
 - Basic プラン想定（WebSocket trial 枠と API クレジット制限に準拠）
+- 対応OS: Ubuntu（WSL 含む）/ macOS（Intel, Apple Silicon）
 
-## セットアップ
+## セットアップ（Ubuntu/WSL・macOS 共通）
 
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 cp .env.example .env
 ```
+
+`requirements.txt` は OS に応じて PyTorch を自動選択します。
+
+- Ubuntu/WSL: `torch==2.5.1+cpu`
+- macOS: `torch==2.5.1`
 
 `.env` を編集して API キーを設定:
 
