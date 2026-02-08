@@ -21,12 +21,19 @@
             </nav>
           </details>
         </div>
-        <p>Quantile LSTMで翌営業日のリターン分布（0.1%〜99.9%分位点）を推定します。</p>
+        <p>モデルを選択して、翌営業日の分布予測とバックテストを実行します。</p>
       </header>
 
       <section class="card">
-        <span class="pill">Quantile LSTM</span>
-        <h2>Forecast Config</h2>
+        <h2>Model Catalog</h2>
+        <p class="hint">使いたいモデルを選択してください。将来的にこの一覧へ追加していけます。</p>
+        <div id="ml-model-grid" class="ml-model-grid"></div>
+      </section>
+
+      <section class="card">
+        <span id="ml-active-model-pill" class="pill">-</span>
+        <h2 id="ml-config-title">Forecast Config</h2>
+        <p id="ml-model-description" class="hint">-</p>
         <form id="ml-form" class="ml-form">
           <div class="ml-form-grid">
             <label>
@@ -121,7 +128,7 @@
             </label>
           </div>
           <div class="row ml-form-actions">
-            <button id="ml-run-btn" type="submit">Run Quantile LSTM</button>
+            <button id="ml-run-btn" type="submit">Run Model</button>
             <label class="ml-checkbox">
               <input id="ml-refresh" type="checkbox" />
               Force refresh historical data
@@ -141,6 +148,12 @@
           <p>`Years`: 学習データ期間。現仕様では5年以上を前提。</p>
         </details>
         <p id="ml-status" class="hint">設定後に実行してください。</p>
+        <div id="ml-progress-wrap" class="ml-progress hidden" aria-live="polite">
+          <div class="ml-progress-track">
+            <div id="ml-progress-bar" class="ml-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
+          </div>
+          <p id="ml-progress-text" class="hint">0%</p>
+        </div>
       </section>
 
       <section class="card">

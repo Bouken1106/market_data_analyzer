@@ -4,11 +4,15 @@ import logging
 import math
 import os
 import re
+import threading
 import time
+import uuid
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 import websockets
@@ -68,6 +72,112 @@ HISTORICAL_INTERVAL = os.getenv("HISTORICAL_INTERVAL", "1day").strip() or "1day"
 HISTORICAL_MAX_POINTS = _int_env("HISTORICAL_MAX_POINTS", default=2000, minimum=100)
 SPARKLINE_CACHE_TTL_SEC = _int_env("SPARKLINE_CACHE_TTL_SEC", default=21600, minimum=300)
 SPARKLINE_POINTS = _int_env("SPARKLINE_POINTS", default=30, minimum=10)
+MARKET_CLOSED_SLEEP_SEC = _int_env("MARKET_CLOSED_SLEEP_SEC", default=60, minimum=10)
+SYMBOL_COUNTRY_MAP_RAW = os.getenv("SYMBOL_COUNTRY_MAP", "")
+
+
+@dataclass(frozen=True)
+class MarketSession:
+    tz: ZoneInfo
+    open_minutes: int
+    close_minutes: int
+    weekdays: frozenset[int]
+
+
+def _normalize_country_key(value: str) -> str:
+    return " ".join(value.upper().split())
+
+
+def _hhmm_to_minutes(value: str) -> int:
+    parts = value.strip().split(":")
+    if len(parts) != 2:
+        raise ValueError(f"Invalid time format: {value}")
+    hour = int(parts[0])
+    minute = int(parts[1])
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        raise ValueError(f"Invalid time value: {value}")
+    return hour * 60 + minute
+
+
+def _build_default_market_sessions() -> dict[str, MarketSession]:
+    # Regular sessions only (no holidays, no lunch breaks).
+    definitions: list[tuple[str, str, str, str]] = [
+        ("United States", "America/New_York", "09:30", "16:00"),
+        ("Canada", "America/Toronto", "09:30", "16:00"),
+        ("United Kingdom", "Europe/London", "08:00", "16:30"),
+        ("Germany", "Europe/Berlin", "09:00", "17:30"),
+        ("France", "Europe/Paris", "09:00", "17:30"),
+        ("Japan", "Asia/Tokyo", "09:00", "15:00"),
+        ("Hong Kong", "Asia/Hong_Kong", "09:30", "16:00"),
+        ("Singapore", "Asia/Singapore", "09:00", "17:00"),
+        ("India", "Asia/Kolkata", "09:15", "15:30"),
+        ("Australia", "Australia/Sydney", "10:00", "16:00"),
+        ("South Korea", "Asia/Seoul", "09:00", "15:30"),
+        ("Taiwan", "Asia/Taipei", "09:00", "13:30"),
+        ("China", "Asia/Shanghai", "09:30", "15:00"),
+    ]
+    weekdays = frozenset({0, 1, 2, 3, 4})
+    sessions: dict[str, MarketSession] = {}
+    for country, tz_name, open_at, close_at in definitions:
+        try:
+            tzinfo = ZoneInfo(tz_name)
+        except ZoneInfoNotFoundError:
+            tzinfo = ZoneInfo("UTC")
+        sessions[_normalize_country_key(country)] = MarketSession(
+            tz=tzinfo,
+            open_minutes=_hhmm_to_minutes(open_at),
+            close_minutes=_hhmm_to_minutes(close_at),
+            weekdays=weekdays,
+        )
+    return sessions
+
+
+DEFAULT_MARKET_SESSIONS = _build_default_market_sessions()
+
+
+def parse_symbol_country_map(raw: str) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for token in raw.split(","):
+        item = token.strip()
+        if not item:
+            continue
+        if ":" not in item:
+            continue
+        symbol_raw, country_raw = item.split(":", 1)
+        symbol = symbol_raw.strip().upper()
+        country = country_raw.strip()
+        if not symbol or not country:
+            continue
+        if not SYMBOL_PATTERN.match(symbol):
+            continue
+        mapping[symbol] = _normalize_country_key(country)
+    return mapping
+
+
+def infer_country_from_symbol(symbol: str) -> str | None:
+    suffix_map: list[tuple[str, str]] = [
+        (".T", "JAPAN"),
+        (".HK", "HONG KONG"),
+        (".L", "UNITED KINGDOM"),
+        (".PA", "FRANCE"),
+        (".F", "GERMANY"),
+        (".DE", "GERMANY"),
+        (".TO", "CANADA"),
+        (".AX", "AUSTRALIA"),
+        (".NS", "INDIA"),
+        (".BO", "INDIA"),
+        (".SS", "CHINA"),
+        (".SZ", "CHINA"),
+        (".KS", "SOUTH KOREA"),
+        (".KQ", "SOUTH KOREA"),
+        (".TW", "TAIWAN"),
+        (".SI", "SINGAPORE"),
+    ]
+    symbol_upper = symbol.upper()
+    for suffix, country in suffix_map:
+        if symbol_upper.endswith(suffix):
+            return country
+    return None
 
 
 def normalize_symbols(raw: str | list[str]) -> list[str]:
@@ -119,8 +229,28 @@ def rest_request_spacing_seconds() -> int:
     return max(REST_MIN_POLL_INTERVAL_SEC, math.ceil(60 / rpm))
 
 
+def ok_json_response(**payload: Any) -> JSONResponse:
+    return JSONResponse({"ok": True, **payload})
+
+
 class SymbolUpdateRequest(BaseModel):
     symbols: str
+
+
+class QuantileLstmJobRequest(BaseModel):
+    symbol: str
+    years: int = HISTORICAL_DEFAULT_YEARS
+    sequence_length: int = 60
+    hidden_size: int = 64
+    num_layers: int = 2
+    dropout: float = 0.2
+    learning_rate: float = 1e-3
+    batch_size: int = 64
+    max_epochs: int = 80
+    patience: int = 10
+    representative_days: int = 5
+    seed: int = 42
+    refresh: bool = False
 
 
 class LastPriceStore:
@@ -372,6 +502,9 @@ class MarketDataHub:
     def __init__(self, api_key: str, symbols: list[str], last_price_store: LastPriceStore) -> None:
         self.api_key = api_key
         self.symbols: list[str] = symbols
+        self.default_country_key = _normalize_country_key(SYMBOL_CATALOG_COUNTRY)
+        self.symbol_country_map = parse_symbol_country_map(SYMBOL_COUNTRY_MAP_RAW)
+        self.market_sessions = DEFAULT_MARKET_SESSIONS
         self.prices: dict[str, dict[str, Any]] = {}
         self.last_price_store = last_price_store
         self.ws_connected = False
@@ -396,6 +529,33 @@ class MarketDataHub:
         self._historical_lock = asyncio.Lock()
         self._sparkline_cache: dict[str, dict[str, Any]] = {}
         self._sparkline_lock = asyncio.Lock()
+
+    @staticmethod
+    def _is_cache_fresh(cached_epoch: Any, ttl_sec: int) -> bool:
+        try:
+            return (time.time() - float(cached_epoch)) <= ttl_sec
+        except (TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _build_price_record(symbol: str, price: Any, source: str, timestamp: Any = None) -> dict[str, Any]:
+        return {
+            "symbol": symbol.upper().strip(),
+            "price": str(price),
+            "timestamp": to_iso8601(timestamp),
+            "source": source,
+        }
+
+    async def _store_and_publish_price(self, record: dict[str, Any]) -> None:
+        symbol = str(record.get("symbol", "")).upper().strip()
+        if not symbol:
+            return
+        normalized = dict(record)
+        normalized["symbol"] = symbol
+        async with self._state_lock:
+            self.prices[symbol] = normalized
+        await self.last_price_store.upsert(normalized)
+        await self.publish({"type": "price", "data": normalized})
 
     async def start(self) -> None:
         await self._hydrate_prices_from_store(self.symbols)
@@ -466,11 +626,13 @@ class MarketDataHub:
         last_seen = None
         if self.last_ws_message_at:
             last_seen = datetime.fromtimestamp(self.last_ws_message_at, tz=timezone.utc).isoformat()
+        open_symbols = self._open_symbols(self.symbols)
         return {
             "mode": self.mode,
             "ws_connected": self.ws_connected,
             "last_ws_message_at": last_seen,
             "symbols": self.symbols,
+            "open_symbols": open_symbols,
             "fallback_poll_interval_sec": fallback_interval_seconds(len(self.symbols)),
             "daily_credits_left": self.daily_credits_left,
             "daily_credits_used": self.daily_credits_used,
@@ -543,6 +705,12 @@ class MarketDataHub:
                 await asyncio.sleep(1)
                 continue
 
+            active_symbols = self._open_symbols(symbols)
+            if not active_symbols:
+                await self._set_mode("market-closed", False)
+                await asyncio.sleep(MARKET_CLOSED_SLEEP_SEC)
+                continue
+
             ws_url = WS_URL_TEMPLATE.format(api_key=self.api_key)
             try:
                 async with websockets.connect(
@@ -556,14 +724,21 @@ class MarketDataHub:
                     self.last_ws_message_at = time.time()
 
                     await ws.send(
-                        json.dumps({"action": "subscribe", "params": {"symbols": ",".join(symbols)}})
+                        json.dumps({"action": "subscribe", "params": {"symbols": ",".join(active_symbols)}})
                     )
 
                     backoff = 1
+                    last_market_check = time.time()
                     while not self._stop_event.is_set():
                         if self._restart_ws_event.is_set():
                             self._restart_ws_event.clear()
                             break
+
+                        if (time.time() - last_market_check) >= 60:
+                            last_market_check = time.time()
+                            current_open = self._open_symbols(self.symbols)
+                            if set(current_open) != set(active_symbols):
+                                break
 
                         try:
                             raw_message = await asyncio.wait_for(ws.recv(), timeout=1.0)
@@ -596,18 +771,16 @@ class MarketDataHub:
         if not symbol or price is None:
             return
 
-        record = {
-            "symbol": str(symbol).upper(),
-            "price": str(price),
-            "timestamp": to_iso8601(payload.get("timestamp")),
-            "source": "websocket",
-        }
+        record = self._build_price_record(
+            symbol=str(symbol),
+            price=price,
+            source="websocket",
+            timestamp=payload.get("timestamp"),
+        )
+        if not self._is_symbol_market_open(record["symbol"]):
+            return
 
-        async with self._state_lock:
-            self.prices[record["symbol"]] = record
-
-        await self.last_price_store.upsert(record)
-        await self.publish({"type": "price", "data": record})
+        await self._store_and_publish_price(record)
 
     async def _fallback_rest_worker(self) -> None:
         timeout = httpx.Timeout(10.0, connect=5.0)
@@ -616,6 +789,12 @@ class MarketDataHub:
                 symbols = self.symbols
                 if not symbols:
                     await asyncio.sleep(1)
+                    continue
+
+                active_symbols = self._open_symbols(symbols)
+                if not active_symbols:
+                    await self._set_mode("market-closed", False)
+                    await asyncio.sleep(MARKET_CLOSED_SLEEP_SEC)
                     continue
 
                 ws_stale = self.ws_connected and (time.time() - self.last_ws_message_at) > 25
@@ -630,11 +809,11 @@ class MarketDataHub:
                 else:
                     await self._set_mode("rest-fallback", False)
 
-                for index, symbol in enumerate(symbols):
+                for index, symbol in enumerate(active_symbols):
                     if self._stop_event.is_set():
                         break
                     await self._poll_one_symbol(client, symbol)
-                    if index < len(symbols) - 1:
+                    if index < len(active_symbols) - 1:
                         await asyncio.sleep(rest_request_spacing_seconds())
 
                 await asyncio.sleep(rest_request_spacing_seconds())
@@ -664,18 +843,8 @@ class MarketDataHub:
         if price is None:
             return
 
-        record = {
-            "symbol": symbol,
-            "price": str(price),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "source": "rest",
-        }
-
-        async with self._state_lock:
-            self.prices[symbol] = record
-
-        await self.last_price_store.upsert(record)
-        await self.publish({"type": "price", "data": record})
+        record = self._build_price_record(symbol=symbol, price=price, source="rest")
+        await self._store_and_publish_price(record)
 
     async def refresh_api_credits(self) -> dict[str, Any]:
         timeout = httpx.Timeout(10.0, connect=5.0)
@@ -698,11 +867,7 @@ class MarketDataHub:
         cache_key = (normalized, years)
         async with self._historical_lock:
             cached = self._historical_cache.get(cache_key)
-            if (
-                cached
-                and not refresh
-                and (time.time() - float(cached.get("cached_epoch", 0.0))) <= HISTORICAL_CACHE_TTL_SEC
-            ):
+            if cached and not refresh and self._is_cache_fresh(cached.get("cached_epoch"), HISTORICAL_CACHE_TTL_SEC):
                 payload = dict(cached["payload"])
                 payload["source"] = "cache"
                 return payload
@@ -813,11 +978,7 @@ class MarketDataHub:
         async with self._sparkline_lock:
             for symbol in target_symbols:
                 cached = self._sparkline_cache.get(symbol)
-                if (
-                    cached
-                    and not refresh
-                    and (time.time() - float(cached.get("cached_epoch", 0.0))) <= SPARKLINE_CACHE_TTL_SEC
-                ):
+                if cached and not refresh and self._is_cache_fresh(cached.get("cached_epoch"), SPARKLINE_CACHE_TTL_SEC):
                     items_by_symbol[symbol] = dict(cached["payload"])
                 else:
                     missing_symbols.append(symbol)
@@ -886,14 +1047,18 @@ class MarketDataHub:
         if len(completed) < 2:
             return None
 
-        previous_close = completed[0][1]
+        latest_completed_close = completed[0][1]
+        previous_completed_close = completed[1][1] if len(completed) >= 2 else None
         recent_desc = completed[:SPARKLINE_POINTS]
         recent_asc = list(reversed(recent_desc))
 
         trend_values = [point[1] for point in recent_asc]
         return {
             "symbol": symbol,
-            "previous_close": previous_close,
+            "latest_close": latest_completed_close,
+            "latest_close_date": completed[0][0],
+            "previous_close": previous_completed_close,
+            "previous_close_date": completed[1][0] if len(completed) >= 2 else None,
             "trend_30d": trend_values,
             "trend_from": recent_asc[0][0],
             "trend_to": recent_asc[-1][0],
@@ -946,6 +1111,39 @@ class MarketDataHub:
 
         await self.publish({"type": "status", "data": await self.status_payload()})
 
+    def _resolve_symbol_country_key(self, symbol: str) -> str:
+        normalized_symbol = symbol.upper().strip()
+        mapped_country = self.symbol_country_map.get(normalized_symbol)
+        if mapped_country:
+            return mapped_country
+        inferred_country = infer_country_from_symbol(normalized_symbol)
+        if inferred_country:
+            return inferred_country
+        return self.default_country_key
+
+    def _is_country_market_open(self, country_key: str, now_utc: datetime) -> bool:
+        session = self.market_sessions.get(country_key)
+        if session is None:
+            return True
+
+        local_now = now_utc.astimezone(session.tz)
+        if local_now.weekday() not in session.weekdays:
+            return False
+        current_minutes = (local_now.hour * 60) + local_now.minute
+
+        if session.open_minutes <= session.close_minutes:
+            return session.open_minutes <= current_minutes < session.close_minutes
+        return current_minutes >= session.open_minutes or current_minutes < session.close_minutes
+
+    def _is_symbol_market_open(self, symbol: str, now_utc: datetime | None = None) -> bool:
+        utc_now = now_utc or datetime.now(timezone.utc)
+        country_key = self._resolve_symbol_country_key(symbol)
+        return self._is_country_market_open(country_key, utc_now)
+
+    def _open_symbols(self, symbols: list[str]) -> list[str]:
+        now_utc = datetime.now(timezone.utc)
+        return [symbol for symbol in symbols if self._is_symbol_market_open(symbol, now_utc=now_utc)]
+
     @staticmethod
     def _try_parse_int(value: str | None) -> int | None:
         if value is None:
@@ -961,6 +1159,69 @@ class MarketDataHub:
             return float(value)
         except (TypeError, ValueError):
             return None
+
+
+class MlJobStore:
+    def __init__(self, max_jobs: int = 100) -> None:
+        self.max_jobs = max(20, max_jobs)
+        self._jobs: dict[str, dict[str, Any]] = {}
+        self._lock = threading.Lock()
+
+    def create(self, kind: str, symbol: str) -> str:
+        job_id = uuid.uuid4().hex
+        now_iso = datetime.now(timezone.utc).isoformat()
+        payload = {
+            "job_id": job_id,
+            "kind": kind,
+            "symbol": symbol.upper().strip(),
+            "status": "queued",
+            "progress": 0,
+            "message": "ジョブを作成しました。",
+            "result": None,
+            "error": None,
+            "created_at": now_iso,
+            "updated_at": now_iso,
+        }
+        with self._lock:
+            self._jobs[job_id] = payload
+            self._trim_no_lock()
+        return job_id
+
+    def update(self, job_id: str, **changes: Any) -> None:
+        with self._lock:
+            item = self._jobs.get(job_id)
+            if not item:
+                return
+            item.update(changes)
+            item["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    def complete(self, job_id: str, result: dict[str, Any]) -> None:
+        self.update(
+            job_id,
+            status="completed",
+            progress=100,
+            message="完了しました。",
+            result=result,
+            error=None,
+        )
+
+    def fail(self, job_id: str, error: str) -> None:
+        self.update(job_id, status="failed", message="失敗しました。", error=error, result=None)
+
+    def get(self, job_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            item = self._jobs.get(job_id)
+            if not item:
+                return None
+            return dict(item)
+
+    def _trim_no_lock(self) -> None:
+        if len(self._jobs) <= self.max_jobs:
+            return
+        sorted_items = sorted(self._jobs.items(), key=lambda pair: pair[1].get("updated_at", ""))
+        remove_count = len(self._jobs) - self.max_jobs
+        for idx in range(remove_count):
+            self._jobs.pop(sorted_items[idx][0], None)
 
 
 API_KEY = os.getenv("TWELVE_DATA_API_KEY", "").strip()
@@ -981,6 +1242,150 @@ symbol_catalog_store = SymbolCatalogStore(
     cache_path=SYMBOL_CATALOG_CACHE_PATH,
     ttl_sec=SYMBOL_CATALOG_TTL_SEC,
 )
+
+ML_MODEL_CATALOG = [
+    {
+        "id": "quantile_lstm",
+        "name": "Quantile LSTM",
+        "short_description": "翌営業日の分位点分布を推定（現在利用可能）",
+        "status": "ready",
+        "status_label": "Ready",
+        "run_label": "Run Quantile LSTM",
+        "api_path": "/api/ml/quantile-lstm",
+    },
+    {
+        "id": "quantile_gru",
+        "name": "Quantile GRU",
+        "short_description": "LSTMより軽量な系列モデル（準備中）",
+        "status": "coming_soon",
+        "status_label": "Coming Soon",
+        "run_label": "Run Quantile GRU",
+        "api_path": "",
+    },
+    {
+        "id": "temporal_transformer",
+        "name": "Temporal Transformer",
+        "short_description": "注意機構ベースの時系列モデル（準備中）",
+        "status": "coming_soon",
+        "status_label": "Coming Soon",
+        "run_label": "Run Temporal Transformer",
+        "api_path": "",
+    },
+    {
+        "id": "xgboost_quantile",
+        "name": "XGBoost Quantile",
+        "short_description": "勾配ブースティングの分位点回帰（準備中）",
+        "status": "coming_soon",
+        "status_label": "Coming Soon",
+        "run_label": "Run XGBoost Quantile",
+        "api_path": "",
+    },
+]
+ml_job_store = MlJobStore(max_jobs=120)
+
+
+async def _run_quantile_lstm_pipeline(
+    *,
+    symbol: str,
+    years: int = HISTORICAL_DEFAULT_YEARS,
+    sequence_length: int = 60,
+    hidden_size: int = 64,
+    num_layers: int = 2,
+    dropout: float = 0.2,
+    learning_rate: float = 1e-3,
+    batch_size: int = 64,
+    max_epochs: int = 80,
+    patience: int = 10,
+    representative_days: int = 5,
+    seed: int = 42,
+    refresh: bool = False,
+    progress_callback: Callable[[int, str], None] | None = None,
+) -> dict[str, Any]:
+    if progress_callback is not None:
+        progress_callback(2, "ヒストリカルデータを取得しています。")
+
+    effective_years = max(5, years)
+    historical_data = await hub.historical_payload(symbol=symbol, years=effective_years, refresh=refresh)
+    points = historical_data.get("points")
+    if not isinstance(points, list):
+        raise HTTPException(status_code=502, detail="Unexpected historical payload format.")
+
+    config_payload = {
+        "sequence_length": sequence_length,
+        "hidden_size": hidden_size,
+        "num_layers": num_layers,
+        "dropout": dropout,
+        "learning_rate": learning_rate,
+        "batch_size": batch_size,
+        "max_epochs": max_epochs,
+        "patience": patience,
+        "representative_days": representative_days,
+        "seed": seed,
+    }
+
+    if progress_callback is not None:
+        progress_callback(5, "モデル学習を開始します。")
+
+    try:
+        model_payload = await asyncio.to_thread(
+            run_quantile_lstm_forecast,
+            points,
+            config_payload,
+            progress_callback,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        LOGGER.exception("Quantile LSTM training failed for %s", symbol, exc_info=exc)
+        raise HTTPException(status_code=500, detail="Quantile LSTM training failed.") from exc
+
+    if progress_callback is not None:
+        progress_callback(100, "結果を整形しました。")
+
+    return {
+        "symbol": historical_data.get("symbol"),
+        "years": effective_years,
+        "historical_source": historical_data.get("source"),
+        **model_payload,
+    }
+
+
+def _progress_callback_for_job(job_id: str):
+    def _cb(progress: int, message: str) -> None:
+        ml_job_store.update(
+            job_id,
+            status="running",
+            progress=max(0, min(100, int(progress))),
+            message=message,
+        )
+
+    return _cb
+
+
+async def _run_quantile_lstm_job(job_id: str, req: QuantileLstmJobRequest) -> None:
+    try:
+        ml_job_store.update(job_id, status="running", progress=1, message="ジョブを開始しました。")
+        result = await _run_quantile_lstm_pipeline(
+            symbol=req.symbol,
+            years=req.years,
+            sequence_length=req.sequence_length,
+            hidden_size=req.hidden_size,
+            num_layers=req.num_layers,
+            dropout=req.dropout,
+            learning_rate=req.learning_rate,
+            batch_size=req.batch_size,
+            max_epochs=req.max_epochs,
+            patience=req.patience,
+            representative_days=req.representative_days,
+            seed=req.seed,
+            refresh=req.refresh,
+            progress_callback=_progress_callback_for_job(job_id),
+        )
+        ml_job_store.complete(job_id, result=result)
+    except HTTPException as exc:
+        ml_job_store.fail(job_id, error=str(exc.detail))
+    except Exception as exc:
+        ml_job_store.fail(job_id, error=str(exc))
 
 
 @asynccontextmanager
@@ -1030,13 +1435,10 @@ async def update_symbols(req: SymbolUpdateRequest) -> JSONResponse:
     symbols = normalize_symbols(req.symbols)
     await hub.set_symbols(symbols)
     rows = await hub.current_rows(symbols)
-    return JSONResponse(
-        {
-            "ok": True,
-            "symbols": symbols,
-            "status": await hub.status_payload(),
-            "rows": rows,
-        }
+    return ok_json_response(
+        symbols=symbols,
+        status=await hub.status_payload(),
+        rows=rows,
     )
 
 
@@ -1046,25 +1448,27 @@ async def credits(refresh: bool = False) -> JSONResponse:
         status = await hub.refresh_api_credits()
     else:
         status = await hub.status_payload()
-    return JSONResponse(
-        {
-            "ok": True,
-            "status": status,
-            "note": "refresh=true fetches exact daily remaining credits via /api_usage and consumes 1 API credit.",
-        }
+    return ok_json_response(
+        status=status,
+        note="refresh=true fetches exact daily remaining credits via /api_usage and consumes 1 API credit.",
     )
 
 
 @app.get("/api/symbol-catalog")
 async def symbol_catalog(refresh: bool = False) -> JSONResponse:
     payload = await symbol_catalog_store.get_catalog(refresh=refresh)
-    return JSONResponse({"ok": True, **payload})
+    return ok_json_response(**payload)
 
 
 @app.get("/api/historical/{symbol}")
 async def historical(symbol: str, years: int = HISTORICAL_DEFAULT_YEARS, refresh: bool = False) -> JSONResponse:
     payload = await hub.historical_payload(symbol=symbol, years=years, refresh=refresh)
-    return JSONResponse({"ok": True, **payload})
+    return ok_json_response(**payload)
+
+
+@app.get("/api/ml/models")
+async def ml_models() -> JSONResponse:
+    return ok_json_response(models=ML_MODEL_CATALOG)
 
 
 @app.get("/api/ml/quantile-lstm")
@@ -1083,42 +1487,42 @@ async def quantile_lstm_forecast(
     seed: int = 42,
     refresh: bool = False,
 ) -> JSONResponse:
-    effective_years = max(5, years)
-    historical_data = await hub.historical_payload(symbol=symbol, years=effective_years, refresh=refresh)
-    points = historical_data.get("points")
-    if not isinstance(points, list):
-        raise HTTPException(status_code=502, detail="Unexpected historical payload format.")
-
-    config_payload = {
-        "sequence_length": sequence_length,
-        "hidden_size": hidden_size,
-        "num_layers": num_layers,
-        "dropout": dropout,
-        "learning_rate": learning_rate,
-        "batch_size": batch_size,
-        "max_epochs": max_epochs,
-        "patience": patience,
-        "representative_days": representative_days,
-        "seed": seed,
-    }
-
-    try:
-        model_payload = await asyncio.to_thread(run_quantile_lstm_forecast, points, config_payload)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        LOGGER.exception("Quantile LSTM training failed for %s", symbol, exc_info=exc)
-        raise HTTPException(status_code=500, detail="Quantile LSTM training failed.") from exc
-
-    return JSONResponse(
-        {
-            "ok": True,
-            "symbol": historical_data.get("symbol"),
-            "years": effective_years,
-            "historical_source": historical_data.get("source"),
-            **model_payload,
-        }
+    payload = await _run_quantile_lstm_pipeline(
+        symbol=symbol,
+        years=years,
+        sequence_length=sequence_length,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+        dropout=dropout,
+        learning_rate=learning_rate,
+        batch_size=batch_size,
+        max_epochs=max_epochs,
+        patience=patience,
+        representative_days=representative_days,
+        seed=seed,
+        refresh=refresh,
     )
+    return ok_json_response(**payload)
+
+
+@app.post("/api/ml/quantile-lstm/jobs")
+async def start_quantile_lstm_job(req: QuantileLstmJobRequest) -> JSONResponse:
+    symbol = normalize_symbols([req.symbol])
+    if not symbol:
+        raise HTTPException(status_code=400, detail="Symbolを入力してください。")
+    req.symbol = symbol[0]
+
+    job_id = ml_job_store.create(kind="quantile_lstm", symbol=req.symbol)
+    asyncio.create_task(_run_quantile_lstm_job(job_id, req))
+    return ok_json_response(job_id=job_id, status="queued")
+
+
+@app.get("/api/ml/jobs/{job_id}")
+async def ml_job_status(job_id: str) -> JSONResponse:
+    payload = ml_job_store.get(job_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return ok_json_response(**payload)
 
 
 @app.get("/api/sparkline")
@@ -1130,12 +1534,9 @@ async def sparkline(symbols: str, refresh: bool = False) -> JSONResponse:
         raise HTTPException(status_code=400, detail=f"You can request up to {MAX_BASIC_SYMBOLS} symbols at once.")
 
     items = await hub.sparkline_payload(target_symbols, refresh=refresh)
-    return JSONResponse(
-        {
-            "ok": True,
-            "symbols": target_symbols,
-            "items": items,
-        }
+    return ok_json_response(
+        symbols=target_symbols,
+        items=items,
     )
 
 

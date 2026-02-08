@@ -4,8 +4,15 @@ const mlSymbolInput = document.getElementById("ml-symbol");
 const mlSymbolDropdown = document.getElementById("ml-symbol-dropdown");
 const mlCatalogMetaEl = document.getElementById("ml-catalog-meta");
 const mlRefreshCatalogBtn = document.getElementById("ml-refresh-catalog");
+const mlModelGridEl = document.getElementById("ml-model-grid");
+const mlActiveModelPillEl = document.getElementById("ml-active-model-pill");
+const mlConfigTitleEl = document.getElementById("ml-config-title");
+const mlModelDescriptionEl = document.getElementById("ml-model-description");
 const runBtn = document.getElementById("ml-run-btn");
 const statusEl = document.getElementById("ml-status");
+const progressWrapEl = document.getElementById("ml-progress-wrap");
+const progressBarEl = document.getElementById("ml-progress-bar");
+const progressTextEl = document.getElementById("ml-progress-text");
 const quantileCanvas = document.getElementById("quantile-function-canvas");
 const fanCanvas = document.getElementById("fan-chart-canvas");
 const nextDayCanvas = document.getElementById("next-day-canvas");
@@ -48,7 +55,48 @@ const COLORS = {
 
 let latestPayload = null;
 let mlSymbolCatalog = [];
+let mlModels = [];
+let activeModelId = "quantile_lstm";
+let isRunning = false;
 const MAX_DROPDOWN_ITEMS = 120;
+const FALLBACK_ML_MODELS = [
+  {
+    id: "quantile_lstm",
+    name: "Quantile LSTM",
+    short_description: "翌営業日の分位点分布を推定（現在利用可能）",
+    status: "ready",
+    status_label: "Ready",
+    run_label: "Run Quantile LSTM",
+    api_path: "/api/ml/quantile-lstm",
+  },
+  {
+    id: "quantile_gru",
+    name: "Quantile GRU",
+    short_description: "LSTMより軽量な系列モデル（準備中）",
+    status: "coming_soon",
+    status_label: "Coming Soon",
+    run_label: "Run Quantile GRU",
+    api_path: "",
+  },
+  {
+    id: "temporal_transformer",
+    name: "Temporal Transformer",
+    short_description: "注意機構ベースの時系列モデル（準備中）",
+    status: "coming_soon",
+    status_label: "Coming Soon",
+    run_label: "Run Temporal Transformer",
+    api_path: "",
+  },
+  {
+    id: "xgboost_quantile",
+    name: "XGBoost Quantile",
+    short_description: "勾配ブースティングの分位点回帰（準備中）",
+    status: "coming_soon",
+    status_label: "Coming Soon",
+    run_label: "Run XGBoost Quantile",
+    api_path: "",
+  },
+];
 
 function createZoomState() {
   return {
@@ -144,8 +192,9 @@ async function loadMlSymbolCatalog(refresh = false) {
   setMlCatalogMeta(refresh ? "Refreshing symbol catalog..." : "Loading symbol catalog...");
 
   try {
-    const response = await fetch(refresh ? "/api/symbol-catalog?refresh=true" : "/api/symbol-catalog");
-    const result = await response.json().catch(() => ({}));
+    const { response, result } = await fetchJson(
+      refresh ? "/api/symbol-catalog?refresh=true" : "/api/symbol-catalog",
+    );
     if (!response.ok) {
       setMlCatalogMeta(result.detail || "Failed to load symbol catalog");
       return;
@@ -174,6 +223,220 @@ async function loadMlSymbolCatalog(refresh = false) {
 function setStatus(message, isError = false) {
   statusEl.textContent = message || "";
   statusEl.classList.toggle("error", Boolean(isError));
+}
+
+async function fetchJson(url, options) {
+  const response = await fetch(url, options);
+  const result = await response.json().catch(() => ({}));
+  return { response, result };
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getOrCreateProgressElements() {
+  let wrap = progressWrapEl || document.getElementById("ml-progress-wrap");
+  let bar = progressBarEl || document.getElementById("ml-progress-bar");
+  let text = progressTextEl || document.getElementById("ml-progress-text");
+
+  if (wrap && bar && text) {
+    return { wrap, bar, text };
+  }
+  if (!statusEl || !statusEl.parentElement) {
+    return null;
+  }
+
+  wrap = document.createElement("div");
+  wrap.id = "ml-progress-wrap";
+  wrap.className = "ml-progress";
+  wrap.setAttribute("aria-live", "polite");
+
+  const track = document.createElement("div");
+  track.className = "ml-progress-track";
+  bar = document.createElement("div");
+  bar.id = "ml-progress-bar";
+  bar.className = "ml-progress-bar";
+  bar.setAttribute("role", "progressbar");
+  bar.setAttribute("aria-valuemin", "0");
+  bar.setAttribute("aria-valuemax", "100");
+  bar.setAttribute("aria-valuenow", "0");
+  bar.style.width = "0%";
+  track.appendChild(bar);
+
+  text = document.createElement("p");
+  text.id = "ml-progress-text";
+  text.className = "hint";
+  text.textContent = "0%";
+
+  wrap.appendChild(track);
+  wrap.appendChild(text);
+  statusEl.parentElement.insertBefore(wrap, statusEl.nextSibling);
+  return { wrap, bar, text };
+}
+
+function updateProgress(value, message = "") {
+  const els = getOrCreateProgressElements();
+  if (!els) return;
+  const { wrap, bar, text } = els;
+  const safe = Math.max(0, Math.min(100, Number(value) || 0));
+  wrap.classList.remove("hidden");
+  bar.style.width = `${safe}%`;
+  bar.setAttribute("aria-valuenow", String(Math.round(safe)));
+  text.textContent = message ? `${Math.round(safe)}% | ${message}` : `${Math.round(safe)}%`;
+}
+
+function hideProgress() {
+  const els = getOrCreateProgressElements();
+  if (!els) return;
+  const { wrap, bar, text } = els;
+  wrap.classList.add("hidden");
+  bar.style.width = "0%";
+  bar.setAttribute("aria-valuenow", "0");
+  text.textContent = "0%";
+}
+
+function getActiveModel() {
+  return mlModels.find((model) => model.id === activeModelId) || null;
+}
+
+function canRunModel(model) {
+  return Boolean(model && model.status === "ready" && model.api_path);
+}
+
+function syncRunButtonState() {
+  const active = getActiveModel();
+  if (runBtn) {
+    runBtn.textContent = active?.run_label || "Run Model";
+    runBtn.disabled = isRunning || !canRunModel(active);
+  }
+}
+
+function applyActiveModelUi() {
+  const active = getActiveModel();
+  if (!active) return;
+  if (mlActiveModelPillEl) {
+    mlActiveModelPillEl.textContent = active.name;
+  }
+  if (mlConfigTitleEl) {
+    mlConfigTitleEl.textContent = `${active.name} Config`;
+  }
+  if (mlModelDescriptionEl) {
+    mlModelDescriptionEl.textContent = active.short_description || "";
+  }
+  syncRunButtonState();
+}
+
+function resetMetricCards() {
+  metricPinballEl.textContent = "-";
+  metricCov90El.textContent = "-";
+  metricCov50El.textContent = "-";
+  metricSamplesEl.textContent = "-";
+  btReturnStrategyEl.textContent = "-";
+  btReturnBuyholdEl.textContent = "-";
+  btOutperfEl.textContent = "-";
+  btCapitalStrategyEl.textContent = "-";
+  btCapitalBuyholdEl.textContent = "-";
+  btWindowEl.textContent = "-";
+  quantileLegendEl.textContent = "テスト期間の代表日を表示します。";
+  fanMetaEl.textContent = "q50（中央値）、50%帯、90%帯、実測値を表示します。";
+  nextDayMetaEl.textContent = "最新終値から翌営業日の上昇/下落確率を表示します。";
+}
+
+function drawModelPlaceholders() {
+  const modelName = getActiveModel()?.name || "Selected Model";
+  drawPlaceholder(nextDayCanvas, `Run ${modelName} to draw next-day distribution`);
+  drawPlaceholder(backtestCanvas, `Run ${modelName} to draw 60-day realized backtest`);
+  drawPlaceholder(quantileCanvas, `Run ${modelName} to draw quantile curves`);
+  drawPlaceholder(fanCanvas, `Run ${modelName} to draw fan chart`);
+}
+
+function renderMlModelCards() {
+  if (!mlModelGridEl) return;
+  mlModelGridEl.innerHTML = "";
+
+  for (const model of mlModels) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ml-model-card";
+    if (model.id === activeModelId) {
+      button.classList.add("active");
+    }
+    if (model.status !== "ready") {
+      button.classList.add("pending");
+    }
+    button.dataset.modelId = model.id;
+    button.innerHTML =
+      `<span class="ml-model-card-head">`
+      + `<span class="ml-model-name">${model.name}</span>`
+      + `<span class="ml-model-state">${model.status_label || model.status}</span>`
+      + `</span>`
+      + `<span class="ml-model-summary">${model.short_description || ""}</span>`;
+    mlModelGridEl.appendChild(button);
+  }
+}
+
+function activateModel(modelId) {
+  if (!mlModels.some((model) => model.id === modelId)) return;
+  activeModelId = modelId;
+  latestPayload = null;
+  resetZoom(quantileZoom);
+  resetZoom(fanZoom);
+  resetMetricCards();
+  renderMlModelCards();
+  applyActiveModelUi();
+  drawModelPlaceholders();
+
+  const active = getActiveModel();
+  if (!active) return;
+  if (canRunModel(active)) {
+    setStatus(`${active.name} を選択しました。設定後に実行してください。`);
+  } else {
+    setStatus(`${active.name} は準備中です。利用可能なモデルを選択してください。`);
+  }
+}
+
+function normalizeMlModels(rawModels) {
+  if (!Array.isArray(rawModels)) return [];
+  return rawModels
+    .map((item) => {
+      const id = String(item?.id || "").trim();
+      if (!id) return null;
+      const status = String(item?.status || "").trim().toLowerCase() === "ready" ? "ready" : "coming_soon";
+      return {
+        id,
+        name: String(item?.name || id),
+        short_description: String(item?.short_description || ""),
+        status,
+        status_label: String(item?.status_label || (status === "ready" ? "Ready" : "Coming Soon")),
+        run_label: String(item?.run_label || `Run ${String(item?.name || id)}`),
+        api_path: String(item?.api_path || ""),
+      };
+    })
+    .filter(Boolean);
+}
+
+async function loadMlModels() {
+  let models = [];
+  try {
+    const { response, result } = await fetchJson("/api/ml/models");
+    if (response.ok) {
+      models = normalizeMlModels(result?.models);
+    }
+  } catch (_error) {
+    models = [];
+  }
+
+  if (models.length === 0) {
+    models = FALLBACK_ML_MODELS.slice();
+  }
+
+  mlModels = models;
+  if (!mlModels.some((model) => model.id === activeModelId)) {
+    const firstReady = mlModels.find((model) => canRunModel(model));
+    activeModelId = firstReady?.id || mlModels[0]?.id || "quantile_lstm";
+  }
+  activateModel(activeModelId);
 }
 
 function formatPercent(value) {
@@ -1164,39 +1427,84 @@ function parseErrorMessage(body, fallback) {
   if (!body) return fallback;
   if (typeof body.detail === "string" && body.detail.trim()) return body.detail;
   if (typeof body.message === "string" && body.message.trim()) return body.message;
+  if (typeof body.error === "string" && body.error.trim()) return body.error;
   return fallback;
 }
 
-async function runQuantileForecast() {
+async function runModelForecast() {
+  const activeModel = getActiveModel();
+  if (!canRunModel(activeModel)) {
+    setStatus("このモデルはまだ実行できません。Ready のモデルを選択してください。");
+    return;
+  }
+
   const symbol = normalizeSymbol(mlSymbolInput?.value || "");
   if (!symbol) {
     setStatus("Symbolを入力してください。", true);
     return;
   }
 
-  const params = new URLSearchParams({
+  const requestPayload = {
     symbol,
-    years: String(document.getElementById("ml-years").value || "5"),
-    sequence_length: String(document.getElementById("ml-seq-len").value || "60"),
-    hidden_size: String(document.getElementById("ml-hidden-size").value || "64"),
-    num_layers: String(document.getElementById("ml-num-layers").value || "2"),
-    dropout: String(document.getElementById("ml-dropout").value || "0.2"),
-    max_epochs: String(document.getElementById("ml-max-epochs").value || "80"),
-    patience: String(document.getElementById("ml-patience").value || "10"),
-  });
+    years: Number(document.getElementById("ml-years").value || "5"),
+    sequence_length: Number(document.getElementById("ml-seq-len").value || "60"),
+    hidden_size: Number(document.getElementById("ml-hidden-size").value || "64"),
+    num_layers: Number(document.getElementById("ml-num-layers").value || "2"),
+    dropout: Number(document.getElementById("ml-dropout").value || "0.2"),
+    max_epochs: Number(document.getElementById("ml-max-epochs").value || "80"),
+    patience: Number(document.getElementById("ml-patience").value || "10"),
+    refresh: Boolean(document.getElementById("ml-refresh").checked),
+  };
 
-  if (document.getElementById("ml-refresh").checked) {
-    params.set("refresh", "true");
-  }
-
-  runBtn.disabled = true;
-  setStatus("学習と推論を実行中です...");
+  isRunning = true;
+  syncRunButtonState();
+  setStatus(`${activeModel.name} の学習と推論を実行中です...`);
+  updateProgress(0, "ジョブを開始しています。");
 
   try {
-    const response = await fetch(`/api/ml/quantile-lstm?${params.toString()}`);
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(parseErrorMessage(body, "予測実行に失敗しました。"));
+    const { response: createRes, result: createBody } = await fetchJson(
+      "/api/ml/quantile-lstm/jobs",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestPayload),
+      },
+    );
+    if (!createRes.ok) {
+      throw new Error(parseErrorMessage(createBody, "ジョブ開始に失敗しました。"));
+    }
+
+    const jobId = String(createBody.job_id || "").trim();
+    if (!jobId) {
+      throw new Error("ジョブIDを取得できませんでした。");
+    }
+
+    const maxPolls = 60 * 30;
+    let body = null;
+    for (let pollCount = 0; pollCount < maxPolls; pollCount += 1) {
+      const { response: statusRes, result: statusBody } = await fetchJson(`/api/ml/jobs/${encodeURIComponent(jobId)}`);
+      if (!statusRes.ok) {
+        throw new Error(parseErrorMessage(statusBody, "ジョブ状態の取得に失敗しました。"));
+      }
+
+      updateProgress(Number(statusBody.progress || 0), String(statusBody.message || ""));
+
+      if (statusBody.status === "completed") {
+        body = statusBody.result;
+        updateProgress(100, "完了しました。");
+        break;
+      }
+      if (statusBody.status === "failed") {
+        throw new Error(parseErrorMessage(statusBody, "予測実行に失敗しました。"));
+      }
+
+      await sleep(900);
+    }
+
+    if (!body) {
+      throw new Error("タイムアウト: 学習が長時間終了しませんでした。");
     }
 
     latestPayload = body;
@@ -1209,11 +1517,13 @@ async function runQuantileForecast() {
     renderFanChart();
     const epochs = Number(body?.training?.epochs_trained || 0);
     const valLoss = Number(body?.training?.best_val_pinball_loss || 0);
-    setStatus(`完了: ${symbol} | epochs=${epochs}, best val pinball=${formatNumber(valLoss, 6)}`);
+    setStatus(`完了: ${activeModel.name} ${symbol} | epochs=${epochs}, best val pinball=${formatNumber(valLoss, 6)}`);
   } catch (error) {
+    updateProgress(Number(progressBarEl?.getAttribute("aria-valuenow") || 0), "失敗しました。");
     setStatus(error instanceof Error ? error.message : "予測実行に失敗しました。", true);
   } finally {
-    runBtn.disabled = false;
+    isRunning = false;
+    syncRunButtonState();
   }
 }
 
@@ -1289,8 +1599,18 @@ function setupDragPan(canvas, zoomState, getView, rerender) {
 
 mlForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  await runQuantileForecast();
+  await runModelForecast();
 });
+
+if (mlModelGridEl) {
+  mlModelGridEl.addEventListener("click", (event) => {
+    const card = event.target.closest(".ml-model-card");
+    if (!card) return;
+    const modelId = card.dataset.modelId;
+    if (!modelId) return;
+    activateModel(modelId);
+  });
+}
 
 if (mlSymbolInput) {
   mlSymbolInput.addEventListener("focus", () => {
@@ -1446,11 +1766,15 @@ window.addEventListener("resize", () => {
   renderFanChart();
 });
 
-drawPlaceholder(nextDayCanvas, "Run Quantile LSTM to draw next-day distribution");
-drawPlaceholder(backtestCanvas, "Run Quantile LSTM to draw 60-day realized backtest");
-drawPlaceholder(quantileCanvas, "Run Quantile LSTM to draw quantile curves");
-drawPlaceholder(fanCanvas, "Run Quantile LSTM to draw fan chart");
+resetMetricCards();
+drawModelPlaceholders();
+hideProgress();
 
 loadMlSymbolCatalog().catch(() => {
   setMlCatalogMeta("Failed to load symbol catalog");
+});
+
+loadMlModels().catch(() => {
+  mlModels = FALLBACK_ML_MODELS.slice();
+  activateModel("quantile_lstm");
 });

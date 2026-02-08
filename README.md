@@ -31,7 +31,9 @@ API_LIMIT_PER_DAY=800
 DAILY_BUDGET_UTILIZATION=0.75
 PER_MIN_LIMIT_UTILIZATION=0.9
 REST_MIN_POLL_INTERVAL_SEC=30
+MARKET_CLOSED_SLEEP_SEC=60
 SYMBOL_CATALOG_COUNTRY=United States
+SYMBOL_COUNTRY_MAP=
 SYMBOL_CATALOG_TTL_SEC=86400
 SYMBOL_CATALOG_MAX_ITEMS=25000
 HISTORICAL_DEFAULT_YEARS=5
@@ -54,7 +56,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 右上の `Pages` ボタンから各ページに遷移できます。
 
 - `/`: US Stock Live Monitor（リアルタイム監視）
-- `/ml-lab`: ML Forecast Lab（Quantile LSTMで翌営業日分布を推定）
+- `/ml-lab`: ML Forecast Lab（モデル一覧から選択して翌営業日分布を推定）
 - `/strategy-lab`: Strategy Lab（戦略検証の準備ページ）
 - `/historical/{symbol}`: ヒストリカル表示ページ（例: `/historical/AAPL`）
 
@@ -66,8 +68,9 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 4. ヒストリカル画面では、マウスホイール/`Zoom In`/`Zoom Out` で拡大縮小、ドラッグで表示範囲移動、点にカーソルを合わせると日付と価格を表示、`Reset Zoom (5Y)` で全期間表示へ戻せる
 5. 下のテーブルの `Symbol` 欄にある `x` を押すと監視対象から除外
 6. テーブルに価格・更新時刻が表示され、取得ソース（`websocket` / `rest` / `stored`）は更新時刻の下に小さく表示
+   - `change(%)` は営業中は「現在値 vs 前営業日終値」、休場中は「直近営業日終値 vs その1つ前の営業日終値」で表示
 7. `Refresh Credits` で日次の残APIクレジットを手動更新（`/api_usage` を呼ぶため 1 クレジット消費）
-8. `/ml-lab` では Quantile LSTM を実行し、以下を表示:
+8. `/ml-lab` では Model Catalog からモデルを選択し、実行可能なモデルで以下を表示:
    - 0.1%〜99.9%分位点の分位点関数プロット（代表日を複数比較）
    - ファンチャート（q50, q25-q75, q05-q95, 実測値）
    - 最新時点から翌営業日分布（PDF/CDF、Returns/Prices切替）
@@ -75,6 +78,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
    - 戦略は「1日1%超損失の確率が3%を超えない上限」の範囲で期待リターン最大の株式比率を採用
    - test の平均ピンボール損失 / 被覆率（q05-q95, q25-q75）
    - 時系列分割は「直近5年」を対象に、train=直近6か月を除く期間、val=直近6か月〜3か月、test=直近3か月
+   - 現在 `Ready` は Quantile LSTM のみで、他モデルは `Coming Soon` として UI 上で選択可能
 
 補足:
 - 起動時に `/api_usage` を1回呼び、日次残量を初期化します（1クレジット消費）。
@@ -83,6 +87,9 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - シンボル一覧は `/stocks?country=United States` を取得してキャッシュし、UI検索に使います（`SYMBOL_CATALOG_TTL_SEC` で再取得間隔を調整可能）。
 - 最終取得価格は `app/cache/last_prices.json` に保存され、銘柄追加時は保存済み価格（`stored`）を即表示します。
 - ヒストリカルデータは `GET /api/historical/{symbol}` で取得し、サーバー側でTTLキャッシュします。
+- 価格の自動更新（WebSocket購読/RESTフォールバック）は「各国マーケットの営業日・営業時間内」のみ実行します（営業時間外は `market-closed`）。
+- 国判定は `SYMBOL_COUNTRY_MAP`（例: `AAPL:United States,7203.T:Japan,9988.HK:Hong Kong`）を優先し、未設定時はシンボル接尾辞ヒント（`.T`, `.HK`, `.L` など）→ `SYMBOL_CATALOG_COUNTRY` の順で判定します。
+- この時間判定は通常取引時間ベースです（祝日・臨時休場・昼休みは未考慮）。
 
 ## Basic プラン向け実装ポイント
 
@@ -110,10 +117,11 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `GET /api/symbol-catalog`: 検索候補用シンボル一覧（キャッシュ）
 - `GET /api/symbol-catalog?refresh=true`: シンボル一覧を強制再取得
 - `GET /api/historical/{symbol}?years=5`: 過去N年ヒストリカルデータ（デフォルト5年）
+- `GET /api/ml/models`: ML Forecast Lab のモデル一覧（Ready / Coming Soon）
 - `GET /api/ml/quantile-lstm?...`: Quantile LSTM を学習・推論し、分位点/評価/描画データを返却
 - `GET /api/stream`: SSE でリアルタイム配信
 - `GET /historical/{symbol}`: ヒストリカル表示専用ページ
-- `GET /ml-lab`: Quantile LSTM 分位点予測ページ
+- `GET /ml-lab`: モデル選択式の分位点予測ページ
 - `GET /strategy-lab`: 戦略検証ページ（準備用）
 
 ## 注意

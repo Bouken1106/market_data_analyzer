@@ -19,6 +19,7 @@ const rowsBySymbol = new Map();
 const latestRowsBySymbol = new Map();
 const symbolInsightsBySymbol = new Map();
 const sparklineFetchInFlight = new Set();
+let openSymbolsSet = new Set();
 
 let eventSource;
 let symbolCatalog = [];
@@ -65,6 +66,12 @@ function formatChangePercent(value) {
   return `${Math.abs(value).toFixed(2)}%`;
 }
 
+async function fetchJson(url, options) {
+  const response = await fetch(url, options);
+  const result = await response.json().catch(() => ({}));
+  return { response, result };
+}
+
 function setSelectionError(message) {
   selectionErrorEl.textContent = message || "";
 }
@@ -77,6 +84,10 @@ function setStatus(status) {
   modeEl.textContent = status?.mode ?? "-";
   wsStateEl.textContent = status?.ws_connected ? "connected" : "disconnected";
   fallbackEl.textContent = `${status?.fallback_poll_interval_sec ?? "-"} sec`;
+  const openSymbols = Array.isArray(status?.open_symbols)
+    ? status.open_symbols.map((item) => normalizeSymbol(item)).filter((item) => item)
+    : [];
+  openSymbolsSet = new Set(openSymbols);
   const dailyLeft = status?.daily_credits_left;
   const dailyLimit = status?.daily_credits_limit;
   const isEstimated = Boolean(status?.daily_credits_is_estimated);
@@ -88,6 +99,7 @@ function setStatus(status) {
     creditsLeftEl.textContent = `${dailyLeft} / ${dailyLimit}${isEstimated ? " (est)" : ""}`;
   }
   creditsUpdatedEl.textContent = formatTime(status?.daily_credits_updated_at);
+  refreshRowsForInsights(Array.from(rowsBySymbol.keys()));
 }
 
 function goHistorical(symbol) {
@@ -133,9 +145,15 @@ function applyInsightToRow(tr, symbol, priceValue) {
   changeEl.classList.remove("up", "down");
 
   const currentPrice = Number(priceValue);
+  const latestClose = Number(insight?.latest_close);
   const previousClose = Number(insight?.previous_close);
-  if (Number.isFinite(currentPrice) && Number.isFinite(previousClose) && previousClose > 0) {
-    const pct = ((currentPrice - previousClose) / previousClose) * 100;
+  const marketIsOpen = openSymbolsSet.has(symbol);
+  const referenceClose = marketIsOpen
+    ? latestClose
+    : (Number.isFinite(previousClose) && previousClose > 0 ? previousClose : latestClose);
+
+  if (Number.isFinite(currentPrice) && Number.isFinite(referenceClose) && referenceClose > 0) {
+    const pct = ((currentPrice - referenceClose) / referenceClose) * 100;
     if (pct > 0) {
       changeEl.classList.add("up");
       changeEl.textContent = `▲ ${formatChangePercent(pct)}`;
@@ -257,8 +275,7 @@ async function loadSymbolInsights(symbols, refresh = false) {
       params.set("refresh", "true");
     }
 
-    const response = await fetch(`/api/sparkline?${params.toString()}`);
-    const result = await response.json().catch(() => ({}));
+    const { response, result } = await fetchJson(`/api/sparkline?${params.toString()}`);
     if (!response.ok || !Array.isArray(result.items)) {
       return;
     }
@@ -267,12 +284,14 @@ async function loadSymbolInsights(symbols, refresh = false) {
       const symbol = normalizeSymbol(item?.symbol);
       if (!symbol) return;
 
+      const latestClose = Number(item?.latest_close);
       const previousClose = Number(item?.previous_close);
       const trend = (Array.isArray(item?.trend_30d) ? item.trend_30d : [])
         .map((point) => Number(point))
         .filter((num) => Number.isFinite(num));
 
       symbolInsightsBySymbol.set(symbol, {
+        latest_close: Number.isFinite(latestClose) ? latestClose : null,
         previous_close: Number.isFinite(previousClose) ? previousClose : null,
         trend_30d: trend,
       });
@@ -395,15 +414,13 @@ async function updateSymbolsOnServer() {
     do {
       syncQueued = false;
       const payloadSymbols = [...selectedSymbols];
-      const response = await fetch("/api/symbols", {
+      const { response, result } = await fetchJson("/api/symbols", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ symbols: payloadSymbols.join(",") }),
       });
-
-      const result = await response.json().catch(() => ({}));
       if (!response.ok) {
         setSelectionError(result.detail || "Failed to update symbols");
         break;
@@ -457,8 +474,9 @@ async function loadSymbolCatalog(refresh = false) {
   setCatalogMeta(refresh ? "Refreshing symbol catalog..." : "Loading symbol catalog...");
 
   try {
-    const response = await fetch(refresh ? "/api/symbol-catalog?refresh=true" : "/api/symbol-catalog");
-    const result = await response.json().catch(() => ({}));
+    const { response, result } = await fetchJson(
+      refresh ? "/api/symbol-catalog?refresh=true" : "/api/symbol-catalog",
+    );
 
     if (!response.ok) {
       setCatalogMeta(result.detail || "Failed to load symbol catalog");
@@ -598,8 +616,7 @@ refreshCatalogBtn.addEventListener("click", async () => {
 refreshCreditsBtn.addEventListener("click", async () => {
   refreshCreditsBtn.disabled = true;
   try {
-    const response = await fetch("/api/credits?refresh=true");
-    const result = await response.json().catch(() => ({}));
+    const { response, result } = await fetchJson("/api/credits?refresh=true");
     if (!response.ok || !result.status) {
       alert(result.detail || result.note || "Failed to refresh credits");
       return;

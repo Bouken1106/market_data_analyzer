@@ -5,7 +5,7 @@ import math
 import random
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import torch
@@ -29,6 +29,14 @@ FEATURE_NAMES = [
     "range_ratio",
     "volume_z_20",
 ]
+ProgressCallback = Callable[[int, str], None]
+
+
+def _emit_progress(progress_callback: ProgressCallback | None, progress: int, message: str) -> None:
+    if progress_callback is None:
+        return
+    safe_progress = max(0, min(100, int(progress)))
+    progress_callback(safe_progress, str(message))
 
 
 @dataclass(frozen=True)
@@ -111,16 +119,23 @@ class QuantileLstmModel(nn.Module):
         return self.out(last_hidden)
 
 
-def run_quantile_lstm_forecast(points: list[dict[str, Any]], config_payload: dict[str, Any] | None = None) -> dict[str, Any]:
+def run_quantile_lstm_forecast(
+    points: list[dict[str, Any]],
+    config_payload: dict[str, Any] | None = None,
+    progress_callback: ProgressCallback | None = None,
+) -> dict[str, Any]:
     config = QuantileLstmConfig.from_payload(config_payload)
+    _emit_progress(progress_callback, 5, "学習準備を開始しました。")
     _set_seed(config.seed)
 
+    _emit_progress(progress_callback, 10, "特徴量を生成しています。")
     dates, features, closes = _build_feature_matrix(points)
     if len(dates) < (config.sequence_length + 190):
         raise ValueError(
             "ヒストリカルデータが不足しています。少なくとも約9か月以上の営業日データが必要です。"
         )
 
+    _emit_progress(progress_callback, 18, "系列データを構築しています。")
     seq_features, targets, target_dates, base_closes, realized_closes = _build_sequences(
         dates=dates,
         features=features,
@@ -128,6 +143,7 @@ def run_quantile_lstm_forecast(points: list[dict[str, Any]], config_payload: dic
         sequence_length=config.sequence_length,
     )
 
+    _emit_progress(progress_callback, 22, "train/val/test を分割しています。")
     split = _split_by_recent_months(target_dates, lookback_months=60)
     train_idx = split["train_idx"]
     val_idx = split["val_idx"]
@@ -140,16 +156,20 @@ def run_quantile_lstm_forecast(points: list[dict[str, Any]], config_payload: dic
     val_y = targets[val_idx]
     test_y = targets[test_idx]
 
+    _emit_progress(progress_callback, 28, "特徴量スケーリングを実行しています。")
     scaled_train_x, scaled_val_x, scaled_test_x = _scale_features(train_x, val_x, test_x)
 
+    _emit_progress(progress_callback, 30, "LSTM 学習を開始します。")
     model, device, best_val_loss, epochs_trained = _train_model(
         train_x=scaled_train_x,
         train_y=train_y,
         val_x=scaled_val_x,
         val_y=val_y,
         config=config,
+        progress_callback=progress_callback,
     )
 
+    _emit_progress(progress_callback, 86, "推論と評価指標を計算しています。")
     test_pred_quantiles = _predict_quantiles_sorted(model=model, device=device, features=scaled_test_x)
     quantiles = QUANTILES.astype(np.float64)
 
@@ -195,6 +215,7 @@ def run_quantile_lstm_forecast(points: list[dict[str, Any]], config_payload: dic
         initial_capital=10000.0,
     )
 
+    _emit_progress(progress_callback, 95, "可視化データを整形しています。")
     representative_curves = _build_representative_curves(
         quantiles=quantiles,
         target_dates=target_dates[test_idx],
@@ -222,6 +243,7 @@ def run_quantile_lstm_forecast(points: list[dict[str, Any]], config_payload: dic
         "q95_prices": _to_float_list(test_pred_price_quantiles[:, q95_index]),
     }
 
+    _emit_progress(progress_callback, 100, "学習と推論が完了しました。")
     return {
         "config": {
             "sequence_length": config.sequence_length,
@@ -591,6 +613,7 @@ def _train_model(
     val_x: np.ndarray,
     val_y: np.ndarray,
     config: QuantileLstmConfig,
+    progress_callback: ProgressCallback | None = None,
 ) -> tuple[QuantileLstmModel, torch.device, float, int]:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = QuantileLstmModel(input_size=train_x.shape[-1], config=config).to(device)
@@ -630,6 +653,12 @@ def _train_model(
 
         val_loss = _evaluate(model=model, loader=val_loader, quantiles=quantiles, device=device)
         epochs_trained = epoch + 1
+        training_progress = 30 + int((epochs_trained / max(1, config.max_epochs)) * 55)
+        _emit_progress(
+            progress_callback,
+            training_progress,
+            f"学習中: epoch {epochs_trained}/{config.max_epochs} (val pinball={val_loss:.6f})",
+        )
 
         if val_loss + config.min_delta < best_val_loss:
             best_val_loss = val_loss
@@ -638,6 +667,11 @@ def _train_model(
         else:
             patience_counter += 1
             if patience_counter >= config.patience:
+                _emit_progress(
+                    progress_callback,
+                    training_progress,
+                    f"Early stopping: {epochs_trained} epoch で終了しました。",
+                )
                 break
 
     if best_state is not None:

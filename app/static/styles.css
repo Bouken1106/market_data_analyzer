@@ -490,6 +490,71 @@ select:focus-visible,
   gap: 12px;
 }
 
+.ml-model-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.ml-model-card {
+  border: 1px solid #2b3f5b;
+  border-radius: 12px;
+  background: rgba(11, 17, 29, 0.9);
+  color: #c6d7ee;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  text-align: left;
+  transition: border-color 0.14s ease, background 0.14s ease, transform 0.14s ease;
+}
+
+.ml-model-card:hover {
+  border-color: #4d7fb8;
+  background: rgba(15, 24, 40, 0.95);
+  transform: translateY(-1px);
+}
+
+.ml-model-card.active {
+  border-color: #79caff;
+  box-shadow: 0 0 0 1px rgba(121, 202, 255, 0.25);
+}
+
+.ml-model-card.pending .ml-model-state {
+  color: #ffd28f;
+  border-color: rgba(255, 210, 143, 0.35);
+  background: rgba(66, 45, 14, 0.5);
+}
+
+.ml-model-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ml-model-name {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #e8f1ff;
+}
+
+.ml-model-state {
+  border: 1px solid #2f5f7f;
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: #89d2ff;
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ml-model-summary {
+  color: #9db0ca;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
 .ml-form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
@@ -582,6 +647,27 @@ select:focus-visible,
 
 .ml-form-actions {
   align-items: center;
+}
+
+.ml-progress {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.ml-progress-track {
+  height: 12px;
+  border: 1px solid #2b4565;
+  border-radius: 999px;
+  background: rgba(15, 25, 41, 0.9);
+  overflow: hidden;
+}
+
+.ml-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #2f88ff 0%, #17d4ff 100%);
+  transition: width 0.25s ease;
 }
 
 .ml-checkbox {
