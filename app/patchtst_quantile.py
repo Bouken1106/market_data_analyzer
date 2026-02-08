@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Literal
 
@@ -13,6 +14,7 @@ from torch.utils.data import DataLoader, Dataset
 
 DEFAULT_QUANTILES = np.arange(0.001, 1.0, 0.001, dtype=np.float32)
 ProgressCallback = Callable[[int, str], None]
+CancelCheck = Callable[[], None]
 
 
 @dataclass(frozen=True)
@@ -162,6 +164,12 @@ def _emit_progress(progress_callback: ProgressCallback | None, progress: int, me
     if progress_callback is None:
         return
     progress_callback(max(0, min(100, int(progress))), str(message))
+
+
+def _run_cancel_check(cancel_check: CancelCheck | None) -> None:
+    if cancel_check is None:
+        return
+    cancel_check()
 
 
 class RollingWindowDataset(Dataset):
@@ -508,6 +516,8 @@ def _train_one_attempt(
     config: PatchTSTConfig,
     device: torch.device,
     verbose: bool,
+    progress_callback: ProgressCallback | None = None,
+    cancel_check: CancelCheck | None = None,
 ) -> tuple[PatchTSTQuantileModel, list[dict[str, float]], float]:
     model = PatchTSTQuantileModel(
         input_length=config.input_length,
@@ -548,14 +558,20 @@ def _train_one_attempt(
     best_val = float("inf")
     epochs_without_improvement = 0
     history: list[dict[str, float]] = []
+    train_steps_per_epoch = max(1, len(train_loader))
+    total_train_steps = max(1, config.max_epochs * train_steps_per_epoch)
+    last_progress = 29
+    last_emit_at = 0.0
 
     for epoch in range(1, config.max_epochs + 1):
+        _run_cancel_check(cancel_check)
         model.train()
         train_loss_sum = 0.0
         train_count = 0
         optimizer.zero_grad(set_to_none=True)
 
         for step, (batch_x, batch_y) in enumerate(train_loader, start=1):
+            _run_cancel_check(cancel_check)
             batch_x = batch_x.to(device, non_blocking=pin_memory)
             batch_y = batch_y.to(device, non_blocking=pin_memory)
 
@@ -587,12 +603,27 @@ def _train_one_attempt(
             batch_size_now = int(batch_x.size(0))
             train_loss_sum += float(loss.detach().cpu()) * batch_size_now
             train_count += batch_size_now
+            completed_steps = ((epoch - 1) * train_steps_per_epoch) + min(step, train_steps_per_epoch)
+            train_progress = 30 + int((completed_steps / total_train_steps) * 48)
+            train_progress = max(30, min(78, train_progress))
+            now = time.monotonic()
+            # Emit at most ~1Hz unless progress advanced, to keep updates smooth without excessive lock contention.
+            if (train_progress > last_progress) or ((now - last_emit_at) >= 1.0) or (step == train_steps_per_epoch):
+                _emit_progress(
+                    progress_callback,
+                    train_progress,
+                    f"PatchTST学習中: epoch {epoch}/{config.max_epochs} (batch {step}/{train_steps_per_epoch})",
+                )
+                last_progress = max(last_progress, train_progress)
+                last_emit_at = now
 
+        _run_cancel_check(cancel_check)
         model.eval()
         val_loss_sum = 0.0
         val_count = 0
         with torch.no_grad():
             for batch_x, batch_y in val_loader:
+                _run_cancel_check(cancel_check)
                 batch_x = batch_x.to(device, non_blocking=pin_memory)
                 batch_y = batch_y.to(device, non_blocking=pin_memory)
                 pred = model(batch_x)
@@ -606,6 +637,17 @@ def _train_one_attempt(
         train_loss = train_loss_sum / max(1, train_count)
         val_loss = val_loss_sum / max(1, val_count)
         history.append({"epoch": float(epoch), "train_loss": train_loss, "val_loss": val_loss})
+        train_progress = 30 + int((epoch / max(1, config.max_epochs)) * 48)
+        train_progress = max(30, min(78, train_progress))
+        if train_progress < last_progress:
+            train_progress = last_progress
+        _emit_progress(
+            progress_callback,
+            train_progress,
+            f"PatchTST学習中: epoch {epoch}/{config.max_epochs} (val pinball={val_loss:.6f})",
+        )
+        last_progress = train_progress
+        last_emit_at = time.monotonic()
 
         if verbose:
             print(
@@ -620,6 +662,7 @@ def _train_one_attempt(
         else:
             epochs_without_improvement += 1
             if epochs_without_improvement >= config.patience:
+                _emit_progress(progress_callback, train_progress, f"Early stopping: epoch {epoch} で終了しました。")
                 if verbose:
                     print(f"Early stopping at epoch {epoch}.")
                 break
@@ -638,6 +681,8 @@ def _train_with_memory_fallback(
     config: PatchTSTConfig,
     device: torch.device,
     verbose: bool,
+    progress_callback: ProgressCallback | None = None,
+    cancel_check: CancelCheck | None = None,
 ) -> tuple[PatchTSTQuantileModel, list[dict[str, float]], float, int]:
     batch_candidates: list[int] = []
     current = max(1, int(config.batch_size))
@@ -651,6 +696,7 @@ def _train_with_memory_fallback(
 
     last_error: RuntimeError | None = None
     for batch_size in batch_candidates:
+        _run_cancel_check(cancel_check)
         attempt_cfg = replace(config, batch_size=batch_size)
         try:
             model, history, best_val = _train_one_attempt(
@@ -662,6 +708,8 @@ def _train_with_memory_fallback(
                 config=attempt_cfg,
                 device=device,
                 verbose=verbose,
+                progress_callback=progress_callback,
+                cancel_check=cancel_check,
             )
             return model, history, best_val, batch_size
         except RuntimeError as exc:
@@ -683,6 +731,7 @@ def predict_quantiles_from_array(
     x: np.ndarray,
     device: torch.device,
     batch_size: int = 128,
+    cancel_check: CancelCheck | None = None,
 ) -> np.ndarray:
     if len(x) == 0:
         return np.empty((0, model.quantile_count), dtype=np.float32)
@@ -690,6 +739,7 @@ def predict_quantiles_from_array(
     model.eval()
     preds: list[np.ndarray] = []
     for start in range(0, len(x), max(1, batch_size)):
+        _run_cancel_check(cancel_check)
         end = min(len(x), start + max(1, batch_size))
         batch_x = torch.from_numpy(x[start:end].astype(np.float32, copy=False)).to(device)
         pred = model(batch_x).detach().cpu().numpy()
@@ -706,8 +756,15 @@ def _evaluate_pinball_on_array(
     quantiles: np.ndarray,
     device: torch.device,
     batch_size: int,
+    cancel_check: CancelCheck | None = None,
 ) -> float:
-    pred = predict_quantiles_from_array(model=model, x=x, device=device, batch_size=batch_size).astype(np.float64)
+    pred = predict_quantiles_from_array(
+        model=model,
+        x=x,
+        device=device,
+        batch_size=batch_size,
+        cancel_check=cancel_check,
+    ).astype(np.float64)
     y_col = y.astype(np.float64)[:, None]
     error = y_col - pred
     q_row = quantiles.astype(np.float64)[None, :]
@@ -721,7 +778,10 @@ def train_patchtst_quantile(
     feature_config: FeatureConfig | None = None,
     quantiles: np.ndarray | None = None,
     verbose: bool = True,
+    progress_callback: ProgressCallback | None = None,
+    cancel_check: CancelCheck | None = None,
 ) -> dict[str, Any]:
+    _run_cancel_check(cancel_check)
     cfg = config or PatchTSTConfig()
     feat_cfg = feature_config or FeatureConfig()
     probs = np.asarray(quantiles if quantiles is not None else DEFAULT_QUANTILES, dtype=np.float32)
@@ -730,14 +790,19 @@ def train_patchtst_quantile(
     if np.any(np.diff(probs) <= 0.0):
         raise ValueError("quantiles must be strictly increasing.")
 
+    _run_cancel_check(cancel_check)
     _set_seed(cfg.seed)
+    _emit_progress(progress_callback, 16, "PatchTST特徴量を生成しています。")
     prepared = prepare_timeseries_dataframe(df, feat_cfg)
+    _run_cancel_check(cancel_check)
+    _emit_progress(progress_callback, 22, "時系列ウィンドウを構築しています。")
     windows = build_rolling_windows(prepared=prepared, input_length=cfg.input_length)
     train_idx, val_idx, test_idx = split_time_series_indices(
         sample_count=len(windows.y),
         train_ratio=cfg.train_ratio,
         val_ratio=cfg.val_ratio,
     )
+    _emit_progress(progress_callback, 25, "train/val/test を分割しました。")
 
     train_x = windows.x[train_idx]
     val_x = windows.x[val_idx]
@@ -746,11 +811,14 @@ def train_patchtst_quantile(
     val_y = windows.y[val_idx]
     test_y = windows.y[test_idx]
 
+    _run_cancel_check(cancel_check)
+    _emit_progress(progress_callback, 28, "特徴量スケーリングを実行しています。")
     scaler_mean, scaler_std = fit_feature_scaler(train_x)
     train_x_scaled = apply_feature_scaler(train_x, scaler_mean, scaler_std)
     val_x_scaled = apply_feature_scaler(val_x, scaler_mean, scaler_std)
     test_x_scaled = apply_feature_scaler(test_x, scaler_mean, scaler_std)
 
+    _run_cancel_check(cancel_check)
     device = _resolve_device(cfg.device)
     if verbose:
         print(
@@ -758,6 +826,7 @@ def train_patchtst_quantile(
             f"{len(train_idx)}/{len(val_idx)}/{len(test_idx)}, features={train_x.shape[-1]}"
         )
 
+    _emit_progress(progress_callback, 30, "PatchTSTの最適化を開始します。")
     model, history, best_val_loss, used_batch_size = _train_with_memory_fallback(
         train_x=train_x_scaled,
         train_y=train_y,
@@ -767,8 +836,12 @@ def train_patchtst_quantile(
         config=cfg,
         device=device,
         verbose=verbose,
+        progress_callback=progress_callback,
+        cancel_check=cancel_check,
     )
 
+    _run_cancel_check(cancel_check)
+    _emit_progress(progress_callback, 80, "検証・テスト損失を評価しています。")
     eval_batch = max(used_batch_size, 64)
     val_pinball = _evaluate_pinball_on_array(
         model=model,
@@ -777,6 +850,7 @@ def train_patchtst_quantile(
         quantiles=probs,
         device=device,
         batch_size=eval_batch,
+        cancel_check=cancel_check,
     )
     test_pinball = _evaluate_pinball_on_array(
         model=model,
@@ -785,13 +859,16 @@ def train_patchtst_quantile(
         quantiles=probs,
         device=device,
         batch_size=eval_batch,
+        cancel_check=cancel_check,
     )
 
+    _emit_progress(progress_callback, 81, "テスト分位点を計算しています。")
     test_return_quantiles = predict_quantiles_from_array(
         model=model,
         x=test_x_scaled,
         device=device,
         batch_size=eval_batch,
+        cancel_check=cancel_check,
     ).astype(np.float64)
     test_price_quantiles = windows.base_prices[test_idx][:, None] * np.exp(test_return_quantiles)
 
@@ -849,6 +926,26 @@ def _to_float_list(values: Any) -> list[float]:
 
 def _nearest_quantile_index(quantiles: np.ndarray, target_tau: float) -> int:
     return int(np.argmin(np.abs(np.asarray(quantiles, dtype=np.float64) - float(target_tau))))
+
+
+def _select_recent_months_mask(dates: np.ndarray, months: int) -> np.ndarray:
+    count = int(len(dates))
+    if count == 0:
+        return np.zeros(0, dtype=bool)
+    safe_months = max(1, int(months))
+    ts = pd.to_datetime(np.asarray(dates, dtype=object), errors="coerce")
+    valid = ~pd.isna(ts)
+    if not bool(valid.any()):
+        return np.ones(count, dtype=bool)
+
+    last_ts = ts[valid].max()
+    if pd.isna(last_ts):
+        return np.ones(count, dtype=bool)
+    cutoff = last_ts - pd.DateOffset(months=safe_months)
+    mask = np.asarray((ts >= cutoff) & valid, dtype=bool)
+    if bool(mask.any()):
+        return mask
+    return np.ones(count, dtype=bool)
 
 
 def _split_meta(dates: np.ndarray) -> dict[str, Any]:
@@ -1027,31 +1124,38 @@ def run_patchtst_forecast(
     points: list[dict[str, Any]],
     config_payload: dict[str, Any] | None = None,
     progress_callback: ProgressCallback | None = None,
+    cancel_check: CancelCheck | None = None,
 ) -> dict[str, Any]:
+    _run_cancel_check(cancel_check)
     runtime_cfg = PatchTSTRuntimeConfig.from_payload(config_payload)
     config = runtime_cfg.model_config
 
     _emit_progress(progress_callback, 5, "PatchTSTの学習準備を開始しました。")
+    _run_cancel_check(cancel_check)
     df = _points_to_dataframe(points)
     if len(df) < (config.input_length + 190):
         raise ValueError("ヒストリカルデータが不足しています。少なくとも約9か月以上の営業日データが必要です。")
 
-    _emit_progress(progress_callback, 15, "PatchTSTを学習しています。")
+    _emit_progress(progress_callback, 10, "PatchTST用のデータを整形しています。")
     trained = train_patchtst_quantile(
         df=df,
         config=config,
         quantiles=DEFAULT_QUANTILES,
         verbose=False,
+        progress_callback=progress_callback,
+        cancel_check=cancel_check,
     )
     artifact: PatchTSTArtifact = trained["artifact"]
 
+    _run_cancel_check(cancel_check)
     _emit_progress(progress_callback, 82, "推論結果を整形しています。")
-    forecast = predict_next_day_quantiles(df=df, artifact=artifact)
+    forecast = predict_next_day_quantiles(df=df, artifact=artifact, cancel_check=cancel_check)
 
     quantiles = np.asarray(trained["test"]["quantiles"], dtype=np.float64)
     test_dates = np.asarray(trained["test"]["dates"], dtype=object)
     test_returns = np.asarray(trained["test"]["actual_returns"], dtype=np.float64)
     test_prices = np.asarray(trained["test"]["actual_prices"], dtype=np.float64)
+    test_base_prices = np.asarray(trained["test"]["base_prices"], dtype=np.float64)
     test_pred_returns = np.asarray(trained["test"]["pred_return_quantiles"], dtype=np.float64)
     test_pred_prices = np.asarray(trained["test"]["pred_price_quantiles"], dtype=np.float64)
 
@@ -1079,21 +1183,28 @@ def run_patchtst_forecast(
         actual_prices=test_prices,
         representative_days=runtime_cfg.representative_days,
     )
+    fan_mask = _select_recent_months_mask(test_dates, months=3)
+    fan_dates = test_dates[fan_mask]
+    fan_returns = test_returns[fan_mask]
+    fan_prices = test_prices[fan_mask]
+    fan_base_prices = test_base_prices[fan_mask]
+    fan_pred_returns = test_pred_returns[fan_mask]
+    fan_pred_prices = test_pred_prices[fan_mask]
     fan_chart = {
-        "dates": [pd.Timestamp(d).date().isoformat() for d in test_dates],
-        "actual_returns": _to_float_list(test_returns),
-        "actual_prices": _to_float_list(test_prices),
-        "base_close": _to_float_list(trained["test"]["base_prices"]),
-        "q05_returns": _to_float_list(test_pred_returns[:, q05_idx]),
-        "q25_returns": _to_float_list(test_pred_returns[:, q25_idx]),
-        "q50_returns": _to_float_list(test_pred_returns[:, q50_idx]),
-        "q75_returns": _to_float_list(test_pred_returns[:, q75_idx]),
-        "q95_returns": _to_float_list(test_pred_returns[:, q95_idx]),
-        "q05_prices": _to_float_list(test_pred_prices[:, q05_idx]),
-        "q25_prices": _to_float_list(test_pred_prices[:, q25_idx]),
-        "q50_prices": _to_float_list(test_pred_prices[:, q50_idx]),
-        "q75_prices": _to_float_list(test_pred_prices[:, q75_idx]),
-        "q95_prices": _to_float_list(test_pred_prices[:, q95_idx]),
+        "dates": [pd.Timestamp(d).date().isoformat() for d in fan_dates],
+        "actual_returns": _to_float_list(fan_returns),
+        "actual_prices": _to_float_list(fan_prices),
+        "base_close": _to_float_list(fan_base_prices),
+        "q05_returns": _to_float_list(fan_pred_returns[:, q05_idx]),
+        "q25_returns": _to_float_list(fan_pred_returns[:, q25_idx]),
+        "q50_returns": _to_float_list(fan_pred_returns[:, q50_idx]),
+        "q75_returns": _to_float_list(fan_pred_returns[:, q75_idx]),
+        "q95_returns": _to_float_list(fan_pred_returns[:, q95_idx]),
+        "q05_prices": _to_float_list(fan_pred_prices[:, q05_idx]),
+        "q25_prices": _to_float_list(fan_pred_prices[:, q25_idx]),
+        "q50_prices": _to_float_list(fan_pred_prices[:, q50_idx]),
+        "q75_prices": _to_float_list(fan_pred_prices[:, q75_idx]),
+        "q95_prices": _to_float_list(fan_pred_prices[:, q95_idx]),
     }
 
     next_ret_q = np.asarray(forecast["return_quantiles"], dtype=np.float64)
@@ -1179,7 +1290,12 @@ def run_patchtst_forecast(
     }
 
 
-def predict_next_day_quantiles(df: pd.DataFrame, artifact: PatchTSTArtifact) -> dict[str, Any]:
+def predict_next_day_quantiles(
+    df: pd.DataFrame,
+    artifact: PatchTSTArtifact,
+    cancel_check: CancelCheck | None = None,
+) -> dict[str, Any]:
+    _run_cancel_check(cancel_check)
     prepared = prepare_timeseries_dataframe(df, artifact.feature_config)
     if prepared.features.shape[1] != len(artifact.feature_names):
         raise ValueError(
@@ -1196,6 +1312,7 @@ def predict_next_day_quantiles(df: pd.DataFrame, artifact: PatchTSTArtifact) -> 
         x=recent_x,
         device=artifact.device,
         batch_size=1,
+        cancel_check=cancel_check,
     )[0].astype(np.float64)
 
     last_price = float(prepared.prices[-1])

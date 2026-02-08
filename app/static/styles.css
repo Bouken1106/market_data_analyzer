@@ -244,6 +244,16 @@ select:focus-visible,
   box-shadow: 0 8px 16px rgba(0, 0, 0, 0.35);
 }
 
+.danger-action {
+  background: linear-gradient(135deg, #a8303e 0%, #8d1d2f 100%);
+  color: #ffe9ee;
+  border-color: #b24758;
+}
+
+.danger-action:hover {
+  box-shadow: 0 8px 18px rgba(188, 62, 84, 0.35);
+}
+
 .hint {
   margin: 8px 0 0;
   color: var(--muted);

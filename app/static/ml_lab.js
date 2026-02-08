@@ -9,6 +9,7 @@ const mlActiveModelPillEl = document.getElementById("ml-active-model-pill");
 const mlConfigTitleEl = document.getElementById("ml-config-title");
 const mlModelDescriptionEl = document.getElementById("ml-model-description");
 const runBtn = document.getElementById("ml-run-btn");
+const cancelBtn = document.getElementById("ml-cancel-btn");
 const statusEl = document.getElementById("ml-status");
 const progressWrapEl = document.getElementById("ml-progress-wrap");
 const progressBarEl = document.getElementById("ml-progress-bar");
@@ -61,6 +62,8 @@ let mlSymbolCatalog = [];
 let mlModels = [];
 let activeModelId = "quantile_lstm";
 let isRunning = false;
+let isCancelling = false;
+let activeJobId = "";
 const MAX_DROPDOWN_ITEMS = 120;
 const FALLBACK_ML_MODELS = [
   {
@@ -136,6 +139,14 @@ function normalizeSymbol(raw) {
 function setMlCatalogMeta(message) {
   if (!mlCatalogMetaEl) return;
   mlCatalogMetaEl.textContent = message || "";
+}
+
+function closeParamHelpPopovers(exceptDetail = null) {
+  const openDetails = document.querySelectorAll("details.param-help[open]");
+  openDetails.forEach((detail) => {
+    if (detail === exceptDetail) return;
+    detail.removeAttribute("open");
+  });
 }
 
 function showMlDropdown() {
@@ -321,6 +332,10 @@ function syncRunButtonState() {
   if (runBtn) {
     runBtn.textContent = active?.run_label || "Run Model";
     runBtn.disabled = isRunning || !canRunModel(active);
+  }
+  if (cancelBtn) {
+    cancelBtn.textContent = isCancelling ? "停止中..." : "停止";
+    cancelBtn.disabled = !isRunning || !activeJobId || isCancelling;
   }
 }
 
@@ -1370,7 +1385,7 @@ function renderNextDayDistribution(payload) {
   ctx.stroke();
 
   if (distType === "pdf") {
-    const pdfPoints = buildSmoothPdfFromQuantiles(retQ, taus, mode === "prices");
+    const pdfPoints = buildSmoothPdfFromQuantiles(retQ, taus, true);
     if (pdfPoints.length < 2) {
       drawPlaceholder(nextDayCanvas, "Not enough points for smooth probability density");
       return;
@@ -1618,6 +1633,43 @@ function parseErrorMessage(body, fallback) {
   return fallback;
 }
 
+function currentProgressValue() {
+  return Number(progressBarEl?.getAttribute("aria-valuenow") || 0);
+}
+
+async function cancelRunningJob() {
+  if (!isRunning || !activeJobId || isCancelling) {
+    return;
+  }
+
+  isCancelling = true;
+  syncRunButtonState();
+  setStatus("停止を要求しています...");
+  updateProgress(0, "停止を要求しています...");
+
+  let requested = false;
+  try {
+    const { response, result } = await fetchJson(`/api/ml/jobs/${encodeURIComponent(activeJobId)}/cancel`, {
+      method: "POST",
+    });
+    if (!response.ok) {
+      throw new Error(parseErrorMessage(result, "停止要求に失敗しました。"));
+    }
+    requested = true;
+    const message = String(result?.message || "停止を要求しました。");
+    updateProgress(0, message);
+    setStatus(message);
+  } catch (error) {
+    isCancelling = false;
+    setStatus(error instanceof Error ? error.message : "停止要求に失敗しました。", true);
+  } finally {
+    if (!requested) {
+      isCancelling = false;
+    }
+    syncRunButtonState();
+  }
+}
+
 async function runModelForecast() {
   const activeModel = getActiveModel();
   if (!canRunModel(activeModel)) {
@@ -1643,6 +1695,8 @@ async function runModelForecast() {
     refresh: Boolean(document.getElementById("ml-refresh").checked),
   };
 
+  activeJobId = "";
+  isCancelling = false;
   isRunning = true;
   syncRunButtonState();
   setStatus(`${activeModel.name} の学習と推論を実行中です...`);
@@ -1668,6 +1722,8 @@ async function runModelForecast() {
     if (!jobId) {
       throw new Error("ジョブIDを取得できませんでした。");
     }
+    activeJobId = jobId;
+    syncRunButtonState();
 
     const maxPolls = 60 * 30;
     let body = null;
@@ -1677,15 +1733,31 @@ async function runModelForecast() {
         throw new Error(parseErrorMessage(statusBody, "ジョブ状態の取得に失敗しました。"));
       }
 
-      updateProgress(Number(statusBody.progress || 0), String(statusBody.message || ""));
+      const jobStatus = String(statusBody.status || "");
+      const jobMessage = String(statusBody.message || "");
+      if (jobStatus === "cancelling") {
+        isCancelling = true;
+        syncRunButtonState();
+        updateProgress(0, jobMessage || "停止を要求しています...");
+      } else if (isCancelling) {
+        updateProgress(0, jobMessage || "停止を要求しています...");
+      } else {
+        updateProgress(Number(statusBody.progress || 0), jobMessage);
+      }
 
-      if (statusBody.status === "completed") {
+      if (jobStatus === "completed") {
         body = statusBody.result;
         updateProgress(100, "完了しました。");
         break;
       }
-      if (statusBody.status === "failed") {
+      if (jobStatus === "failed") {
         throw new Error(parseErrorMessage(statusBody, "予測実行に失敗しました。"));
+      }
+      if (jobStatus === "cancelled") {
+        const cancelMsg = String(statusBody.message || "停止しました。");
+        updateProgress(0, cancelMsg);
+        setStatus(cancelMsg);
+        return;
       }
 
       await sleep(900);
@@ -1707,9 +1779,11 @@ async function runModelForecast() {
     const valLoss = Number(body?.training?.best_val_pinball_loss || 0);
     setStatus(`完了: ${activeModel.name} ${symbol} | epochs=${epochs}, best val pinball=${formatNumber(valLoss, 6)}`);
   } catch (error) {
-    updateProgress(Number(progressBarEl?.getAttribute("aria-valuenow") || 0), "失敗しました。");
+    updateProgress(currentProgressValue(), "失敗しました。");
     setStatus(error instanceof Error ? error.message : "予測実行に失敗しました。", true);
   } finally {
+    activeJobId = "";
+    isCancelling = false;
     isRunning = false;
     syncRunButtonState();
   }
@@ -1790,6 +1864,12 @@ mlForm.addEventListener("submit", async (event) => {
   await runModelForecast();
 });
 
+if (cancelBtn) {
+  cancelBtn.addEventListener("click", async () => {
+    await cancelRunningJob();
+  });
+}
+
 if (mlModelGridEl) {
   mlModelGridEl.addEventListener("click", (event) => {
     const card = event.target.closest(".ml-model-card");
@@ -1845,6 +1925,16 @@ if (mlSymbolSearchArea) {
     }
   });
 }
+
+document.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof Element)) {
+    closeParamHelpPopovers();
+    return;
+  }
+  const clickedHelp = target.closest("details.param-help");
+  closeParamHelpPopovers(clickedHelp);
+});
 
 if (mlRefreshCatalogBtn) {
   mlRefreshCatalogBtn.addEventListener("click", async () => {

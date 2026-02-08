@@ -254,6 +254,10 @@ class QuantileLstmJobRequest(BaseModel):
     refresh: bool = False
 
 
+class MlJobCancelledError(Exception):
+    pass
+
+
 class LastPriceStore:
     def __init__(self, cache_path: Path, flush_interval_sec: int = 5) -> None:
         self.cache_path = cache_path
@@ -1167,6 +1171,7 @@ class MlJobStore:
         self.max_jobs = max(20, max_jobs)
         self._jobs: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
+        self._terminal_statuses = frozenset({"completed", "failed", "cancelled"})
 
     def create(self, kind: str, symbol: str) -> str:
         job_id = uuid.uuid4().hex
@@ -1180,6 +1185,7 @@ class MlJobStore:
             "message": "ジョブを作成しました。",
             "result": None,
             "error": None,
+            "cancel_requested": False,
             "created_at": now_iso,
             "updated_at": now_iso,
         }
@@ -1188,26 +1194,106 @@ class MlJobStore:
             self._trim_no_lock()
         return job_id
 
-    def update(self, job_id: str, **changes: Any) -> None:
+    def update(self, job_id: str, **changes: Any) -> dict[str, Any] | None:
+        with self._lock:
+            item = self._jobs.get(job_id)
+            if not item:
+                return None
+            item.update(changes)
+            item["updated_at"] = datetime.now(timezone.utc).isoformat()
+            return dict(item)
+
+    def complete(self, job_id: str, result: dict[str, Any]) -> None:
         with self._lock:
             item = self._jobs.get(job_id)
             if not item:
                 return
-            item.update(changes)
+            if item.get("cancel_requested"):
+                item.update(
+                    status="cancelled",
+                    progress=0,
+                    message="停止しました。",
+                    result=None,
+                    error=None,
+                )
+            else:
+                item.update(
+                    status="completed",
+                    progress=100,
+                    message="完了しました。",
+                    result=result,
+                    error=None,
+                )
             item["updated_at"] = datetime.now(timezone.utc).isoformat()
 
-    def complete(self, job_id: str, result: dict[str, Any]) -> None:
+    def fail(self, job_id: str, error: str) -> None:
+        with self._lock:
+            item = self._jobs.get(job_id)
+            if not item:
+                return
+            if item.get("cancel_requested"):
+                item.update(
+                    status="cancelled",
+                    progress=0,
+                    message="停止しました。",
+                    error=None,
+                    result=None,
+                )
+            else:
+                item.update(
+                    status="failed",
+                    message="失敗しました。",
+                    error=error,
+                    result=None,
+                )
+            item["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    def is_cancel_requested(self, job_id: str) -> bool:
+        with self._lock:
+            item = self._jobs.get(job_id)
+            if not item:
+                return False
+            return bool(item.get("cancel_requested"))
+
+    def request_cancel(self, job_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            item = self._jobs.get(job_id)
+            if not item:
+                return None
+            status = str(item.get("status") or "")
+            if status in self._terminal_statuses:
+                return dict(item)
+
+            item["cancel_requested"] = True
+            if status == "queued":
+                item.update(
+                    status="cancelled",
+                    progress=0,
+                    message="停止しました。",
+                    result=None,
+                    error=None,
+                )
+            else:
+                item.update(
+                    status="cancelling",
+                    progress=0,
+                    message="停止を要求しました。",
+                    result=None,
+                    error=None,
+                )
+            item["updated_at"] = datetime.now(timezone.utc).isoformat()
+            return dict(item)
+
+    def mark_cancelled(self, job_id: str, message: str = "停止しました。") -> None:
         self.update(
             job_id,
-            status="completed",
-            progress=100,
-            message="完了しました。",
-            result=result,
+            status="cancelled",
+            progress=0,
+            message=message,
+            result=None,
             error=None,
+            cancel_requested=True,
         )
-
-    def fail(self, job_id: str, error: str) -> None:
-        self.update(job_id, status="failed", message="失敗しました。", error=error, result=None)
 
     def get(self, job_id: str) -> dict[str, Any] | None:
         with self._lock:
@@ -1310,7 +1396,11 @@ async def _run_quantile_lstm_pipeline(
     seed: int = 42,
     refresh: bool = False,
     progress_callback: Callable[[int, str], None] | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
+    if cancel_check is not None:
+        cancel_check()
+
     if progress_callback is not None:
         progress_callback(2, "ヒストリカルデータを取得しています。")
 
@@ -1342,7 +1432,10 @@ async def _run_quantile_lstm_pipeline(
             points,
             config_payload,
             progress_callback,
+            cancel_check,
         )
+    except MlJobCancelledError:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -1376,7 +1469,11 @@ async def _run_patchtst_pipeline(
     seed: int = 42,
     refresh: bool = False,
     progress_callback: Callable[[int, str], None] | None = None,
+    cancel_check: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
+    if cancel_check is not None:
+        cancel_check()
+
     if progress_callback is not None:
         progress_callback(2, "ヒストリカルデータを取得しています。")
 
@@ -1408,7 +1505,10 @@ async def _run_patchtst_pipeline(
             points,
             config_payload,
             progress_callback,
+            cancel_check,
         )
+    except MlJobCancelledError:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -1428,9 +1528,18 @@ async def _run_patchtst_pipeline(
 
 def _progress_callback_for_job(job_id: str):
     def _cb(progress: int, message: str) -> None:
+        if ml_job_store.is_cancel_requested(job_id):
+            raise MlJobCancelledError("ML job cancelled.")
+        current = ml_job_store.get(job_id)
+        if current is None:
+            return
+        status = str(current.get("status") or "")
+        if status in {"completed", "failed", "cancelled"}:
+            return
+        next_status = "cancelling" if status == "cancelling" else "running"
         ml_job_store.update(
             job_id,
-            status="running",
+            status=next_status,
             progress=max(0, min(100, int(progress))),
             message=message,
         )
@@ -1438,8 +1547,19 @@ def _progress_callback_for_job(job_id: str):
     return _cb
 
 
+def _cancel_check_for_job(job_id: str):
+    def _check() -> None:
+        if ml_job_store.is_cancel_requested(job_id):
+            raise MlJobCancelledError("ML job cancelled.")
+
+    return _check
+
+
 async def _run_quantile_lstm_job(job_id: str, req: QuantileLstmJobRequest) -> None:
     try:
+        if ml_job_store.is_cancel_requested(job_id):
+            ml_job_store.mark_cancelled(job_id, message="ジョブ開始前に停止しました。")
+            return
         ml_job_store.update(job_id, status="running", progress=1, message="ジョブを開始しました。")
         result = await _run_quantile_lstm_pipeline(
             symbol=req.symbol,
@@ -1456,8 +1576,11 @@ async def _run_quantile_lstm_job(job_id: str, req: QuantileLstmJobRequest) -> No
             seed=req.seed,
             refresh=req.refresh,
             progress_callback=_progress_callback_for_job(job_id),
+            cancel_check=_cancel_check_for_job(job_id),
         )
         ml_job_store.complete(job_id, result=result)
+    except MlJobCancelledError:
+        ml_job_store.mark_cancelled(job_id)
     except HTTPException as exc:
         ml_job_store.fail(job_id, error=str(exc.detail))
     except Exception as exc:
@@ -1466,6 +1589,9 @@ async def _run_quantile_lstm_job(job_id: str, req: QuantileLstmJobRequest) -> No
 
 async def _run_patchtst_job(job_id: str, req: QuantileLstmJobRequest) -> None:
     try:
+        if ml_job_store.is_cancel_requested(job_id):
+            ml_job_store.mark_cancelled(job_id, message="ジョブ開始前に停止しました。")
+            return
         ml_job_store.update(job_id, status="running", progress=1, message="ジョブを開始しました。")
         result = await _run_patchtst_pipeline(
             symbol=req.symbol,
@@ -1482,8 +1608,11 @@ async def _run_patchtst_job(job_id: str, req: QuantileLstmJobRequest) -> None:
             seed=req.seed,
             refresh=req.refresh,
             progress_callback=_progress_callback_for_job(job_id),
+            cancel_check=_cancel_check_for_job(job_id),
         )
         ml_job_store.complete(job_id, result=result)
+    except MlJobCancelledError:
+        ml_job_store.mark_cancelled(job_id)
     except HTTPException as exc:
         ml_job_store.fail(job_id, error=str(exc.detail))
     except Exception as exc:
@@ -1668,6 +1797,14 @@ async def start_patchtst_job(req: QuantileLstmJobRequest) -> JSONResponse:
 @app.get("/api/ml/jobs/{job_id}")
 async def ml_job_status(job_id: str) -> JSONResponse:
     payload = ml_job_store.get(job_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return ok_json_response(**payload)
+
+
+@app.post("/api/ml/jobs/{job_id}/cancel")
+async def ml_job_cancel(job_id: str) -> JSONResponse:
+    payload = ml_job_store.request_cancel(job_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="Job not found.")
     return ok_json_response(**payload)

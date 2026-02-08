@@ -144,6 +144,10 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `GET /api/ml/models`: ML Forecast Lab のモデル一覧（Ready / Coming Soon）
 - `GET /api/ml/quantile-lstm?...`: Quantile LSTM を学習・推論し、分位点/評価/描画データを返却
 - `GET /api/ml/patchtst?...`: PatchTST Quantile を学習・推論し、分位点/評価/描画データを返却
+- `POST /api/ml/quantile-lstm/jobs`: Quantile LSTM 非同期ジョブを開始
+- `POST /api/ml/patchtst/jobs`: PatchTST 非同期ジョブを開始
+- `GET /api/ml/jobs/{job_id}`: 非同期ジョブ状態を取得（`queued` / `running` / `cancelling` / `completed` / `failed` / `cancelled`）
+- `POST /api/ml/jobs/{job_id}/cancel`: 実行中ジョブの停止を要求
 - `GET /api/stream`: SSE でリアルタイム配信
 - `GET /historical/{symbol}`: ヒストリカル表示専用ページ
 - `GET /ml-lab`: モデル選択式の分位点予測ページ
