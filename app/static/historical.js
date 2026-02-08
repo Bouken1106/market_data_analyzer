@@ -7,9 +7,14 @@ const CHART_COLORS = {
   placeholderBg: "#0f1726",
   placeholderText: "#8fa1bb",
   canvasBg: "#0a121f",
+  canvasTop: "#0b1425",
+  canvasBottom: "#050a14",
+  gloss: "rgba(154, 221, 255, 0.04)",
   axis: "#324158",
-  grid: "#1d2a3c",
-  line: "#13c7ff",
+  grid: "rgba(45, 66, 92, 0.42)",
+  line: "#46deff",
+  lineGlow: "rgba(70, 222, 255, 0.75)",
+  lineArea: "rgba(19, 199, 255, 0.14)",
   label: "#9cadc4",
   crosshair: "#4f6e8d",
   point: "#13c7ff",
@@ -150,6 +155,27 @@ function fitCanvas(canvas, cssHeight = CHART_HEIGHT) {
   return { ctx, width: cssWidth, height: cssHeight };
 }
 
+function paintHistoricalBackdrop(ctx, width, height) {
+  const bg = ctx.createLinearGradient(0, 0, 0, height);
+  bg.addColorStop(0, CHART_COLORS.canvasTop);
+  bg.addColorStop(0.45, CHART_COLORS.canvasBg);
+  bg.addColorStop(1, CHART_COLORS.canvasBottom);
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, width, height);
+
+  const glow = ctx.createRadialGradient(0, 0, 0, width * 0.22, height * 0.1, width * 0.75);
+  glow.addColorStop(0, "rgba(24, 146, 255, 0.1)");
+  glow.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, width, height);
+
+  const gloss = ctx.createLinearGradient(0, 0, 0, height * 0.3);
+  gloss.addColorStop(0, CHART_COLORS.gloss);
+  gloss.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = gloss;
+  ctx.fillRect(0, 0, width, height * 0.34);
+}
+
 function hideTooltip() {
   historyTooltipEl.textContent = "";
   historyTooltipEl.classList.add("hidden");
@@ -187,12 +213,14 @@ function showTooltip(index, x, y, chartWidth, chartHeight) {
 function drawPlaceholder(message) {
   const { ctx, width, height } = fitCanvas(historyCanvas, CHART_HEIGHT);
   ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = CHART_COLORS.placeholderBg;
-  ctx.fillRect(0, 0, width, height);
+  paintHistoricalBackdrop(ctx, width, height);
   ctx.fillStyle = CHART_COLORS.placeholderText;
   ctx.font = "14px sans-serif";
   ctx.textAlign = "center";
+  ctx.shadowBlur = 10;
+  ctx.shadowColor = "rgba(45, 181, 255, 0.35)";
   ctx.fillText(message, width / 2, height / 2);
+  ctx.shadowBlur = 0;
   chartState.renderInfo = null;
   hideTooltip();
 }
@@ -260,8 +288,7 @@ function drawChartFromState() {
 
   const { ctx, width, height } = fitCanvas(historyCanvas, CHART_HEIGHT);
   ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = CHART_COLORS.canvasBg;
-  ctx.fillRect(0, 0, width, height);
+  paintHistoricalBackdrop(ctx, width, height);
 
   const left = 64;
   const right = width - 24;
@@ -305,6 +332,7 @@ function drawChartFromState() {
 
   ctx.strokeStyle = CHART_COLORS.grid;
   ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
   for (let step = 1; step <= 3; step += 1) {
     const y = top + ((plotHeight / 4) * step);
     ctx.beginPath();
@@ -312,9 +340,41 @@ function drawChartFromState() {
     ctx.lineTo(right, y);
     ctx.stroke();
   }
+  ctx.setLineDash([]);
+
+  // Fill under the line first for subtle depth.
+  const area = ctx.createLinearGradient(0, top, 0, bottom);
+  area.addColorStop(0, CHART_COLORS.lineArea);
+  area.addColorStop(1, "rgba(19, 199, 255, 0.02)");
+  ctx.fillStyle = area;
+  ctx.beginPath();
+  let areaStarted = false;
+  let areaEndX = left;
+  for (let index = visibleStart; index <= visibleEnd; index += 1) {
+    const value = Number(points[index]?.c);
+    if (!Number.isFinite(value)) continue;
+    const x = xFromIndex(index);
+    const y = yFromValue(value);
+    areaEndX = x;
+    if (!areaStarted) {
+      ctx.moveTo(x, bottom);
+      ctx.lineTo(x, y);
+      areaStarted = true;
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
+  if (areaStarted) {
+    ctx.lineTo(areaEndX, bottom);
+    ctx.closePath();
+    ctx.fill();
+  }
 
   ctx.strokeStyle = CHART_COLORS.line;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 5.4;
+  ctx.globalAlpha = 0.2;
+  ctx.shadowBlur = 18;
+  ctx.shadowColor = CHART_COLORS.lineGlow;
   ctx.beginPath();
   let started = false;
   for (let index = visibleStart; index <= visibleEnd; index += 1) {
@@ -334,6 +394,33 @@ function drawChartFromState() {
   if (started) {
     ctx.stroke();
   }
+
+  ctx.strokeStyle = CHART_COLORS.line;
+  ctx.lineWidth = 2.4;
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 12;
+  ctx.shadowColor = CHART_COLORS.lineGlow;
+  ctx.beginPath();
+  started = false;
+  for (let index = visibleStart; index <= visibleEnd; index += 1) {
+    const value = Number(points[index]?.c);
+    if (!Number.isFinite(value)) {
+      continue;
+    }
+    const x = xFromIndex(index);
+    const y = yFromValue(value);
+    if (!started) {
+      ctx.moveTo(x, y);
+      started = true;
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
+  if (started) {
+    ctx.stroke();
+  }
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 1;
 
   ctx.fillStyle = CHART_COLORS.label;
   ctx.font = "12px sans-serif";
@@ -367,9 +454,12 @@ function drawChartFromState() {
       ctx.stroke();
 
       ctx.fillStyle = CHART_COLORS.point;
+      ctx.shadowBlur = 10;
+      ctx.shadowColor = CHART_COLORS.lineGlow;
       ctx.beginPath();
       ctx.arc(hoverX, hoverY, 4, 0, Math.PI * 2);
       ctx.fill();
+      ctx.shadowBlur = 0;
 
       showTooltip(hoverIndex, hoverX, hoverY, width, height);
     } else {

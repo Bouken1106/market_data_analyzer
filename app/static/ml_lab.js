@@ -43,14 +43,17 @@ const btWindowEl = document.getElementById("bt-window");
 
 const COLORS = {
   bg: "#0b111d",
-  axis: "#334862",
-  grid: "#1f3046",
+  bgTop: "#0b1322",
+  bgBottom: "#050a14",
+  gloss: "rgba(150, 212, 255, 0.04)",
+  axis: "#2b3f58",
+  grid: "rgba(49, 73, 102, 0.45)",
   label: "#99abc3",
-  median: "#15d1ff",
+  median: "#3fe4ff",
   actual: "#ffc857",
   band90: "rgba(55, 132, 201, 0.22)",
   band50: "rgba(21, 209, 255, 0.28)",
-  curves: ["#14d5ff", "#6bb8ff", "#ff9f6e", "#8fe388", "#e0c1ff", "#ffe07a"],
+  curves: ["#44e0ff", "#8cb9ff", "#ffb07a", "#92f3bf", "#e5c9ff", "#ffe68c"],
 };
 
 let latestPayload = null;
@@ -473,15 +476,44 @@ function fitCanvas(canvas) {
   return { ctx, width, height };
 }
 
+function paintCanvasBackdrop(ctx, width, height, accentLeft = "rgba(27, 153, 255, 0.10)", accentRight = "rgba(39, 255, 209, 0.07)") {
+  const bg = ctx.createLinearGradient(0, 0, 0, height);
+  bg.addColorStop(0, COLORS.bgTop);
+  bg.addColorStop(0.45, COLORS.bg);
+  bg.addColorStop(1, COLORS.bgBottom);
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, width, height);
+
+  const glowLeft = ctx.createRadialGradient(0, 0, 0, width * 0.18, height * 0.12, width * 0.7);
+  glowLeft.addColorStop(0, accentLeft);
+  glowLeft.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = glowLeft;
+  ctx.fillRect(0, 0, width, height);
+
+  const glowRight = ctx.createRadialGradient(width, 0, 0, width * 0.86, height * 0.08, width * 0.62);
+  glowRight.addColorStop(0, accentRight);
+  glowRight.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = glowRight;
+  ctx.fillRect(0, 0, width, height);
+
+  const gloss = ctx.createLinearGradient(0, 0, 0, height * 0.3);
+  gloss.addColorStop(0, COLORS.gloss);
+  gloss.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = gloss;
+  ctx.fillRect(0, 0, width, height * 0.36);
+}
+
 function drawPlaceholder(canvas, text) {
   const { ctx, width, height } = fitCanvas(canvas);
   ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = COLORS.bg;
-  ctx.fillRect(0, 0, width, height);
+  paintCanvasBackdrop(ctx, width, height);
   ctx.fillStyle = COLORS.label;
   ctx.textAlign = "center";
   ctx.font = "14px sans-serif";
+  ctx.shadowBlur = 10;
+  ctx.shadowColor = "rgba(29, 181, 255, 0.35)";
   ctx.fillText(text, width / 2, height / 2);
+  ctx.shadowBlur = 0;
 }
 
 function computeBounds(seriesList) {
@@ -805,8 +837,7 @@ function drawBaseAxes(ctx, width, height, yBounds, yFormatter, xTicks) {
   const top = 20;
   const bottom = height - 44;
 
-  ctx.fillStyle = COLORS.bg;
-  ctx.fillRect(0, 0, width, height);
+  paintCanvasBackdrop(ctx, width, height);
 
   ctx.strokeStyle = COLORS.axis;
   ctx.lineWidth = 1;
@@ -817,6 +848,7 @@ function drawBaseAxes(ctx, width, height, yBounds, yFormatter, xTicks) {
   ctx.stroke();
 
   ctx.strokeStyle = COLORS.grid;
+  ctx.setLineDash([4, 4]);
   for (let step = 1; step <= 4; step += 1) {
     const y = top + (((bottom - top) / 5) * step);
     ctx.beginPath();
@@ -824,6 +856,7 @@ function drawBaseAxes(ctx, width, height, yBounds, yFormatter, xTicks) {
     ctx.lineTo(right, y);
     ctx.stroke();
   }
+  ctx.setLineDash([]);
 
   ctx.fillStyle = COLORS.label;
   ctx.font = "11px sans-serif";
@@ -904,9 +937,27 @@ function renderQuantileFunction() {
   curves.forEach((curve, curveIdx) => {
     const line = series[curveIdx];
     if (!Array.isArray(line) || line.length !== taus.length) return;
+    const lineColor = COLORS.curves[curveIdx % COLORS.curves.length];
 
-    ctx.strokeStyle = COLORS.curves[curveIdx % COLORS.curves.length];
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = 5.2;
+    ctx.globalAlpha = 0.2;
+    ctx.shadowBlur = 16;
+    ctx.shadowColor = lineColor;
+    ctx.beginPath();
+    for (let idx = xWindow.startIndex; idx <= xWindow.endIndex; idx += 1) {
+      const x = xAt(idx, xWindow, chart.left, chart.right);
+      const y = yAt(Number(line[idx]), yBounds.min, yBounds.max, chart.top, chart.bottom);
+      if (idx === xWindow.startIndex) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = 2.2;
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = lineColor;
     ctx.beginPath();
 
     for (let idx = xWindow.startIndex; idx <= xWindow.endIndex; idx += 1) {
@@ -916,6 +967,8 @@ function renderQuantileFunction() {
       else ctx.lineTo(x, y);
     }
     ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
   });
 
   const legendLines = curves.map((curve, idx) => {
@@ -996,6 +1049,8 @@ function renderFanChart() {
 
   ctx.strokeStyle = COLORS.median;
   ctx.lineWidth = 2;
+  ctx.shadowBlur = 10;
+  ctx.shadowColor = "rgba(21, 209, 255, 0.6)";
   ctx.beginPath();
   for (let idx = xWindow.startIndex; idx <= xWindow.endIndex; idx += 1) {
     const x = xAt(idx, xWindow, chart.left, chart.right);
@@ -1004,6 +1059,7 @@ function renderFanChart() {
     else ctx.lineTo(x, y);
   }
   ctx.stroke();
+  ctx.shadowBlur = 0;
 
   ctx.fillStyle = COLORS.actual;
   for (let idx = xWindow.startIndex; idx <= xWindow.endIndex; idx += 1) {
@@ -1126,7 +1182,10 @@ function renderBacktest60d(payload) {
 
   const drawLine = (series, color) => {
     ctx.strokeStyle = color;
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 5;
+    ctx.globalAlpha = 0.22;
+    ctx.shadowBlur = 14;
+    ctx.shadowColor = color;
     ctx.beginPath();
     for (let i = 0; i < series.length; i += 1) {
       const x = chart.left + ((i / Math.max(1, series.length - 1)) * chart.plotWidth);
@@ -1135,6 +1194,22 @@ function renderBacktest60d(payload) {
       else ctx.lineTo(x, y);
     }
     ctx.stroke();
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.4;
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = color;
+    ctx.beginPath();
+    for (let i = 0; i < series.length; i += 1) {
+      const x = chart.left + ((i / Math.max(1, series.length - 1)) * chart.plotWidth);
+      const y = yAt(Number(series[i]), yMin, yMax, chart.top, chart.bottom);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
   };
 
   drawLine(cashSeries, "rgba(160, 176, 196, 0.9)");
@@ -1174,8 +1249,7 @@ function renderNextDayDistribution(payload) {
 
   const { ctx, width, height } = fitCanvas(nextDayCanvas);
   ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = COLORS.bg;
-  ctx.fillRect(0, 0, width, height);
+  paintCanvasBackdrop(ctx, width, height, "rgba(31, 168, 255, 0.12)", "rgba(113, 240, 188, 0.09)");
 
   const left = 56;
   const right = width - 24;
@@ -1194,10 +1268,18 @@ function renderNextDayDistribution(payload) {
   ctx.lineWidth = 1;
   ctx.strokeRect(left, barY, plotWidth, barH);
 
-  ctx.fillStyle = "rgba(255, 93, 111, 0.38)";
+  const downGrad = ctx.createLinearGradient(left, barY, left, barY + barH);
+  downGrad.addColorStop(0, "rgba(255, 133, 145, 0.65)");
+  downGrad.addColorStop(1, "rgba(255, 70, 96, 0.45)");
+  ctx.fillStyle = downGrad;
   ctx.fillRect(left, barY, downW, barH);
-  ctx.fillStyle = "rgba(75, 215, 148, 0.38)";
+  const upGrad = ctx.createLinearGradient(left, barY, left, barY + barH);
+  upGrad.addColorStop(0, "rgba(126, 255, 197, 0.66)");
+  upGrad.addColorStop(1, "rgba(53, 222, 154, 0.42)");
+  ctx.fillStyle = upGrad;
   ctx.fillRect(left + downW, barY, upW, barH);
+  ctx.fillStyle = "rgba(255, 255, 255, 0.22)";
+  ctx.fillRect(left + 1, barY + 1, Math.max(0, plotWidth - 2), Math.max(1, Math.floor(barH * 0.35)));
 
   ctx.fillStyle = "#e8eef8";
   ctx.font = "12px sans-serif";
@@ -1281,8 +1363,11 @@ function renderNextDayDistribution(payload) {
     ctx.closePath();
     ctx.fill();
 
-    ctx.strokeStyle = "rgba(33, 182, 255, 0.9)";
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(33, 182, 255, 0.95)";
+    ctx.lineWidth = 4.8;
+    ctx.globalAlpha = 0.2;
+    ctx.shadowBlur = 16;
+    ctx.shadowColor = "rgba(33, 182, 255, 0.78)";
     ctx.beginPath();
     for (let i = 0; i < pdfPoints.length; i += 1) {
       const x = xAtValue(pdfPoints[i].x);
@@ -1291,6 +1376,22 @@ function renderNextDayDistribution(payload) {
       else ctx.lineTo(x, y);
     }
     ctx.stroke();
+
+    ctx.strokeStyle = "rgba(33, 182, 255, 0.95)";
+    ctx.lineWidth = 2.3;
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 12;
+    ctx.shadowColor = "rgba(33, 182, 255, 0.78)";
+    ctx.beginPath();
+    for (let i = 0; i < pdfPoints.length; i += 1) {
+      const x = xAtValue(pdfPoints[i].x);
+      const y = yAtDensity(pdfPoints[i].d);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
 
     if (Number.isFinite(currentLineX)) {
       const x = xAtValue(clamp(currentLineX, xMin, xMax));
@@ -1343,8 +1444,11 @@ function renderNextDayDistribution(payload) {
     ctx.fillText("0", left - 8, bottom + 3);
     ctx.fillText("1.0", left - 8, chartTop + 3);
 
-    ctx.strokeStyle = "rgba(33, 182, 255, 0.9)";
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(33, 182, 255, 0.95)";
+    ctx.lineWidth = 4.8;
+    ctx.globalAlpha = 0.2;
+    ctx.shadowBlur = 16;
+    ctx.shadowColor = "rgba(33, 182, 255, 0.78)";
     ctx.beginPath();
     for (let i = 0; i < cdfPoints.length; i += 1) {
       const x = xAtValue(cdfPoints[i].x);
@@ -1353,6 +1457,22 @@ function renderNextDayDistribution(payload) {
       else ctx.lineTo(x, y);
     }
     ctx.stroke();
+
+    ctx.strokeStyle = "rgba(33, 182, 255, 0.95)";
+    ctx.lineWidth = 2.3;
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 12;
+    ctx.shadowColor = "rgba(33, 182, 255, 0.78)";
+    ctx.beginPath();
+    for (let i = 0; i < cdfPoints.length; i += 1) {
+      const x = xAtValue(cdfPoints[i].x);
+      const y = yAtCdf(cdfPoints[i].t);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
 
     if (Number.isFinite(currentLineX)) {
       const x = xAtValue(clamp(currentLineX, xMin, xMax));
