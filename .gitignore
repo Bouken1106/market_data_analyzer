@@ -1,4 +1,7 @@
 .venv/
+.venv.macos/
+.venv.wsl/
+.venv.windows/
 __pycache__/
 *.pyc
 .env

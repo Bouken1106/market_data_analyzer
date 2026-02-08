@@ -8,25 +8,42 @@ Twelve Data の **Basic プラン**を使って、米国株の現在価格をリ
 
 ## 前提
 
-- Python 3.11+
+- Python 3.11 or 3.12（`torch==2.5.1` のため 3.13 は未対応）
 - Twelve Data API キー
 - Basic プラン想定（WebSocket trial 枠と API クレジット制限に準拠）
 - 対応OS: Ubuntu（WSL 含む）/ macOS（Intel, Apple Silicon）
 
-## セットアップ（Ubuntu/WSL・macOS 共通）
+## OSごとの仮想環境
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-cp .env.example .env
-```
+- macOS: `.venv.macos`
+- Ubuntu/WSL: `.venv.wsl`
+- Windows: `.venv.windows`
 
 `requirements.txt` は OS に応じて PyTorch を自動選択します。
 
 - Ubuntu/WSL: `torch==2.5.1+cpu`
 - macOS: `torch==2.5.1`
+
+## セットアップ（macOS）
+
+```bash
+bash scripts/setup_macos.sh
+source .venv.macos/bin/activate
+```
+
+## セットアップ（Ubuntu/WSL）
+
+```bash
+bash scripts/setup_wsl.sh
+source .venv.wsl/bin/activate
+```
+
+## セットアップ（Windows PowerShell）
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\setup_windows.ps1
+.\.venv.windows\Scripts\Activate.ps1
+```
 
 `.env` を編集して API キーを設定:
 
