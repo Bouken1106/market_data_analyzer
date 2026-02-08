@@ -73,6 +73,15 @@ const FALLBACK_ML_MODELS = [
     api_path: "/api/ml/quantile-lstm",
   },
   {
+    id: "patchtst_quantile",
+    name: "PatchTST Quantile",
+    short_description: "PatchTSTで翌営業日の分位点分布を推定（現在利用可能）",
+    status: "ready",
+    status_label: "Ready",
+    run_label: "Run PatchTST Quantile",
+    api_path: "/api/ml/patchtst",
+  },
+  {
     id: "quantile_gru",
     name: "Quantile GRU",
     short_description: "LSTMより軽量な系列モデル（準備中）",
@@ -1216,14 +1225,23 @@ function renderBacktest60d(payload) {
   drawLine(buyHoldSeries, "rgba(255, 165, 0, 0.92)");
   drawLine(strategySeries, "rgba(71, 213, 148, 0.95)");
 
-  ctx.font = "11px sans-serif";
-  ctx.textAlign = "left";
-  ctx.fillStyle = "rgba(160, 176, 196, 0.95)";
-  ctx.fillText("Cash", chart.left + 4, chart.top + 12);
-  ctx.fillStyle = "rgba(255, 165, 0, 0.95)";
-  ctx.fillText("Fixed-Shares Hold", chart.left + 64, chart.top + 12);
-  ctx.fillStyle = "rgba(71, 213, 148, 0.95)";
-  ctx.fillText("Strategy", chart.left + 156, chart.top + 12);
+  const drawLegendItem = (label, color, x, y) => {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(x, y - 4);
+    ctx.lineTo(x + 14, y - 4);
+    ctx.stroke();
+
+    ctx.fillStyle = color;
+    ctx.font = "11px sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText(label, x + 18, y);
+  };
+
+  drawLegendItem("Cash", "rgba(160, 176, 196, 0.95)", chart.left + 4, chart.top + 12);
+  drawLegendItem("Fixed-Shares Hold", "rgba(255, 165, 0, 0.95)", chart.left + 72, chart.top + 12);
+  drawLegendItem("Strategy", "rgba(71, 213, 148, 0.95)", chart.left + 4, chart.top + 28);
 }
 
 function renderNextDayDistribution(payload) {
@@ -1309,6 +1327,27 @@ function renderNextDayDistribution(payload) {
     .filter((marker) => Number.isFinite(marker.x));
   const currentLineX = mode === "prices" ? currentClose : 0;
   const currentLineLabel = mode === "prices" ? "Current Close" : "Current (0%)";
+  const currentLineXPx = Number.isFinite(currentLineX) ? xAtValue(clamp(currentLineX, xMin, xMax)) : Number.NaN;
+  const labelLaneTop = chartTop - 8;
+  const labelLaneMid = chartTop - 24;
+  const labelLaneHigh = chartTop - 38;
+  const markerPxSorted = quantileMarkers
+    .map((marker) => ({ ...marker, px: xAtValue(marker.x), labelY: labelLaneTop }))
+    .filter((marker) => inRangeX(marker.x))
+    .sort((a, b) => a.px - b.px);
+  for (let i = 0; i < markerPxSorted.length; i += 1) {
+    const marker = markerPxSorted[i];
+    let y = labelLaneTop;
+    if (Number.isFinite(currentLineXPx) && Math.abs(marker.px - currentLineXPx) < 44) {
+      y = labelLaneMid;
+    }
+    const prev = markerPxSorted[i - 1];
+    if (prev && Math.abs(marker.px - prev.px) < 34 && Math.abs(y - prev.labelY) < 8) {
+      y = y === labelLaneTop ? labelLaneMid : labelLaneHigh;
+    }
+    marker.labelY = y;
+  }
+  const markerLabelYByTau = new Map(markerPxSorted.map((marker) => [marker.tau, marker.labelY]));
   const cdfPoints = [];
   for (let i = 0; i < retQ.length; i += 1) {
     const x = retQ[i];
@@ -1404,8 +1443,21 @@ function renderNextDayDistribution(payload) {
       ctx.stroke();
       ctx.fillStyle = "rgba(255, 220, 136, 0.95)";
       ctx.font = "11px sans-serif";
-      ctx.textAlign = "left";
-      ctx.fillText(currentLineLabel, Math.min(x + 4, right - 56), chartTop - 8);
+      const nearMarker = markerPxSorted.some((marker) => Math.abs(marker.px - x) < 44);
+      const currentLabelY = nearMarker ? labelLaneMid : labelLaneTop;
+      const currentLabelWidth = ctx.measureText(currentLineLabel).width;
+      let labelX = x + 4;
+      let align = "left";
+      if (labelX + currentLabelWidth > right - 2) {
+        labelX = x - 4;
+        align = "right";
+      }
+      if (labelX < left + 2) {
+        labelX = x + 4;
+        align = "left";
+      }
+      ctx.textAlign = align;
+      ctx.fillText(currentLineLabel, labelX, currentLabelY);
     }
 
     ctx.setLineDash([4, 3]);
@@ -1427,7 +1479,8 @@ function renderNextDayDistribution(payload) {
       ctx.beginPath();
       ctx.arc(x, y, 2.4, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillText(marker.label, x, chartTop - 8);
+      const markerLabelY = markerLabelYByTau.get(marker.tau) || labelLaneTop;
+      ctx.fillText(marker.label, x, markerLabelY);
       ctx.setLineDash([4, 3]);
     });
     ctx.setLineDash([]);
@@ -1485,8 +1538,21 @@ function renderNextDayDistribution(payload) {
       ctx.stroke();
       ctx.fillStyle = "rgba(255, 220, 136, 0.95)";
       ctx.font = "11px sans-serif";
-      ctx.textAlign = "left";
-      ctx.fillText(currentLineLabel, Math.min(x + 4, right - 56), chartTop - 8);
+      const nearMarker = markerPxSorted.some((marker) => Math.abs(marker.px - x) < 44);
+      const currentLabelY = nearMarker ? labelLaneMid : labelLaneTop;
+      const currentLabelWidth = ctx.measureText(currentLineLabel).width;
+      let labelX = x + 4;
+      let align = "left";
+      if (labelX + currentLabelWidth > right - 2) {
+        labelX = x - 4;
+        align = "right";
+      }
+      if (labelX < left + 2) {
+        labelX = x + 4;
+        align = "left";
+      }
+      ctx.textAlign = align;
+      ctx.fillText(currentLineLabel, labelX, currentLabelY);
     }
 
     ctx.font = "11px sans-serif";
@@ -1507,7 +1573,8 @@ function renderNextDayDistribution(payload) {
       ctx.beginPath();
       ctx.arc(x, y, 2.4, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillText(marker.label, x, chartTop - 8);
+      const markerLabelY = markerLabelYByTau.get(marker.tau) || labelLaneTop;
+      ctx.fillText(marker.label, x, markerLabelY);
       ctx.setLineDash([4, 3]);
     });
     ctx.setLineDash([]);
@@ -1582,8 +1649,9 @@ async function runModelForecast() {
   updateProgress(0, "ジョブを開始しています。");
 
   try {
+    const jobApiPath = `${String(activeModel.api_path || "").replace(/\/$/, "")}/jobs`;
     const { response: createRes, result: createBody } = await fetchJson(
-      "/api/ml/quantile-lstm/jobs",
+      jobApiPath,
       {
         method: "POST",
         headers: {

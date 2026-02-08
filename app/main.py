@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from .patchtst_quantile import run_patchtst_forecast
 from .quantile_lstm import run_quantile_lstm_forecast
 
 load_dotenv()
@@ -1254,6 +1255,15 @@ ML_MODEL_CATALOG = [
         "api_path": "/api/ml/quantile-lstm",
     },
     {
+        "id": "patchtst_quantile",
+        "name": "PatchTST Quantile",
+        "short_description": "PatchTSTで翌営業日の分位点分布を推定（現在利用可能）",
+        "status": "ready",
+        "status_label": "Ready",
+        "run_label": "Run PatchTST Quantile",
+        "api_path": "/api/ml/patchtst",
+    },
+    {
         "id": "quantile_gru",
         "name": "Quantile GRU",
         "short_description": "LSTMより軽量な系列モデル（準備中）",
@@ -1350,6 +1360,72 @@ async def _run_quantile_lstm_pipeline(
     }
 
 
+async def _run_patchtst_pipeline(
+    *,
+    symbol: str,
+    years: int = HISTORICAL_DEFAULT_YEARS,
+    sequence_length: int = 256,
+    hidden_size: int = 128,
+    num_layers: int = 3,
+    dropout: float = 0.1,
+    learning_rate: float = 1e-3,
+    batch_size: int = 32,
+    max_epochs: int = 40,
+    patience: int = 8,
+    representative_days: int = 5,
+    seed: int = 42,
+    refresh: bool = False,
+    progress_callback: Callable[[int, str], None] | None = None,
+) -> dict[str, Any]:
+    if progress_callback is not None:
+        progress_callback(2, "ヒストリカルデータを取得しています。")
+
+    effective_years = max(5, years)
+    historical_data = await hub.historical_payload(symbol=symbol, years=effective_years, refresh=refresh)
+    points = historical_data.get("points")
+    if not isinstance(points, list):
+        raise HTTPException(status_code=502, detail="Unexpected historical payload format.")
+
+    config_payload = {
+        "sequence_length": sequence_length,
+        "hidden_size": hidden_size,
+        "num_layers": num_layers,
+        "dropout": dropout,
+        "learning_rate": learning_rate,
+        "batch_size": batch_size,
+        "max_epochs": max_epochs,
+        "patience": patience,
+        "representative_days": representative_days,
+        "seed": seed,
+    }
+
+    if progress_callback is not None:
+        progress_callback(5, "PatchTST学習を開始します。")
+
+    try:
+        model_payload = await asyncio.to_thread(
+            run_patchtst_forecast,
+            points,
+            config_payload,
+            progress_callback,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        LOGGER.exception("PatchTST training failed for %s", symbol, exc_info=exc)
+        raise HTTPException(status_code=500, detail="PatchTST training failed.") from exc
+
+    if progress_callback is not None:
+        progress_callback(100, "結果を整形しました。")
+
+    return {
+        "symbol": historical_data.get("symbol"),
+        "years": effective_years,
+        "historical_source": historical_data.get("source"),
+        **model_payload,
+    }
+
+
 def _progress_callback_for_job(job_id: str):
     def _cb(progress: int, message: str) -> None:
         ml_job_store.update(
@@ -1366,6 +1442,32 @@ async def _run_quantile_lstm_job(job_id: str, req: QuantileLstmJobRequest) -> No
     try:
         ml_job_store.update(job_id, status="running", progress=1, message="ジョブを開始しました。")
         result = await _run_quantile_lstm_pipeline(
+            symbol=req.symbol,
+            years=req.years,
+            sequence_length=req.sequence_length,
+            hidden_size=req.hidden_size,
+            num_layers=req.num_layers,
+            dropout=req.dropout,
+            learning_rate=req.learning_rate,
+            batch_size=req.batch_size,
+            max_epochs=req.max_epochs,
+            patience=req.patience,
+            representative_days=req.representative_days,
+            seed=req.seed,
+            refresh=req.refresh,
+            progress_callback=_progress_callback_for_job(job_id),
+        )
+        ml_job_store.complete(job_id, result=result)
+    except HTTPException as exc:
+        ml_job_store.fail(job_id, error=str(exc.detail))
+    except Exception as exc:
+        ml_job_store.fail(job_id, error=str(exc))
+
+
+async def _run_patchtst_job(job_id: str, req: QuantileLstmJobRequest) -> None:
+    try:
+        ml_job_store.update(job_id, status="running", progress=1, message="ジョブを開始しました。")
+        result = await _run_patchtst_pipeline(
             symbol=req.symbol,
             years=req.years,
             sequence_length=req.sequence_length,
@@ -1505,6 +1607,40 @@ async def quantile_lstm_forecast(
     return ok_json_response(**payload)
 
 
+@app.get("/api/ml/patchtst")
+async def patchtst_forecast(
+    symbol: str,
+    years: int = HISTORICAL_DEFAULT_YEARS,
+    sequence_length: int = 256,
+    hidden_size: int = 128,
+    num_layers: int = 3,
+    dropout: float = 0.1,
+    learning_rate: float = 1e-3,
+    batch_size: int = 32,
+    max_epochs: int = 40,
+    patience: int = 8,
+    representative_days: int = 5,
+    seed: int = 42,
+    refresh: bool = False,
+) -> JSONResponse:
+    payload = await _run_patchtst_pipeline(
+        symbol=symbol,
+        years=years,
+        sequence_length=sequence_length,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+        dropout=dropout,
+        learning_rate=learning_rate,
+        batch_size=batch_size,
+        max_epochs=max_epochs,
+        patience=patience,
+        representative_days=representative_days,
+        seed=seed,
+        refresh=refresh,
+    )
+    return ok_json_response(**payload)
+
+
 @app.post("/api/ml/quantile-lstm/jobs")
 async def start_quantile_lstm_job(req: QuantileLstmJobRequest) -> JSONResponse:
     symbol = normalize_symbols([req.symbol])
@@ -1514,6 +1650,18 @@ async def start_quantile_lstm_job(req: QuantileLstmJobRequest) -> JSONResponse:
 
     job_id = ml_job_store.create(kind="quantile_lstm", symbol=req.symbol)
     asyncio.create_task(_run_quantile_lstm_job(job_id, req))
+    return ok_json_response(job_id=job_id, status="queued")
+
+
+@app.post("/api/ml/patchtst/jobs")
+async def start_patchtst_job(req: QuantileLstmJobRequest) -> JSONResponse:
+    symbol = normalize_symbols([req.symbol])
+    if not symbol:
+        raise HTTPException(status_code=400, detail="Symbolを入力してください。")
+    req.symbol = symbol[0]
+
+    job_id = ml_job_store.create(kind="patchtst_quantile", symbol=req.symbol)
+    asyncio.create_task(_run_patchtst_job(job_id, req))
     return ok_json_response(job_id=job_id, status="queued")
 
 

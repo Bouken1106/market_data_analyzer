@@ -78,7 +78,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
    - 戦略は「1日1%超損失の確率が3%を超えない上限」の範囲で期待リターン最大の株式比率を採用
    - test の平均ピンボール損失 / 被覆率（q05-q95, q25-q75）
    - 時系列分割は「直近5年」を対象に、train=直近6か月を除く期間、val=直近6か月〜3か月、test=直近3か月
-   - 現在 `Ready` は Quantile LSTM のみで、他モデルは `Coming Soon` として UI 上で選択可能
+   - 現在 `Ready` は Quantile LSTM / PatchTST Quantile、他モデルは `Coming Soon` として UI 上で選択可能
 
 補足:
 - 起動時に `/api_usage` を1回呼び、日次残量を初期化します（1クレジット消費）。
@@ -119,6 +119,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `GET /api/historical/{symbol}?years=5`: 過去N年ヒストリカルデータ（デフォルト5年）
 - `GET /api/ml/models`: ML Forecast Lab のモデル一覧（Ready / Coming Soon）
 - `GET /api/ml/quantile-lstm?...`: Quantile LSTM を学習・推論し、分位点/評価/描画データを返却
+- `GET /api/ml/patchtst?...`: PatchTST Quantile を学習・推論し、分位点/評価/描画データを返却
 - `GET /api/stream`: SSE でリアルタイム配信
 - `GET /historical/{symbol}`: ヒストリカル表示専用ページ
 - `GET /ml-lab`: モデル選択式の分位点予測ページ
