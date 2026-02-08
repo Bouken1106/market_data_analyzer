@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 .env
 app/cache/
+
+.venv.bak_*/
