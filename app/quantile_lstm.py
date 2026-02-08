@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import calendar
 import math
 import random
 from dataclasses import dataclass
@@ -156,10 +155,11 @@ def run_quantile_lstm_forecast(
 
     _run_cancel_check(cancel_check)
     _emit_progress(progress_callback, 22, "train/val/test を分割しています。")
-    split = _split_by_recent_months(target_dates, lookback_months=60)
-    train_idx = split["train_idx"]
-    val_idx = split["val_idx"]
-    test_idx = split["test_idx"]
+    train_idx, val_idx, test_idx = _split_time_series_indices(
+        sample_count=len(target_dates),
+        train_ratio=0.75,
+        val_ratio=0.15,
+    )
 
     train_x = seq_features[train_idx]
     val_x = seq_features[val_idx]
@@ -278,6 +278,7 @@ def run_quantile_lstm_forecast(
         },
         "metrics": {
             "mean_pinball_loss": mean_pinball,
+            "test_10pct_pinball_loss": mean_pinball,
             "coverage_90": coverage_90,
             "coverage_50": coverage_50,
         },
@@ -517,51 +518,25 @@ def _build_sequences(
     return seq_x, targets, target_dates, base_closes, realized_closes
 
 
-def _subtract_months(value: date, months: int) -> date:
-    year = value.year
-    month = value.month - months
-    while month <= 0:
-        year -= 1
-        month += 12
-    day = min(value.day, calendar.monthrange(year, month)[1])
-    return date(year, month, day)
-
-
-def _split_by_recent_months(target_dates: np.ndarray, lookback_months: int = 60) -> dict[str, np.ndarray]:
-    if target_dates.shape[0] < 40:
+def _split_time_series_indices(
+    sample_count: int,
+    train_ratio: float,
+    val_ratio: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if sample_count < 30:
         raise ValueError("分割に必要なサンプル数が不足しています。")
+    if train_ratio <= 0.0 or val_ratio <= 0.0 or (train_ratio + val_ratio) >= 1.0:
+        raise ValueError("train_ratio/val_ratio が不正です。")
 
-    last_date = target_dates[-1]
-    if not isinstance(last_date, date):
-        raise ValueError("日付データの形式が不正です。")
+    train_end = int(sample_count * train_ratio)
+    val_end = int(sample_count * (train_ratio + val_ratio))
+    train_end = max(1, min(train_end, sample_count - 2))
+    val_end = max(train_end + 1, min(val_end, sample_count - 1))
 
-    window_start = _subtract_months(last_date, max(12, lookback_months))
-    test_start = _subtract_months(last_date, 3)
-    val_start = _subtract_months(last_date, 6)
-
-    train_idx: list[int] = []
-    val_idx: list[int] = []
-    test_idx: list[int] = []
-    for idx, dt in enumerate(target_dates):
-        if dt < window_start:
-            continue
-        if dt >= test_start:
-            test_idx.append(idx)
-        elif dt >= val_start:
-            val_idx.append(idx)
-        else:
-            train_idx.append(idx)
-
-    if not train_idx or not val_idx or not test_idx:
-        raise ValueError(
-            "train/val/test の時系列分割に必要なデータが不足しています。`years` を増やしてください。"
-        )
-
-    return {
-        "train_idx": np.array(train_idx, dtype=np.int64),
-        "val_idx": np.array(val_idx, dtype=np.int64),
-        "test_idx": np.array(test_idx, dtype=np.int64),
-    }
+    train_idx = np.arange(0, train_end, dtype=np.int64)
+    val_idx = np.arange(train_end, val_end, dtype=np.int64)
+    test_idx = np.arange(val_end, sample_count, dtype=np.int64)
+    return train_idx, val_idx, test_idx
 
 
 def _fit_feature_scaler(train_x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

@@ -43,7 +43,7 @@ class PatchTSTConfig:
     channel_independence: bool = True
     enforce_monotonic: bool = True
     crossing_penalty_lambda: float = 0.0
-    train_ratio: float = 0.7
+    train_ratio: float = 0.75
     val_ratio: float = 0.15
     batch_size: int = 32
     min_batch_size: int = 8
@@ -111,7 +111,7 @@ class PatchTSTRuntimeConfig:
             channel_independence=True,
             enforce_monotonic=True,
             crossing_penalty_lambda=0.0,
-            train_ratio=0.7,
+            train_ratio=0.75,
             val_ratio=0.15,
             batch_size=batch_size,
             min_batch_size=4,
@@ -928,26 +928,6 @@ def _nearest_quantile_index(quantiles: np.ndarray, target_tau: float) -> int:
     return int(np.argmin(np.abs(np.asarray(quantiles, dtype=np.float64) - float(target_tau))))
 
 
-def _select_recent_months_mask(dates: np.ndarray, months: int) -> np.ndarray:
-    count = int(len(dates))
-    if count == 0:
-        return np.zeros(0, dtype=bool)
-    safe_months = max(1, int(months))
-    ts = pd.to_datetime(np.asarray(dates, dtype=object), errors="coerce")
-    valid = ~pd.isna(ts)
-    if not bool(valid.any()):
-        return np.ones(count, dtype=bool)
-
-    last_ts = ts[valid].max()
-    if pd.isna(last_ts):
-        return np.ones(count, dtype=bool)
-    cutoff = last_ts - pd.DateOffset(months=safe_months)
-    mask = np.asarray((ts >= cutoff) & valid, dtype=bool)
-    if bool(mask.any()):
-        return mask
-    return np.ones(count, dtype=bool)
-
-
 def _split_meta(dates: np.ndarray) -> dict[str, Any]:
     if len(dates) == 0:
         return {"count": 0, "from": None, "to": None}
@@ -1183,28 +1163,21 @@ def run_patchtst_forecast(
         actual_prices=test_prices,
         representative_days=runtime_cfg.representative_days,
     )
-    fan_mask = _select_recent_months_mask(test_dates, months=3)
-    fan_dates = test_dates[fan_mask]
-    fan_returns = test_returns[fan_mask]
-    fan_prices = test_prices[fan_mask]
-    fan_base_prices = test_base_prices[fan_mask]
-    fan_pred_returns = test_pred_returns[fan_mask]
-    fan_pred_prices = test_pred_prices[fan_mask]
     fan_chart = {
-        "dates": [pd.Timestamp(d).date().isoformat() for d in fan_dates],
-        "actual_returns": _to_float_list(fan_returns),
-        "actual_prices": _to_float_list(fan_prices),
-        "base_close": _to_float_list(fan_base_prices),
-        "q05_returns": _to_float_list(fan_pred_returns[:, q05_idx]),
-        "q25_returns": _to_float_list(fan_pred_returns[:, q25_idx]),
-        "q50_returns": _to_float_list(fan_pred_returns[:, q50_idx]),
-        "q75_returns": _to_float_list(fan_pred_returns[:, q75_idx]),
-        "q95_returns": _to_float_list(fan_pred_returns[:, q95_idx]),
-        "q05_prices": _to_float_list(fan_pred_prices[:, q05_idx]),
-        "q25_prices": _to_float_list(fan_pred_prices[:, q25_idx]),
-        "q50_prices": _to_float_list(fan_pred_prices[:, q50_idx]),
-        "q75_prices": _to_float_list(fan_pred_prices[:, q75_idx]),
-        "q95_prices": _to_float_list(fan_pred_prices[:, q95_idx]),
+        "dates": [pd.Timestamp(d).date().isoformat() for d in test_dates],
+        "actual_returns": _to_float_list(test_returns),
+        "actual_prices": _to_float_list(test_prices),
+        "base_close": _to_float_list(test_base_prices),
+        "q05_returns": _to_float_list(test_pred_returns[:, q05_idx]),
+        "q25_returns": _to_float_list(test_pred_returns[:, q25_idx]),
+        "q50_returns": _to_float_list(test_pred_returns[:, q50_idx]),
+        "q75_returns": _to_float_list(test_pred_returns[:, q75_idx]),
+        "q95_returns": _to_float_list(test_pred_returns[:, q95_idx]),
+        "q05_prices": _to_float_list(test_pred_prices[:, q05_idx]),
+        "q25_prices": _to_float_list(test_pred_prices[:, q25_idx]),
+        "q50_prices": _to_float_list(test_pred_prices[:, q50_idx]),
+        "q75_prices": _to_float_list(test_pred_prices[:, q75_idx]),
+        "q95_prices": _to_float_list(test_pred_prices[:, q95_idx]),
     }
 
     next_ret_q = np.asarray(forecast["return_quantiles"], dtype=np.float64)
@@ -1248,6 +1221,7 @@ def run_patchtst_forecast(
         },
         "metrics": {
             "mean_pinball_loss": float(trained["metrics"]["test_pinball_loss"]),
+            "test_10pct_pinball_loss": float(trained["metrics"]["test_pinball_loss"]),
             "coverage_90": coverage_90,
             "coverage_50": coverage_50,
         },

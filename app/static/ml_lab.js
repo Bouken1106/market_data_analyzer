@@ -366,7 +366,7 @@ function resetMetricCards() {
   btCapitalBuyholdEl.textContent = "-";
   btWindowEl.textContent = "-";
   quantileLegendEl.textContent = "テスト期間の代表日を表示します。";
-  fanMetaEl.textContent = "q50（中央値）、50%帯、90%帯、実測値を表示します。";
+  fanMetaEl.textContent = "test 10% 期間の q50（中央値）、50%帯、90%帯、実測値を表示します。";
   nextDayMetaEl.textContent = "最新終値から翌営業日の上昇/下落確率を表示します。";
 }
 
@@ -1094,7 +1094,12 @@ function renderFanChart() {
     ctx.fill();
   }
 
-  fanMetaEl.textContent = `${fan.dates[0]} 〜 ${fan.dates[fan.dates.length - 1]} | points: ${fan.dates.length}`;
+  const testPinball = Number(latestPayload?.metrics?.test_10pct_pinball_loss);
+  const pinballText = Number.isFinite(testPinball)
+    ? ` | test pinball: ${formatNumber(testPinball, 6)}`
+    : "";
+  fanMetaEl.textContent =
+    `${fan.dates[0]} 〜 ${fan.dates[fan.dates.length - 1]} | points: ${fan.dates.length}${pinballText}`;
 
   chartViewState.fan = {
     canvas: fanCanvas,
@@ -1111,7 +1116,12 @@ function renderMetrics(payload) {
   const metrics = payload?.metrics || {};
   const splits = payload?.splits || {};
 
-  metricPinballEl.textContent = formatNumber(Number(metrics.mean_pinball_loss), 6);
+  const testPinball = Number(metrics.test_10pct_pinball_loss);
+  const fallbackPinball = Number(metrics.mean_pinball_loss);
+  metricPinballEl.textContent = formatNumber(
+    Number.isFinite(testPinball) ? testPinball : fallbackPinball,
+    6
+  );
   metricCov90El.textContent = `${formatPercent(Number(metrics.coverage_90))} (ideal 90%)`;
   metricCov50El.textContent = `${formatPercent(Number(metrics.coverage_50))} (ideal 50%)`;
 
