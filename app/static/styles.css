@@ -439,6 +439,44 @@ select:focus-visible,
   padding: 8px 10px;
 }
 
+.market-time-card {
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+
+.market-time-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.market-time-item {
+  border: 1px solid #2b384a;
+  border-radius: 10px;
+  background: rgba(16, 24, 37, 0.9);
+  padding: 8px 10px;
+  display: grid;
+  gap: 3px;
+}
+
+.market-time-value {
+  font-size: 0.98rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.market-state {
+  font-size: 0.82rem;
+  color: #8ea3be;
+}
+
+.market-state.open {
+  color: #64e4a2;
+}
+
+.market-state.closed {
+  color: #ff9faa;
+}
+
 .technical-toggle {
   margin-top: 12px;
   list-style: none;

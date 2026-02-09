@@ -136,6 +136,14 @@ function normalizeSymbol(raw) {
   return String(raw || "").trim().toUpperCase().replace(/[^A-Z0-9.\-]/g, "");
 }
 
+function applySymbolFromQuery() {
+  if (!mlSymbolInput) return;
+  const params = new URLSearchParams(window.location.search);
+  const symbolFromQuery = normalizeSymbol(params.get("symbol") || "");
+  if (!symbolFromQuery) return;
+  mlSymbolInput.value = symbolFromQuery;
+}
+
 function setMlCatalogMeta(message) {
   if (!mlCatalogMetaEl) return;
   mlCatalogMetaEl.textContent = message || "";
@@ -2117,6 +2125,7 @@ window.addEventListener("resize", () => {
 resetMetricCards();
 drawModelPlaceholders();
 hideProgress();
+applySymbolFromQuery();
 
 loadMlSymbolCatalog().catch(() => {
   setMlCatalogMeta("Failed to load symbol catalog");

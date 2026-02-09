@@ -254,6 +254,23 @@ class QuantileLstmJobRequest(BaseModel):
     refresh: bool = False
 
 
+class MlComparisonJobRequest(BaseModel):
+    symbols: str = "AAPL,MSFT,GOOG,JPM,XOM,UNH,WMT,META,LLY,BRK.B,NVDA,HD"
+    models: str = "quantile_lstm,patchtst_quantile"
+    years: int = HISTORICAL_DEFAULT_YEARS
+    sequence_length: int = 60
+    hidden_size: int = 64
+    num_layers: int = 2
+    dropout: float = 0.2
+    learning_rate: float = 1e-3
+    batch_size: int = 64
+    max_epochs: int = 80
+    patience: int = 10
+    seed: int = 42
+    refresh: bool = False
+    eval_months: int = 2
+
+
 class MlJobCancelledError(Exception):
     pass
 
@@ -1377,6 +1394,10 @@ ML_MODEL_CATALOG = [
         "api_path": "",
     },
 ]
+ML_COMPARE_DEFAULT_SYMBOLS = normalize_symbols(
+    "AAPL,MSFT,GOOG,JPM,XOM,UNH,WMT,META,LLY,BRK.B,NVDA,HD"
+)
+ML_COMPARE_ALLOWED_MODELS = {"quantile_lstm", "patchtst_quantile"}
 ml_job_store = MlJobStore(max_jobs=120)
 
 
@@ -1395,6 +1416,8 @@ async def _run_quantile_lstm_pipeline(
     representative_days: int = 5,
     seed: int = 42,
     refresh: bool = False,
+    split_eval_days: int | None = None,
+    split_train_val_ratio: float | None = None,
     progress_callback: Callable[[int, str], None] | None = None,
     cancel_check: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
@@ -1422,6 +1445,10 @@ async def _run_quantile_lstm_pipeline(
         "representative_days": representative_days,
         "seed": seed,
     }
+    if split_eval_days is not None and split_eval_days > 0:
+        config_payload["split_eval_days"] = int(split_eval_days)
+    if split_train_val_ratio is not None:
+        config_payload["split_train_val_ratio"] = float(split_train_val_ratio)
 
     if progress_callback is not None:
         progress_callback(5, "モデル学習を開始します。")
@@ -1468,6 +1495,8 @@ async def _run_patchtst_pipeline(
     representative_days: int = 5,
     seed: int = 42,
     refresh: bool = False,
+    split_eval_days: int | None = None,
+    split_train_val_ratio: float | None = None,
     progress_callback: Callable[[int, str], None] | None = None,
     cancel_check: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
@@ -1495,6 +1524,10 @@ async def _run_patchtst_pipeline(
         "representative_days": representative_days,
         "seed": seed,
     }
+    if split_eval_days is not None and split_eval_days > 0:
+        config_payload["split_eval_days"] = int(split_eval_days)
+    if split_train_val_ratio is not None:
+        config_payload["split_train_val_ratio"] = float(split_train_val_ratio)
 
     if progress_callback is not None:
         progress_callback(5, "PatchTST学習を開始します。")
@@ -1553,6 +1586,276 @@ def _cancel_check_for_job(job_id: str):
             raise MlJobCancelledError("ML job cancelled.")
 
     return _check
+
+
+def _parse_compare_models(raw_models: str) -> list[str]:
+    tokens = [item.strip().lower() for item in str(raw_models or "").split(",")]
+    selected: list[str] = []
+    seen: set[str] = set()
+    for token in tokens:
+        if not token or token in seen:
+            continue
+        if token not in ML_COMPARE_ALLOWED_MODELS:
+            continue
+        selected.append(token)
+        seen.add(token)
+    return selected
+
+
+def _mean_or_none(values: list[float | None]) -> float | None:
+    valid = [float(v) for v in values if isinstance(v, (int, float))]
+    if not valid:
+        return None
+    return float(sum(valid) / len(valid))
+
+
+def _as_aligned_arrays(left: list[Any], right: list[Any]) -> tuple[list[float], list[float]]:
+    n = min(len(left), len(right))
+    if n <= 0:
+        return [], []
+    out_left: list[float] = []
+    out_right: list[float] = []
+    for idx in range(n):
+        try:
+            l_value = float(left[idx])
+            r_value = float(right[idx])
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(l_value) or not math.isfinite(r_value):
+            continue
+        out_left.append(l_value)
+        out_right.append(r_value)
+    return out_left, out_right
+
+
+def _compute_loss_metrics(payload: dict[str, Any]) -> dict[str, Any]:
+    fan_chart = payload.get("fan_chart") if isinstance(payload, dict) else None
+    metrics = payload.get("metrics") if isinstance(payload, dict) else None
+    splits = payload.get("splits") if isinstance(payload, dict) else None
+    training = payload.get("training") if isinstance(payload, dict) else None
+
+    actual_returns = fan_chart.get("actual_returns") if isinstance(fan_chart, dict) else []
+    q50_returns = fan_chart.get("q50_returns") if isinstance(fan_chart, dict) else []
+    actual_prices = fan_chart.get("actual_prices") if isinstance(fan_chart, dict) else []
+    q50_prices = fan_chart.get("q50_prices") if isinstance(fan_chart, dict) else []
+
+    y_ret, yhat_ret = _as_aligned_arrays(actual_returns if isinstance(actual_returns, list) else [], q50_returns if isinstance(q50_returns, list) else [])
+    y_price, yhat_price = _as_aligned_arrays(actual_prices if isinstance(actual_prices, list) else [], q50_prices if isinstance(q50_prices, list) else [])
+
+    mae_return = float(sum(abs(a - b) for a, b in zip(y_ret, yhat_ret)) / len(y_ret)) if y_ret else None
+    rmse_return = (
+        float(math.sqrt(sum((a - b) ** 2 for a, b in zip(y_ret, yhat_ret)) / len(y_ret)))
+        if y_ret else None
+    )
+    mae_price = float(sum(abs(a - b) for a, b in zip(y_price, yhat_price)) / len(y_price)) if y_price else None
+    rmse_price = (
+        float(math.sqrt(sum((a - b) ** 2 for a, b in zip(y_price, yhat_price)) / len(y_price)))
+        if y_price else None
+    )
+
+    mape_terms = [
+        abs((actual - pred) / actual) * 100.0
+        for actual, pred in zip(y_price, yhat_price)
+        if abs(actual) > 1e-12
+    ]
+    smape_terms = [
+        (2.0 * abs(actual - pred) / (abs(actual) + abs(pred))) * 100.0
+        for actual, pred in zip(y_price, yhat_price)
+        if (abs(actual) + abs(pred)) > 1e-12
+    ]
+
+    test_split = splits.get("test") if isinstance(splits, dict) else {}
+    return {
+        "test_count": int(test_split.get("count") or 0),
+        "test_from": test_split.get("from"),
+        "test_to": test_split.get("to"),
+        "epochs_trained": int(training.get("epochs_trained") or 0) if isinstance(training, dict) else 0,
+        "best_val_pinball_loss": float(training.get("best_val_pinball_loss")) if isinstance(training, dict) and training.get("best_val_pinball_loss") is not None else None,
+        "mean_pinball_loss": float(metrics.get("mean_pinball_loss")) if isinstance(metrics, dict) and metrics.get("mean_pinball_loss") is not None else None,
+        "coverage_90": float(metrics.get("coverage_90")) if isinstance(metrics, dict) and metrics.get("coverage_90") is not None else None,
+        "coverage_50": float(metrics.get("coverage_50")) if isinstance(metrics, dict) and metrics.get("coverage_50") is not None else None,
+        "mae_return": mae_return,
+        "rmse_return": rmse_return,
+        "mae_price": mae_price,
+        "rmse_price": rmse_price,
+        "mape_price_pct": float(sum(mape_terms) / len(mape_terms)) if mape_terms else None,
+        "smape_price_pct": float(sum(smape_terms) / len(smape_terms)) if smape_terms else None,
+    }
+
+
+async def _run_ml_comparison_job(job_id: str, req: MlComparisonJobRequest) -> None:
+    try:
+        raw_symbols = normalize_symbols(req.symbols) if str(req.symbols or "").strip() else []
+        symbols = raw_symbols or ML_COMPARE_DEFAULT_SYMBOLS
+        if not symbols:
+            raise HTTPException(status_code=400, detail="比較対象シンボルが空です。")
+
+        selected_models = _parse_compare_models(req.models)
+        if not selected_models:
+            raise HTTPException(status_code=400, detail="比較対象モデルが空です。")
+
+        eval_months = max(1, min(6, int(req.eval_months)))
+        split_eval_days = eval_months * 31
+        split_train_val_ratio = 0.8
+
+        ml_job_store.update(job_id, status="running", progress=1, message="比較ジョブを開始しました。")
+        cancel_check = _cancel_check_for_job(job_id)
+
+        rows: list[dict[str, Any]] = []
+        task_items = [(symbol, model_id) for symbol in symbols for model_id in selected_models]
+        task_count = len(task_items)
+
+        for task_idx, (symbol, model_id) in enumerate(task_items):
+            cancel_check()
+            progress_start = 5 + int((task_idx * 88) / max(1, task_count))
+            progress_end = 5 + int(((task_idx + 1) * 88) / max(1, task_count))
+
+            def _task_progress(progress: int, message: str) -> None:
+                cancel_check()
+                clamped = max(0, min(100, int(progress)))
+                mapped = progress_start + int(((progress_end - progress_start) * clamped) / 100)
+                ml_job_store.update(
+                    job_id,
+                    status="running",
+                    progress=max(1, min(99, mapped)),
+                    message=f"[{task_idx + 1}/{task_count}] {symbol} | {model_id}: {message}",
+                )
+
+            try:
+                if model_id == "quantile_lstm":
+                    payload = await _run_quantile_lstm_pipeline(
+                        symbol=symbol,
+                        years=req.years,
+                        sequence_length=req.sequence_length,
+                        hidden_size=req.hidden_size,
+                        num_layers=req.num_layers,
+                        dropout=req.dropout,
+                        learning_rate=req.learning_rate,
+                        batch_size=req.batch_size,
+                        max_epochs=req.max_epochs,
+                        patience=req.patience,
+                        representative_days=3,
+                        seed=req.seed,
+                        refresh=req.refresh,
+                        split_eval_days=split_eval_days,
+                        split_train_val_ratio=split_train_val_ratio,
+                        progress_callback=_task_progress,
+                        cancel_check=cancel_check,
+                    )
+                elif model_id == "patchtst_quantile":
+                    payload = await _run_patchtst_pipeline(
+                        symbol=symbol,
+                        years=req.years,
+                        sequence_length=req.sequence_length,
+                        hidden_size=req.hidden_size,
+                        num_layers=req.num_layers,
+                        dropout=req.dropout,
+                        learning_rate=req.learning_rate,
+                        batch_size=req.batch_size,
+                        max_epochs=req.max_epochs,
+                        patience=req.patience,
+                        representative_days=3,
+                        seed=req.seed,
+                        refresh=req.refresh,
+                        split_eval_days=split_eval_days,
+                        split_train_val_ratio=split_train_val_ratio,
+                        progress_callback=_task_progress,
+                        cancel_check=cancel_check,
+                    )
+                else:
+                    raise HTTPException(status_code=400, detail=f"Unsupported model: {model_id}")
+
+                rows.append(
+                    {
+                        "symbol": symbol,
+                        "model_id": model_id,
+                        "status": "ok",
+                        "error": None,
+                        "metrics": _compute_loss_metrics(payload),
+                    }
+                )
+            except MlJobCancelledError:
+                raise
+            except HTTPException as exc:
+                rows.append(
+                    {
+                        "symbol": symbol,
+                        "model_id": model_id,
+                        "status": "failed",
+                        "error": str(exc.detail),
+                        "metrics": None,
+                    }
+                )
+            except Exception as exc:
+                rows.append(
+                    {
+                        "symbol": symbol,
+                        "model_id": model_id,
+                        "status": "failed",
+                        "error": str(exc),
+                        "metrics": None,
+                    }
+                )
+
+        cancel_check()
+        summary_by_model: list[dict[str, Any]] = []
+        for model_id in selected_models:
+            model_rows = [row for row in rows if row.get("model_id") == model_id and row.get("status") == "ok"]
+            metrics_list = [row.get("metrics") for row in model_rows if isinstance(row.get("metrics"), dict)]
+            summary_by_model.append(
+                {
+                    "model_id": model_id,
+                    "success_count": len(model_rows),
+                    "mean_pinball_loss": _mean_or_none([item.get("mean_pinball_loss") for item in metrics_list]),
+                    "mean_mae_return": _mean_or_none([item.get("mae_return") for item in metrics_list]),
+                    "mean_rmse_return": _mean_or_none([item.get("rmse_return") for item in metrics_list]),
+                    "mean_mae_price": _mean_or_none([item.get("mae_price") for item in metrics_list]),
+                    "mean_rmse_price": _mean_or_none([item.get("rmse_price") for item in metrics_list]),
+                    "mean_mape_price_pct": _mean_or_none([item.get("mape_price_pct") for item in metrics_list]),
+                    "mean_smape_price_pct": _mean_or_none([item.get("smape_price_pct") for item in metrics_list]),
+                    "mean_coverage_90": _mean_or_none([item.get("coverage_90") for item in metrics_list]),
+                    "mean_coverage_50": _mean_or_none([item.get("coverage_50") for item in metrics_list]),
+                }
+            )
+
+        success_count = len([row for row in rows if row.get("status") == "ok"])
+        failed_count = len(rows) - success_count
+        result = {
+            "symbols": symbols,
+            "models": selected_models,
+            "config": {
+                "years": int(req.years),
+                "sequence_length": int(req.sequence_length),
+                "hidden_size": int(req.hidden_size),
+                "num_layers": int(req.num_layers),
+                "dropout": float(req.dropout),
+                "learning_rate": float(req.learning_rate),
+                "batch_size": int(req.batch_size),
+                "max_epochs": int(req.max_epochs),
+                "patience": int(req.patience),
+                "seed": int(req.seed),
+                "refresh": bool(req.refresh),
+            },
+            "evaluation_policy": {
+                "eval_months": eval_months,
+                "eval_days_approx": split_eval_days,
+                "test_window": "latest N months (relative to the latest available trading date)",
+                "train_val_split": "remaining history split by 4:1",
+                "train_ratio": split_train_val_ratio,
+                "val_ratio": 1.0 - split_train_val_ratio,
+            },
+            "summary_by_model": summary_by_model,
+            "rows": rows,
+            "success_count": success_count,
+            "failed_count": failed_count,
+        }
+        ml_job_store.complete(job_id, result=result)
+    except MlJobCancelledError:
+        ml_job_store.mark_cancelled(job_id)
+    except HTTPException as exc:
+        ml_job_store.fail(job_id, error=str(exc.detail))
+    except Exception as exc:
+        ml_job_store.fail(job_id, error=str(exc))
 
 
 async def _run_quantile_lstm_job(job_id: str, req: QuantileLstmJobRequest) -> None:
@@ -1648,6 +1951,11 @@ async def ml_lab_page() -> FileResponse:
 @app.get("/strategy-lab", include_in_schema=False)
 async def strategy_lab_page() -> FileResponse:
     return FileResponse(STATIC_DIR / "strategy_lab.html")
+
+
+@app.get("/compare-lab", include_in_schema=False)
+async def compare_lab_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "compare_lab.html")
 
 
 @app.get("/historical/{symbol}", include_in_schema=False)
@@ -1791,6 +2099,25 @@ async def start_patchtst_job(req: QuantileLstmJobRequest) -> JSONResponse:
 
     job_id = ml_job_store.create(kind="patchtst_quantile", symbol=req.symbol)
     asyncio.create_task(_run_patchtst_job(job_id, req))
+    return ok_json_response(job_id=job_id, status="queued")
+
+
+@app.post("/api/ml/compare/jobs")
+async def start_ml_compare_job(req: MlComparisonJobRequest) -> JSONResponse:
+    symbols = normalize_symbols(req.symbols) if str(req.symbols or "").strip() else []
+    if not symbols:
+        symbols = ML_COMPARE_DEFAULT_SYMBOLS
+    if not symbols:
+        raise HTTPException(status_code=400, detail="At least one valid symbol is required.")
+    req.symbols = ",".join(symbols)
+
+    selected_models = _parse_compare_models(req.models)
+    if not selected_models:
+        raise HTTPException(status_code=400, detail="At least one valid model is required.")
+    req.models = ",".join(selected_models)
+
+    job_id = ml_job_store.create(kind="ml_compare", symbol="MULTI")
+    asyncio.create_task(_run_ml_comparison_job(job_id, req))
     return ok_json_response(job_id=job_id, status="queued")
 
 

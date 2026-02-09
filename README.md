@@ -82,14 +82,14 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `/`: US Stock Live Monitor（リアルタイム監視）
 - `/ml-lab`: ML Forecast Lab（モデル一覧から選択して翌営業日分布を推定）
 - `/strategy-lab`: Strategy Lab（戦略検証の準備ページ）
-- `/historical/{symbol}`: ヒストリカル表示ページ（例: `/historical/AAPL`）
+- `/compare-lab`: Model Compare Lab（複数銘柄 × 複数モデルの一括比較）
 
 ## 使い方
 
 1. 検索欄をクリックすると、Twelve Data から取得した米国株シンボル候補が表示される（入力時はシンボルの頭文字一致で絞り込み）
 2. 候補をクリックすると監視銘柄に追加され、即時反映される（上限8）
-3. 下のテーブルの `Symbol` 欄で銘柄名をクリックすると、`/historical/{symbol}` の専用画面へ遷移して過去5年ヒストリカルチャートを表示
-4. ヒストリカル画面では、マウスホイール/`Zoom In`/`Zoom Out` で拡大縮小、ドラッグで表示範囲移動、点にカーソルを合わせると日付と価格を表示、`Reset Zoom (5Y)` で全期間表示へ戻せる
+3. 画面上部に日本時間（JST）・米国時間（ET）・米国市場の通常取引時間（09:30-16:00 ET）と開場状態を表示
+4. 下のテーブルの `Symbol` 欄の銘柄名をクリックすると、`/historical/{symbol}` に遷移してヒストリカルチャートとリスク指標を表示
 5. 下のテーブルの `Symbol` 欄にある `x` を押すと監視対象から除外
 6. テーブルに価格・更新時刻が表示され、取得ソース（`websocket` / `rest` / `stored`）は更新時刻の下に小さく表示
    - `change(%)` は営業中は「現在値 vs 前営業日終値」、休場中は「直近営業日終値 vs その1つ前の営業日終値」で表示
@@ -103,6 +103,10 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
    - test の平均ピンボール損失 / 被覆率（q05-q95, q25-q75）
    - 時系列分割は取得データを時系列順で train=75%, val=15%, test=10% に分割
    - 現在 `Ready` は Quantile LSTM / PatchTST Quantile、他モデルは `Coming Soon` として UI 上で選択可能
+9. `/compare-lab` では、複数銘柄（例: AAPL, MSFT, GOOG, JPM, XOM, UNH, WMT, META, LLY, BRK.B, NVDA, HD）に同一ハイパーパラメータを適用してモデルを一括学習・比較
+   - 比較期間（test）は「最新データから直近2カ月」
+   - 学習/検証は残り期間を `4:1` で分割（train=80%, val=20%）
+   - モデル別サマリーと、銘柄×モデル詳細（Pinball/MAE/RMSE/MAPE/SMAPE/Coverage）を表示
 
 補足:
 - 起動時に `/api_usage` を1回呼び、日次残量を初期化します（1クレジット消費）。
@@ -146,12 +150,13 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `GET /api/ml/patchtst?...`: PatchTST Quantile を学習・推論し、分位点/評価/描画データを返却
 - `POST /api/ml/quantile-lstm/jobs`: Quantile LSTM 非同期ジョブを開始
 - `POST /api/ml/patchtst/jobs`: PatchTST 非同期ジョブを開始
+- `POST /api/ml/compare/jobs`: 複数銘柄 × 複数モデル比較ジョブを開始（直近2カ月評価、残り4:1分割）
 - `GET /api/ml/jobs/{job_id}`: 非同期ジョブ状態を取得（`queued` / `running` / `cancelling` / `completed` / `failed` / `cancelled`）
 - `POST /api/ml/jobs/{job_id}/cancel`: 実行中ジョブの停止を要求
 - `GET /api/stream`: SSE でリアルタイム配信
-- `GET /historical/{symbol}`: ヒストリカル表示専用ページ
 - `GET /ml-lab`: モデル選択式の分位点予測ページ
 - `GET /strategy-lab`: 戦略検証ページ（準備用）
+- `GET /compare-lab`: モデル一括比較ページ
 
 ## 注意
 

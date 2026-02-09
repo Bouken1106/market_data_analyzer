@@ -17,12 +17,30 @@
               <a href="/">US Stock Live Monitor</a>
               <a href="/ml-lab">ML Forecast Lab</a>
               <a href="/strategy-lab">Strategy Lab</a>
-              <a href="/historical/AAPL">Historical Chart</a>
+              <a href="/compare-lab">Model Compare Lab</a>
             </nav>
           </details>
         </div>
         <p>Twelve Data Basic プラン対応 (WebSocket + REST fallback)</p>
       </header>
+
+      <section class="card market-time-card">
+        <div class="market-time-grid">
+          <div class="market-time-item">
+            <span class="label">Japan Time (JST)</span>
+            <span id="clock-jst" class="market-time-value">-</span>
+          </div>
+          <div class="market-time-item">
+            <span class="label">US Time (ET)</span>
+            <span id="clock-et" class="market-time-value">-</span>
+          </div>
+          <div class="market-time-item">
+            <span class="label">US Market Hours</span>
+            <span id="market-hours-et" class="market-time-value">09:30-16:00 ET (Mon-Fri)</span>
+            <span id="market-open-state" class="market-state">-</span>
+          </div>
+        </div>
+      </section>
 
       <section class="card controls">
         <label for="symbol-search">Search & add symbols (max 8)</label>

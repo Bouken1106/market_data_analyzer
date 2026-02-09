@@ -140,6 +140,18 @@ def run_quantile_lstm_forecast(
 ) -> dict[str, Any]:
     _run_cancel_check(cancel_check)
     config = QuantileLstmConfig.from_payload(config_payload)
+    payload = config_payload or {}
+    split_eval_days = 0
+    split_train_val_ratio = 0.8
+    try:
+        split_eval_days = max(0, int(payload.get("split_eval_days", 0)))
+    except (TypeError, ValueError):
+        split_eval_days = 0
+    try:
+        split_train_val_ratio = float(payload.get("split_train_val_ratio", 0.8))
+    except (TypeError, ValueError):
+        split_train_val_ratio = 0.8
+    split_train_val_ratio = max(0.5, min(0.95, split_train_val_ratio))
     _emit_progress(progress_callback, 5, "学習準備を開始しました。")
     _set_seed(config.seed)
 
@@ -162,11 +174,18 @@ def run_quantile_lstm_forecast(
 
     _run_cancel_check(cancel_check)
     _emit_progress(progress_callback, 22, "train/val/test を分割しています。")
-    train_idx, val_idx, test_idx = _split_time_series_indices(
-        sample_count=len(target_dates),
-        train_ratio=0.75,
-        val_ratio=0.15,
-    )
+    if split_eval_days > 0:
+        train_idx, val_idx, test_idx = _split_time_series_indices_recent_window(
+            target_dates=target_dates,
+            eval_days=split_eval_days,
+            train_ratio=split_train_val_ratio,
+        )
+    else:
+        train_idx, val_idx, test_idx = _split_time_series_indices(
+            sample_count=len(target_dates),
+            train_ratio=0.75,
+            val_ratio=0.15,
+        )
 
     train_x = seq_features[train_idx]
     val_x = seq_features[val_idx]
@@ -543,6 +562,44 @@ def _split_time_series_indices(
     train_idx = np.arange(0, train_end, dtype=np.int64)
     val_idx = np.arange(train_end, val_end, dtype=np.int64)
     test_idx = np.arange(val_end, sample_count, dtype=np.int64)
+    return train_idx, val_idx, test_idx
+
+
+def _split_time_series_indices_recent_window(
+    target_dates: np.ndarray,
+    eval_days: int,
+    train_ratio: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    sample_count = len(target_dates)
+    if sample_count < 30:
+        raise ValueError("分割に必要なサンプル数が不足しています。")
+
+    dates = [item for item in target_dates]
+    if not dates:
+        raise ValueError("時系列日付が取得できませんでした。")
+
+    latest = dates[-1]
+    if not isinstance(latest, date):
+        raise ValueError("時系列日付の形式が不正です。")
+
+    eval_start = latest - timedelta(days=max(1, int(eval_days)))
+    test_start = next((idx for idx, d in enumerate(dates) if isinstance(d, date) and d >= eval_start), sample_count - 1)
+    test_start = max(1, min(test_start, sample_count - 1))
+    test_count = sample_count - test_start
+    if test_count < 20:
+        raise ValueError("評価期間（直近2か月）のサンプル数が不足しています。")
+
+    train_val_count = test_start
+    if train_val_count < 10:
+        raise ValueError("学習/検証期間のサンプル数が不足しています。")
+
+    train_end = int(train_val_count * float(train_ratio))
+    train_end = max(1, min(train_end, train_val_count - 1))
+    val_end = train_val_count
+
+    train_idx = np.arange(0, train_end, dtype=np.int64)
+    val_idx = np.arange(train_end, val_end, dtype=np.int64)
+    test_idx = np.arange(test_start, sample_count, dtype=np.int64)
     return train_idx, val_idx, test_idx
 
 

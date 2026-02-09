@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Model Compare Lab</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header class="header">
+        <div class="header-top">
+          <h1>Model Compare Lab</h1>
+          <details class="page-menu">
+            <summary class="page-menu-btn">Pages</summary>
+            <nav class="page-menu-list" aria-label="Page navigation">
+              <a href="/">US Stock Live Monitor</a>
+              <a href="/ml-lab">ML Forecast Lab</a>
+              <a href="/strategy-lab">Strategy Lab</a>
+              <a href="/compare-lab">Model Compare Lab</a>
+              <a href="/historical/AAPL">Historical Chart</a>
+            </nav>
+          </details>
+        </div>
+        <p>複数銘柄に同一条件を適用し、モデルと損失関数を横断比較します。</p>
+      </header>
+
+      <section class="card">
+        <h2>Compare Settings</h2>
+        <form id="compare-form" class="ml-form">
+          <label>
+            <span class="ml-label-row">
+              <span>Symbols (comma separated)</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>比較対象ティッカー。カンマ区切りで複数指定（例: AAPL,MSFT,NVDA）。</p>
+              </details>
+            </span>
+            <input id="cmp-symbols" type="text" value="AAPL,MSFT,GOOG,JPM,XOM,UNH,WMT,META,LLY,BRK.B,NVDA,HD" />
+          </label>
+
+          <div class="ml-metric-grid">
+            <label class="ml-checkbox"><input id="cmp-model-lstm" type="checkbox" checked /> Quantile LSTM</label>
+            <label class="ml-checkbox"><input id="cmp-model-patchtst" type="checkbox" checked /> PatchTST Quantile</label>
+          </div>
+
+          <div class="ml-form-grid">
+            <label>
+              <span class="ml-label-row">
+                <span>Years</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>取得するヒストリカル期間（年）。この期間から train/val/test を切ります。</p>
+                </details>
+              </span>
+              <input id="cmp-years" type="number" value="5" min="2" max="10" />
+            </label>
+            <label>
+              <span class="ml-label-row">
+                <span>Sequence Length</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>1サンプルに使う過去営業日数。全銘柄・全モデルで同じ値を使用します。</p>
+                </details>
+              </span>
+              <input id="cmp-seq-len" type="number" value="60" min="20" max="512" />
+            </label>
+            <label>
+              <span class="ml-label-row">
+                <span>Hidden Size</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>モデル内部の隠れ次元。大きいほど表現力は上がるが計算コストも増えます。</p>
+                </details>
+              </span>
+              <input id="cmp-hidden" type="number" value="64" min="16" max="256" />
+            </label>
+            <label>
+              <span class="ml-label-row">
+                <span>Layers</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>ネットワーク層数。増やすと複雑なパターンを捉えやすい反面、過学習しやすくなります。</p>
+                </details>
+              </span>
+              <input id="cmp-layers" type="number" value="2" min="1" max="6" />
+            </label>
+            <label>
+              <span class="ml-label-row">
+                <span>Dropout</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>過学習抑制率。一般には 0.1〜0.3 を起点に調整します。</p>
+                </details>
+              </span>
+              <input id="cmp-dropout" type="number" value="0.2" min="0" max="0.6" step="0.05" />
+            </label>
+            <label>
+              <span class="ml-label-row">
+                <span>Learning Rate</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>学習率。大きすぎると不安定、小さすぎると収束が遅くなります。</p>
+                </details>
+              </span>
+              <input id="cmp-lr" type="number" value="0.001" min="0.00001" max="0.1" step="0.00001" />
+            </label>
+            <label>
+              <span class="ml-label-row">
+                <span>Batch Size</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>1ステップで処理するサンプル数。大きいほど高速化しやすいがメモリ消費が増えます。</p>
+                </details>
+              </span>
+              <input id="cmp-batch" type="number" value="64" min="4" max="512" />
+            </label>
+            <label>
+              <span class="ml-label-row">
+                <span>Max Epochs</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>学習の最大反復回数。実際は Early Stopping で早く終了する場合があります。</p>
+                </details>
+              </span>
+              <input id="cmp-epochs" type="number" value="80" min="5" max="400" />
+            </label>
+            <label>
+              <span class="ml-label-row">
+                <span>Patience</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>検証損失の改善が止まってから待つエポック数（Early Stopping用）。</p>
+                </details>
+              </span>
+              <input id="cmp-patience" type="number" value="10" min="2" max="80" />
+            </label>
+            <label>
+              <span class="ml-label-row">
+                <span>Seed</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>乱数シード。再現実験時は固定し、比較の公平性を保ちます。</p>
+                </details>
+              </span>
+              <input id="cmp-seed" type="number" value="42" min="1" max="100000" />
+            </label>
+            <label>
+              <span class="ml-label-row">
+                <span>Evaluation Months</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>比較対象に使うテスト期間（月）。指定月数の直近データを test として評価します。</p>
+                </details>
+              </span>
+              <input id="cmp-eval-months" type="number" value="2" min="1" max="6" />
+            </label>
+          </div>
+
+          <div class="row ml-form-actions">
+            <button id="cmp-run" type="submit">Run Comparison</button>
+            <button id="cmp-cancel" type="button" class="danger-action" disabled>停止</button>
+            <label class="ml-checkbox">
+              <input id="cmp-refresh" type="checkbox" /> Force refresh historical data
+            </label>
+          </div>
+        </form>
+        <p id="cmp-status" class="hint">条件を設定して比較を実行してください。</p>
+        <div id="cmp-progress-wrap" class="ml-progress hidden" aria-live="polite">
+          <div class="ml-progress-track">
+            <div id="cmp-progress-bar" class="ml-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
+          </div>
+          <p id="cmp-progress-text" class="hint">0%</p>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Summary By Model</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th>Success</th>
+                <th>Pinball</th>
+                <th>MAE Return</th>
+                <th>RMSE Return</th>
+                <th>MAPE Price(%)</th>
+                <th>Coverage90</th>
+              </tr>
+            </thead>
+            <tbody id="cmp-summary-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Detail By Symbol x Model</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Model</th>
+                <th>Status</th>
+                <th>Test Range</th>
+                <th>Pinball</th>
+                <th>MAE Return</th>
+                <th>RMSE Return</th>
+                <th>MAE Price</th>
+                <th>RMSE Price</th>
+                <th>MAPE Price(%)</th>
+                <th>SMAPE Price(%)</th>
+                <th>Coverage90</th>
+                <th>Coverage50</th>
+                <th>Epochs</th>
+                <th>Error</th>
+              </tr>
+            </thead>
+            <tbody id="cmp-detail-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/compare_lab.js" defer></script>
+    <script src="/static/page_menu.js" defer></script>
+  </body>
+</html>

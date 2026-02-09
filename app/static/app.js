@@ -11,6 +11,10 @@ const fallbackEl = document.getElementById("fallback-interval");
 const creditsLeftEl = document.getElementById("credits-left");
 const creditsUpdatedEl = document.getElementById("credits-updated");
 const refreshCreditsBtn = document.getElementById("refresh-credits");
+const clockJstEl = document.getElementById("clock-jst");
+const clockEtEl = document.getElementById("clock-et");
+const marketHoursEtEl = document.getElementById("market-hours-et");
+const marketOpenStateEl = document.getElementById("market-open-state");
 
 const MAX_SYMBOLS = 8;
 const MAX_DROPDOWN_ITEMS = 120;
@@ -26,6 +30,27 @@ let symbolCatalog = [];
 let selectedSymbols = [];
 let syncInFlight = false;
 let syncQueued = false;
+let marketClockTimer = null;
+
+const JST_TIME_ZONE = "Asia/Tokyo";
+const ET_TIME_ZONE = "America/New_York";
+const US_MARKET_OPEN_MINUTE = (9 * 60) + 30;
+const US_MARKET_CLOSE_MINUTE = 16 * 60;
+
+const zoneFormatter = (timeZone) => new Intl.DateTimeFormat("en-US", {
+  timeZone,
+  hour12: false,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  weekday: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+});
+
+const jstFormatter = zoneFormatter(JST_TIME_ZONE);
+const etFormatter = zoneFormatter(ET_TIME_ZONE);
 
 function normalizeSymbol(raw) {
   return String(raw || "").trim().toUpperCase();
@@ -66,6 +91,67 @@ function formatChangePercent(value) {
   return `${Math.abs(value).toFixed(2)}%`;
 }
 
+function readZoneClockParts(date, formatter) {
+  const parts = formatter.formatToParts(date);
+  const pick = (type) => parts.find((item) => item.type === type)?.value || "";
+  return {
+    year: Number(pick("year")),
+    month: Number(pick("month")),
+    day: Number(pick("day")),
+    weekday: pick("weekday"),
+    hour: Number(pick("hour")),
+    minute: Number(pick("minute")),
+    second: Number(pick("second")),
+  };
+}
+
+function formatZoneClockText(parts) {
+  const y = Number.isFinite(parts.year) ? String(parts.year).padStart(4, "0") : "----";
+  const m = Number.isFinite(parts.month) ? String(parts.month).padStart(2, "0") : "--";
+  const d = Number.isFinite(parts.day) ? String(parts.day).padStart(2, "0") : "--";
+  const h = Number.isFinite(parts.hour) ? String(parts.hour).padStart(2, "0") : "--";
+  const mm = Number.isFinite(parts.minute) ? String(parts.minute).padStart(2, "0") : "--";
+  const s = Number.isFinite(parts.second) ? String(parts.second).padStart(2, "0") : "--";
+  const weekday = String(parts.weekday || "").trim();
+  return `${y}-${m}-${d} ${h}:${mm}:${s}${weekday ? ` (${weekday})` : ""}`;
+}
+
+function isUsRegularSessionOpen(etParts) {
+  const weekday = String(etParts.weekday || "");
+  const isWeekday = ["Mon", "Tue", "Wed", "Thu", "Fri"].includes(weekday);
+  if (!isWeekday) return false;
+  if (!Number.isFinite(etParts.hour) || !Number.isFinite(etParts.minute)) return false;
+
+  const minuteOfDay = (etParts.hour * 60) + etParts.minute;
+  return minuteOfDay >= US_MARKET_OPEN_MINUTE && minuteOfDay < US_MARKET_CLOSE_MINUTE;
+}
+
+function renderMarketClock() {
+  if (!clockJstEl || !clockEtEl || !marketHoursEtEl || !marketOpenStateEl) return;
+
+  const now = new Date();
+  const jstParts = readZoneClockParts(now, jstFormatter);
+  const etParts = readZoneClockParts(now, etFormatter);
+
+  clockJstEl.textContent = formatZoneClockText(jstParts);
+  clockEtEl.textContent = formatZoneClockText(etParts);
+  marketHoursEtEl.textContent = "09:30-16:00 ET (Mon-Fri)";
+
+  const marketIsOpen = isUsRegularSessionOpen(etParts);
+  marketOpenStateEl.textContent = marketIsOpen ? "Open now (regular session)" : "Closed now (regular session)";
+  marketOpenStateEl.classList.toggle("open", marketIsOpen);
+  marketOpenStateEl.classList.toggle("closed", !marketIsOpen);
+}
+
+function startMarketClock() {
+  if (!clockJstEl || !clockEtEl || !marketHoursEtEl || !marketOpenStateEl) return;
+  renderMarketClock();
+  if (marketClockTimer) {
+    window.clearInterval(marketClockTimer);
+  }
+  marketClockTimer = window.setInterval(renderMarketClock, 1000);
+}
+
 async function fetchJson(url, options) {
   const response = await fetch(url, options);
   const result = await response.json().catch(() => ({}));
@@ -103,7 +189,9 @@ function setStatus(status) {
 }
 
 function goHistorical(symbol) {
-  window.location.href = `/historical/${encodeURIComponent(symbol)}`;
+  const normalized = normalizeSymbol(symbol);
+  if (!normalized) return;
+  window.location.href = `/historical/${encodeURIComponent(normalized)}`;
 }
 
 function renderSparklineSvg(values) {
@@ -180,7 +268,7 @@ function ensureRow(symbol) {
   tr.innerHTML = `
     <td class="sym">
       <div class="sym-cell">
-        <button type="button" class="sym-open" data-symbol="${symbol}">${symbol}</button>
+        <button type="button" class="sym-open" data-symbol="${symbol}" title="Open historical chart">${symbol}</button>
         <button type="button" class="sym-remove" data-symbol="${symbol}" title="Remove symbol">x</button>
       </div>
     </td>
@@ -631,3 +719,4 @@ loadSymbolCatalog().catch(() => {
   setCatalogMeta("Failed to load symbol catalog");
 });
 connectEventStream();
+startMarketClock();

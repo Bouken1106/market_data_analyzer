@@ -787,6 +787,8 @@ def train_patchtst_quantile(
     verbose: bool = True,
     progress_callback: ProgressCallback | None = None,
     cancel_check: CancelCheck | None = None,
+    split_eval_days: int = 0,
+    split_train_ratio: float = 0.8,
 ) -> dict[str, Any]:
     _run_cancel_check(cancel_check)
     cfg = config or PatchTSTConfig()
@@ -804,11 +806,18 @@ def train_patchtst_quantile(
     _run_cancel_check(cancel_check)
     _emit_progress(progress_callback, 22, "時系列ウィンドウを構築しています。")
     windows = build_rolling_windows(prepared=prepared, input_length=cfg.input_length)
-    train_idx, val_idx, test_idx = split_time_series_indices(
-        sample_count=len(windows.y),
-        train_ratio=cfg.train_ratio,
-        val_ratio=cfg.val_ratio,
-    )
+    if split_eval_days > 0:
+        train_idx, val_idx, test_idx = split_time_series_indices_recent_window(
+            target_dates=np.asarray(windows.target_dates, dtype=object),
+            eval_days=split_eval_days,
+            train_ratio=split_train_ratio,
+        )
+    else:
+        train_idx, val_idx, test_idx = split_time_series_indices(
+            sample_count=len(windows.y),
+            train_ratio=cfg.train_ratio,
+            val_ratio=cfg.val_ratio,
+        )
     _emit_progress(progress_callback, 25, "train/val/test を分割しました。")
 
     train_x = windows.x[train_idx]
@@ -916,6 +925,42 @@ def train_patchtst_quantile(
             "quantiles": probs.astype(np.float32),
         },
     }
+
+
+def split_time_series_indices_recent_window(
+    target_dates: np.ndarray,
+    eval_days: int,
+    train_ratio: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    sample_count = len(target_dates)
+    if sample_count < 30:
+        raise ValueError("Not enough samples for split.")
+
+    if target_dates.size == 0:
+        raise ValueError("No target dates to split.")
+
+    date_values = [pd.Timestamp(item).normalize() for item in target_dates]
+    latest = date_values[-1]
+    eval_start = latest - pd.Timedelta(days=max(1, int(eval_days)))
+
+    test_start = next((idx for idx, value in enumerate(date_values) if value >= eval_start), sample_count - 1)
+    test_start = max(1, min(test_start, sample_count - 1))
+    test_count = sample_count - test_start
+    if test_count < 20:
+        raise ValueError("Not enough samples in recent evaluation window.")
+
+    train_val_count = test_start
+    if train_val_count < 10:
+        raise ValueError("Not enough samples for train/val.")
+
+    safe_train_ratio = max(0.5, min(0.95, float(train_ratio)))
+    train_end = int(train_val_count * safe_train_ratio)
+    train_end = max(1, min(train_end, train_val_count - 1))
+
+    train_idx = np.arange(0, train_end, dtype=np.int64)
+    val_idx = np.arange(train_end, train_val_count, dtype=np.int64)
+    test_idx = np.arange(test_start, sample_count, dtype=np.int64)
+    return train_idx, val_idx, test_idx
 
 
 def _next_business_day(value: pd.Timestamp) -> pd.Timestamp:
@@ -1116,6 +1161,16 @@ def run_patchtst_forecast(
     _run_cancel_check(cancel_check)
     runtime_cfg = PatchTSTRuntimeConfig.from_payload(config_payload)
     config = runtime_cfg.model_config
+    payload = config_payload or {}
+    try:
+        split_eval_days = max(0, int(payload.get("split_eval_days", 0)))
+    except (TypeError, ValueError):
+        split_eval_days = 0
+    try:
+        split_train_ratio = float(payload.get("split_train_val_ratio", 0.8))
+    except (TypeError, ValueError):
+        split_train_ratio = 0.8
+    split_train_ratio = max(0.5, min(0.95, split_train_ratio))
 
     _emit_progress(progress_callback, 5, "PatchTSTの学習準備を開始しました。")
     _run_cancel_check(cancel_check)
@@ -1131,6 +1186,8 @@ def run_patchtst_forecast(
         verbose=False,
         progress_callback=progress_callback,
         cancel_check=cancel_check,
+        split_eval_days=split_eval_days,
+        split_train_ratio=split_train_ratio,
     )
     artifact: PatchTSTArtifact = trained["artifact"]
 
