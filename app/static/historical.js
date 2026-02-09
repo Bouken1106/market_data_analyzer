@@ -136,6 +136,14 @@ function setHistoryMeta(message, isError = false) {
   historyMetaEl.classList.toggle("error", Boolean(isError));
 }
 
+function closeParamHelpPopovers(exceptDetail = null) {
+  const openDetails = document.querySelectorAll("details.param-help[open]");
+  openDetails.forEach((detail) => {
+    if (detail === exceptDetail) return;
+    detail.removeAttribute("open");
+  });
+}
+
 function setCurrentPrice(value) {
   const num = Number(value);
   currentPriceEl.textContent = Number.isFinite(num) ? `$${formatPrice(num)}` : "-";
@@ -1112,6 +1120,16 @@ window.addEventListener("resize", () => {
   } else {
     drawPlaceholder("Loading...");
   }
+});
+
+document.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof Element)) {
+    closeParamHelpPopovers();
+    return;
+  }
+  const clickedHelp = target.closest("details.param-help");
+  closeParamHelpPopovers(clickedHelp);
 });
 
 async function init() {
