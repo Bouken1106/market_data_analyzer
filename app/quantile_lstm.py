@@ -12,7 +12,14 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
 QUANTILE_STEP = 0.001
-QUANTILES = np.arange(QUANTILE_STEP, 1.0, QUANTILE_STEP, dtype=np.float32)
+TAIL_QUANTILE = 0.0001
+QUANTILES = np.concatenate(
+    (
+        np.array([TAIL_QUANTILE], dtype=np.float32),
+        np.arange(QUANTILE_STEP, 1.0, QUANTILE_STEP, dtype=np.float32),
+        np.array([1.0 - TAIL_QUANTILE], dtype=np.float32),
+    )
+)
 FEATURE_NAMES = [
     "log_ret_1d",
     "log_ret_oc",

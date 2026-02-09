@@ -12,7 +12,14 @@ from matplotlib import pyplot as plt
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
-DEFAULT_QUANTILES = np.arange(0.001, 1.0, 0.001, dtype=np.float32)
+TAIL_QUANTILE = 0.0001
+DEFAULT_QUANTILES = np.concatenate(
+    (
+        np.array([TAIL_QUANTILE], dtype=np.float32),
+        np.arange(0.001, 1.0, 0.001, dtype=np.float32),
+        np.array([1.0 - TAIL_QUANTILE], dtype=np.float32),
+    )
+)
 ProgressCallback = Callable[[int, str], None]
 CancelCheck = Callable[[], None]
 

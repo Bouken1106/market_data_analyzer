@@ -748,6 +748,50 @@ function smoothSeries(values, radius) {
   return out;
 }
 
+function suppressTailDensitySpikes(points) {
+  if (!Array.isArray(points) || points.length < 12) return points;
+
+  const n = points.length;
+  const edgeCount = Math.max(4, Math.floor(n * 0.08));
+  const coreStart = edgeCount;
+  const coreEnd = n - edgeCount;
+  if (coreEnd - coreStart < 6) return points;
+
+  const coreDensities = [];
+  for (let i = coreStart; i < coreEnd; i += 1) {
+    const d = Number(points[i]?.d);
+    if (Number.isFinite(d) && d >= 0) coreDensities.push(d);
+  }
+  if (coreDensities.length < 4) return points;
+
+  coreDensities.sort((a, b) => a - b);
+  const p90 = coreDensities[Math.floor((coreDensities.length - 1) * 0.90)];
+  const base = Math.max(1e-12, Number.isFinite(p90) ? p90 : 0);
+  const capOuter = base * 1.15;
+  const capInner = base * 1.7;
+
+  const smoothstep = (v) => {
+    const t = clamp(v, 0, 1);
+    return t * t * (3 - (2 * t));
+  };
+
+  return points.map((point, i) => {
+    const dRaw = Number(point?.d);
+    const d = Number.isFinite(dRaw) ? Math.max(0, dRaw) : 0;
+    let cap = Number.POSITIVE_INFINITY;
+
+    if (i < edgeCount) {
+      const ratio = i / Math.max(1, edgeCount - 1);
+      cap = capOuter + ((capInner - capOuter) * smoothstep(ratio));
+    } else if (i >= n - edgeCount) {
+      const ratio = (n - 1 - i) / Math.max(1, edgeCount - 1);
+      cap = capOuter + ((capInner - capOuter) * smoothstep(ratio));
+    }
+
+    return { x: point.x, d: Math.min(d, cap) };
+  });
+}
+
 function buildSmoothPdfFromQuantiles(values, taus, normalizeArea) {
   if (!Array.isArray(values) || !Array.isArray(taus) || values.length !== taus.length || values.length < 3) {
     return [];
@@ -845,6 +889,9 @@ function buildSmoothPdfFromQuantiles(values, taus, normalizeArea) {
 
   const densitySmoothed = smoothSeries(density.map((d) => Math.max(0, Number(d) || 0)), 3);
   let pdfPoints = xs.map((x, idx) => ({ x, d: Math.max(0, Number(densitySmoothed[idx]) || 0) }));
+  pdfPoints = suppressTailDensitySpikes(pdfPoints);
+  const postSuppressed = smoothSeries(pdfPoints.map((p) => p.d), 2);
+  pdfPoints = pdfPoints.map((p, idx) => ({ x: p.x, d: Math.max(0, Number(postSuppressed[idx]) || 0) }));
 
   if (normalizeArea) {
     const area = integrateDensity(pdfPoints);
@@ -1356,6 +1403,8 @@ function renderNextDayDistribution(payload) {
   const labelLaneTop = chartTop - 8;
   const labelLaneMid = chartTop - 24;
   const labelLaneHigh = chartTop - 38;
+  const labelLaneUpper = chartTop - 52;
+  const labelLaneChoices = [labelLaneTop, labelLaneMid, labelLaneHigh, labelLaneUpper];
   const markerPxSorted = quantileMarkers
     .map((marker) => ({ ...marker, px: xAtValue(marker.x), labelY: labelLaneTop }))
     .filter((marker) => inRangeX(marker.x))
@@ -1373,6 +1422,19 @@ function renderNextDayDistribution(payload) {
     marker.labelY = y;
   }
   const markerLabelYByTau = new Map(markerPxSorted.map((marker) => [marker.tau, marker.labelY]));
+  const resolveCurrentLabelY = (currentXPx) => {
+    if (!Number.isFinite(currentXPx)) return labelLaneTop;
+    for (let i = 0; i < labelLaneChoices.length; i += 1) {
+      const lane = labelLaneChoices[i];
+      const overlapsMarker = markerPxSorted.some(
+        (marker) => Math.abs(marker.px - currentXPx) < 52 && Math.abs(marker.labelY - lane) < 8
+      );
+      if (!overlapsMarker) {
+        return lane;
+      }
+    }
+    return labelLaneUpper;
+  };
   const cdfPoints = [];
   for (let i = 0; i < retQ.length; i += 1) {
     const x = retQ[i];
@@ -1468,8 +1530,7 @@ function renderNextDayDistribution(payload) {
       ctx.stroke();
       ctx.fillStyle = "rgba(255, 220, 136, 0.95)";
       ctx.font = "11px sans-serif";
-      const nearMarker = markerPxSorted.some((marker) => Math.abs(marker.px - x) < 44);
-      const currentLabelY = nearMarker ? labelLaneMid : labelLaneTop;
+      const currentLabelY = resolveCurrentLabelY(x);
       const currentLabelWidth = ctx.measureText(currentLineLabel).width;
       let labelX = x + 4;
       let align = "left";
@@ -1563,8 +1624,7 @@ function renderNextDayDistribution(payload) {
       ctx.stroke();
       ctx.fillStyle = "rgba(255, 220, 136, 0.95)";
       ctx.font = "11px sans-serif";
-      const nearMarker = markerPxSorted.some((marker) => Math.abs(marker.px - x) < 44);
-      const currentLabelY = nearMarker ? labelLaneMid : labelLaneTop;
+      const currentLabelY = resolveCurrentLabelY(x);
       const currentLabelWidth = ctx.measureText(currentLineLabel).width;
       let labelX = x + 4;
       let align = "left";
