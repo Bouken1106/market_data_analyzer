@@ -65,6 +65,12 @@ HISTORICAL_MAX_YEARS=10
 HISTORICAL_CACHE_TTL_SEC=43200
 HISTORICAL_INTERVAL=1day
 HISTORICAL_MAX_POINTS=2000
+OVERVIEW_CACHE_TTL_SEC=120
+TIME_SERIES_MAX_OUTPUTSIZE=5000
+FULL_HISTORY_CHUNK_YEARS=15
+FULL_HISTORY_MAX_CHUNKS=20
+DAILY_DIFF_MIN_RECHECK_SEC=21600
+BETA_MARKET_RECHECK_SEC=86400
 ```
 
 ## 起動
@@ -89,7 +95,13 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 1. 検索欄をクリックすると、Twelve Data から取得した米国株シンボル候補が表示される（入力時はシンボルの頭文字一致で絞り込み）
 2. 候補をクリックすると監視銘柄に追加され、即時反映される（上限8）
 3. 画面上部に日本時間（JST）・米国時間（ET）・米国市場の通常取引時間（09:30-16:00 ET）と開場状態を表示
-4. 下のテーブルの `Symbol` 欄の銘柄名をクリックすると、`/historical/{symbol}` に遷移してヒストリカルチャートとリスク指標を表示
+4. 下のテーブルの `Symbol` 欄の銘柄名をクリックすると、`/historical/{symbol}` に遷移して詳細ビューを表示
+   - 現在値、前日比（値幅・%）、当日高安、出来高（当日/20日平均比）、売買代金、更新時刻
+   - 1m / 5m / 日足チャート切替、出来高バー、VWAP（1m/5m）、MA(20/50)、ATR(14)、当日ギャップ
+   - 日足は最古日から現在までを表示可能（`MAX / 10Y / 5Y / 1Y / YTD` レンジボタン付き）
+   - SPY/QQQ（指数プロキシ）と 60日 β/相関（対SPY）
+   - Basicプラン/現データソースで未対応の項目（板情報、企業イベント、ニュース等）は `not_supported` 表示
+   - `Clear Cache` ボタンで当該銘柄の詳細キャッシュ（日足永続キャッシュ含む）を削除し、再取得できる
 5. 下のテーブルの `Symbol` 欄にある `x` を押すと監視対象から除外
 6. テーブルに価格・更新時刻が表示され、取得ソース（`websocket` / `rest` / `stored`）は更新時刻の下に小さく表示
    - `change(%)` は営業中は「現在値 vs 前営業日終値」、休場中は「直近営業日終値 vs その1つ前の営業日終値」で表示
@@ -115,6 +127,8 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - シンボル一覧は `/stocks?country=United States` を取得してキャッシュし、UI検索に使います（`SYMBOL_CATALOG_TTL_SEC` で再取得間隔を調整可能）。
 - 最終取得価格は `app/cache/last_prices.json` に保存され、銘柄追加時は保存済み価格（`stored`）を即表示します。
 - ヒストリカルデータは `GET /api/historical/{symbol}` で取得し、サーバー側でTTLキャッシュします。
+- 銘柄詳細ビューは `GET /api/security-overview/{symbol}` で取得し、短時間TTLキャッシュします（複数API呼び出しを集約）。
+- 銘柄詳細の日足データは最古日からの履歴をディスク永続化し、次回以降は差分更新のみでAPI消費を抑えます。
 - 価格の自動更新（WebSocket購読/RESTフォールバック）は「各国マーケットの営業日・営業時間内」のみ実行します（営業時間外は `market-closed`）。
 - 国判定は `SYMBOL_COUNTRY_MAP`（例: `AAPL:United States,7203.T:Japan,9988.HK:Hong Kong`）を優先し、未設定時はシンボル接尾辞ヒント（`.T`, `.HK`, `.L` など）→ `SYMBOL_CATALOG_COUNTRY` の順で判定します。
 - この時間判定は通常取引時間ベースです（祝日・臨時休場・昼休みは未考慮）。
@@ -145,6 +159,9 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `GET /api/symbol-catalog`: 検索候補用シンボル一覧（キャッシュ）
 - `GET /api/symbol-catalog?refresh=true`: シンボル一覧を強制再取得
 - `GET /api/historical/{symbol}?years=5`: 過去N年ヒストリカルデータ（デフォルト5年）
+- `GET /api/security-overview/{symbol}`: 銘柄詳細（`include_intraday` / `include_market` で取得項目を制御可能）
+- `GET /api/security-overview/{symbol}/intraday`: 1分/5分足とVWAPのみを取得
+- `POST /api/security-overview/{symbol}/clear-cache`: 当該銘柄の詳細キャッシュを削除
 - `GET /api/ml/models`: ML Forecast Lab のモデル一覧（Ready / Coming Soon）
 - `GET /api/ml/quantile-lstm?...`: Quantile LSTM を学習・推論し、分位点/評価/描画データを返却（`months=3..60`, デフォルト `60`）
 - `GET /api/ml/patchtst?...`: PatchTST Quantile を学習・推論し、分位点/評価/描画データを返却（`months=3..60`, デフォルト `60`）

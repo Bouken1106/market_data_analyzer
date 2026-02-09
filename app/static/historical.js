@@ -1,10 +1,10 @@
-const HISTORICAL_YEARS = 5;
-const CHART_HEIGHT = 320;
+const CHART_HEIGHT = 360;
 const ZOOM_MIN_POINTS = 20;
 const ZOOM_IN_FACTOR = 0.8;
 const ZOOM_OUT_FACTOR = 1.25;
+const INTERVAL_KEYS = ["1min", "5min", "1day"];
+
 const CHART_COLORS = {
-  placeholderBg: "#0f1726",
   placeholderText: "#8fa1bb",
   canvasBg: "#0a121f",
   canvasTop: "#0b1425",
@@ -15,6 +15,8 @@ const CHART_COLORS = {
   line: "#46deff",
   lineGlow: "rgba(70, 222, 255, 0.75)",
   lineArea: "rgba(19, 199, 255, 0.14)",
+  vwap: "#74f2a6",
+  volume: "rgba(109, 161, 224, 0.7)",
   label: "#9cadc4",
   crosshair: "#4f6e8d",
   point: "#13c7ff",
@@ -24,16 +26,49 @@ const symbolTitleEl = document.getElementById("symbol-title");
 const symbolSubtitleEl = document.getElementById("symbol-subtitle");
 const backBtn = document.getElementById("go-back");
 const refreshHistoryBtn = document.getElementById("refresh-history");
+const clearHistoryCacheBtn = document.getElementById("clear-history-cache");
 const zoomInBtn = document.getElementById("zoom-in");
 const zoomOutBtn = document.getElementById("zoom-out");
 const resetZoomBtn = document.getElementById("reset-zoom");
+const interval1mBtn = document.getElementById("interval-1m");
+const interval5mBtn = document.getElementById("interval-5m");
+const interval1dBtn = document.getElementById("interval-1d");
+const rangeMaxBtn = document.getElementById("range-max");
+const range10yBtn = document.getElementById("range-10y");
+const range5yBtn = document.getElementById("range-5y");
+const range1yBtn = document.getElementById("range-1y");
+const rangeYtdBtn = document.getElementById("range-ytd");
 const currentPriceEl = document.getElementById("current-price");
 const riskVol30El = document.getElementById("risk-vol30");
 const riskDd30El = document.getElementById("risk-dd30");
 const riskVar95El = document.getElementById("risk-var95");
+const techAtrEl = document.getElementById("tech-atr");
+const priceGapEl = document.getElementById("price-gap");
 const historyMetaEl = document.getElementById("history-meta");
 const historyCanvas = document.getElementById("history-canvas");
 const historyTooltipEl = document.getElementById("history-tooltip");
+
+const ovSymbolNameEl = document.getElementById("ov-symbol-name");
+const ovCurrentEl = document.getElementById("ov-current");
+const ovChangeEl = document.getElementById("ov-change");
+const ovDayRangeEl = document.getElementById("ov-day-range");
+const ovVolumeEl = document.getElementById("ov-volume");
+const ovTurnoverEl = document.getElementById("ov-turnover");
+const ovSpreadEl = document.getElementById("ov-spread");
+const ovUpdatedEl = document.getElementById("ov-updated");
+
+const techVwapEl = document.getElementById("tech-vwap");
+const techMaEl = document.getElementById("tech-ma");
+const techBetaEl = document.getElementById("tech-beta");
+const techCorrEl = document.getElementById("tech-corr");
+const marketSpyEl = document.getElementById("market-spy");
+const marketQqqEl = document.getElementById("market-qqq");
+const loadQqqBtn = document.getElementById("load-qqq");
+const supportSectorEl = document.getElementById("support-sector");
+const supportBoardEl = document.getElementById("support-board");
+const supportEventsEl = document.getElementById("support-events");
+const supportCorporateEl = document.getElementById("support-corporate");
+const supportNewsEl = document.getElementById("support-news");
 
 let currentSymbol = "";
 let currentPayload = null;
@@ -41,6 +76,13 @@ let isDragging = false;
 let dragStartX = 0;
 let dragViewportStart = 0;
 let dragViewportEnd = 0;
+let activeInterval = "1day";
+
+const chartSeriesByInterval = {
+  "1min": [],
+  "5min": [],
+  "1day": [],
+};
 
 const chartState = {
   points: [],
@@ -52,10 +94,41 @@ const chartState = {
 
 function formatPrice(value) {
   const num = Number(value);
-  if (!Number.isFinite(num)) {
-    return "-";
-  }
+  if (!Number.isFinite(num)) return "-";
   return num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+}
+
+function formatCompact(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 }).format(num);
+}
+
+function formatPercent(value) {
+  if (!Number.isFinite(value)) return "-";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(2)}%`;
+}
+
+function formatSignedPrice(value) {
+  if (!Number.isFinite(value)) return "-";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${formatPrice(value)}`;
+}
+
+function formatIsoTime(value) {
+  if (!value) return "-";
+  const dt = new Date(value);
+  if (Number.isNaN(dt.getTime())) return String(value);
+  return dt.toLocaleString("ja-JP", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
 }
 
 function setHistoryMeta(message, isError = false) {
@@ -63,18 +136,9 @@ function setHistoryMeta(message, isError = false) {
   historyMetaEl.classList.toggle("error", Boolean(isError));
 }
 
-function formatPercent(value) {
-  if (!Number.isFinite(value)) return "-";
-  return `${value.toFixed(2)}%`;
-}
-
 function setCurrentPrice(value) {
   const num = Number(value);
-  if (!Number.isFinite(num)) {
-    currentPriceEl.textContent = "-";
-    return;
-  }
-  currentPriceEl.textContent = `$${formatPrice(num)}`;
+  currentPriceEl.textContent = Number.isFinite(num) ? `$${formatPrice(num)}` : "-";
 }
 
 function quantile(sortedValues, q) {
@@ -88,8 +152,8 @@ function quantile(sortedValues, q) {
   return sortedValues[low] * (1 - weight) + (sortedValues[high] * weight);
 }
 
-function setRiskMetrics(points) {
-  const closes = (Array.isArray(points) ? points : [])
+function setRiskMetrics(dayPoints, overview) {
+  const closes = (Array.isArray(dayPoints) ? dayPoints : [])
     .map((item) => Number(item?.c))
     .filter((num) => Number.isFinite(num));
 
@@ -97,13 +161,8 @@ function setRiskMetrics(points) {
     riskVol30El.textContent = "-";
     riskDd30El.textContent = "-";
     riskVar95El.textContent = "-";
-    if (closes.length > 0) {
-      setCurrentPrice(closes[closes.length - 1]);
-    }
     return;
   }
-
-  setCurrentPrice(closes[closes.length - 1]);
 
   const returns = [];
   for (let index = 1; index < closes.length; index += 1) {
@@ -118,12 +177,12 @@ function setRiskMetrics(points) {
     const mean = recentReturns.reduce((acc, value) => acc + value, 0) / recentReturns.length;
     const variance = recentReturns.reduce((acc, value) => acc + ((value - mean) ** 2), 0) / (recentReturns.length - 1);
     const annualizedVol = Math.sqrt(Math.max(0, variance)) * Math.sqrt(252) * 100;
-    riskVol30El.textContent = formatPercent(annualizedVol);
+    riskVol30El.textContent = `${annualizedVol.toFixed(2)}%`;
 
     const sortedReturns = [...recentReturns].sort((a, b) => a - b);
     const p05 = quantile(sortedReturns, 0.05);
     const var95 = Number.isFinite(p05) ? Math.max(0, -p05 * 100) : null;
-    riskVar95El.textContent = formatPercent(var95);
+    riskVar95El.textContent = Number.isFinite(var95) ? `${var95.toFixed(2)}%` : "-";
   } else {
     riskVol30El.textContent = "-";
     riskVar95El.textContent = "-";
@@ -139,10 +198,18 @@ function setRiskMetrics(points) {
       const drawdown = ((peak - close) / peak) * 100;
       maxDrawdown = Math.max(maxDrawdown, drawdown);
     }
-    riskDd30El.textContent = formatPercent(maxDrawdown);
+    riskDd30El.textContent = `${maxDrawdown.toFixed(2)}%`;
   } else {
     riskDd30El.textContent = "-";
   }
+
+  const atr = Number(overview?.technical?.atr_14);
+  techAtrEl.textContent = Number.isFinite(atr) ? `$${formatPrice(atr)}` : "-";
+  const gapAbs = Number(overview?.price?.gap_abs);
+  const gapPct = Number(overview?.price?.gap_pct);
+  priceGapEl.textContent = Number.isFinite(gapAbs) && Number.isFinite(gapPct)
+    ? `${formatSignedPrice(gapAbs)} (${formatPercent(gapPct)})`
+    : "-";
 }
 
 function fitCanvas(canvas, cssHeight = CHART_HEIGHT) {
@@ -188,21 +255,19 @@ function showTooltip(index, x, y, chartWidth, chartHeight) {
     return;
   }
 
-  const text = `${point.t}\n$${formatPrice(point.c)}`;
+  const close = Number(point.c);
+  const volume = Number(point.v);
+  const text = `${point.t}\nClose: $${formatPrice(close)}\nVol: ${formatCompact(volume)}`;
   historyTooltipEl.textContent = text;
 
-  const tooltipWidth = 150;
-  const tooltipHeight = 48;
+  const tooltipWidth = 170;
+  const tooltipHeight = 64;
   let left = x + 14;
-  if (left + tooltipWidth > chartWidth - 8) {
-    left = x - tooltipWidth - 14;
-  }
+  if (left + tooltipWidth > chartWidth - 8) left = x - tooltipWidth - 14;
   left = Math.max(8, left);
 
   let top = y - tooltipHeight - 8;
-  if (top < 8) {
-    top = y + 8;
-  }
+  if (top < 8) top = y + 8;
   top = Math.max(8, Math.min(top, chartHeight - tooltipHeight - 8));
 
   historyTooltipEl.style.left = `${left}px`;
@@ -226,18 +291,14 @@ function drawPlaceholder(message) {
 }
 
 function resetViewport() {
-  if (chartState.points.length < 2) {
-    return;
-  }
+  if (chartState.points.length < 2) return;
   chartState.viewportStart = 0;
   chartState.viewportEnd = chartState.points.length - 1;
 }
 
 function clampViewport(start, end) {
   const maxIndex = chartState.points.length - 1;
-  if (maxIndex <= 0) {
-    return { start: 0, end: 0 };
-  }
+  if (maxIndex <= 0) return { start: 0, end: 0 };
 
   let clampedStart = start;
   let clampedEnd = end;
@@ -250,6 +311,7 @@ function clampViewport(start, end) {
   const minSpan = Math.max(1, Math.min(ZOOM_MIN_POINTS - 1, maxIndex));
   const fullSpan = maxIndex;
   let span = clampedEnd - clampedStart;
+
   if (span < minSpan) {
     const center = (clampedStart + clampedEnd) / 2;
     clampedStart = center - (minSpan / 2);
@@ -257,9 +319,7 @@ function clampViewport(start, end) {
     span = minSpan;
   }
 
-  if (span >= fullSpan) {
-    return { start: 0, end: maxIndex };
-  }
+  if (span >= fullSpan) return { start: 0, end: maxIndex };
 
   if (clampedStart < 0) {
     clampedEnd -= clampedStart;
@@ -291,24 +351,46 @@ function drawChartFromState() {
   paintHistoricalBackdrop(ctx, width, height);
 
   const left = 64;
-  const right = width - 24;
+  const right = width - 20;
   const top = 18;
-  const bottom = height - 46;
+  const priceBottom = height - 92;
+  const volumeTop = height - 74;
+  const volumeBottom = height - 32;
   const plotWidth = right - left;
-  const plotHeight = bottom - top;
+  const priceHeight = priceBottom - top;
+  const volumeHeight = volumeBottom - volumeTop;
   const viewSpan = Math.max(1, chartState.viewportEnd - chartState.viewportStart);
 
   const visibleStart = Math.max(0, Math.floor(chartState.viewportStart));
   const visibleEnd = Math.min(points.length - 1, Math.ceil(chartState.viewportEnd));
 
+  const vwapValue = activeInterval === "1min"
+    ? Number(currentPayload?.technical?.vwap_1m)
+    : activeInterval === "5min"
+      ? Number(currentPayload?.technical?.vwap_5m)
+      : null;
+
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
+  let maxVolume = 0;
+
   for (let index = visibleStart; index <= visibleEnd; index += 1) {
-    const value = Number(points[index]?.c);
-    if (!Number.isFinite(value)) continue;
-    min = Math.min(min, value);
-    max = Math.max(max, value);
+    const close = Number(points[index]?.c);
+    if (Number.isFinite(close)) {
+      min = Math.min(min, close);
+      max = Math.max(max, close);
+    }
+    const volume = Number(points[index]?.v);
+    if (Number.isFinite(volume) && volume > 0) {
+      maxVolume = Math.max(maxVolume, volume);
+    }
   }
+
+  if (Number.isFinite(vwapValue)) {
+    min = Math.min(min, vwapValue);
+    max = Math.max(max, vwapValue);
+  }
+
   if (!Number.isFinite(min) || !Number.isFinite(max)) {
     drawPlaceholder("Invalid data points");
     return;
@@ -318,23 +400,22 @@ function drawChartFromState() {
     max += 1;
   }
 
-  const yScale = plotHeight / (max - min);
+  const yScale = priceHeight / (max - min);
   const xFromIndex = (index) => left + (((index - chartState.viewportStart) / viewSpan) * plotWidth);
-  const yFromValue = (value) => bottom - ((value - min) * yScale);
+  const yFromValue = (value) => priceBottom - ((value - min) * yScale);
 
   ctx.strokeStyle = CHART_COLORS.axis;
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(left, top);
-  ctx.lineTo(left, bottom);
-  ctx.lineTo(right, bottom);
+  ctx.lineTo(left, volumeBottom);
+  ctx.lineTo(right, volumeBottom);
   ctx.stroke();
 
   ctx.strokeStyle = CHART_COLORS.grid;
-  ctx.lineWidth = 1;
   ctx.setLineDash([4, 4]);
   for (let step = 1; step <= 3; step += 1) {
-    const y = top + ((plotHeight / 4) * step);
+    const y = top + ((priceHeight / 4) * step);
     ctx.beginPath();
     ctx.moveTo(left, y);
     ctx.lineTo(right, y);
@@ -342,8 +423,17 @@ function drawChartFromState() {
   }
   ctx.setLineDash([]);
 
-  // Fill under the line first for subtle depth.
-  const area = ctx.createLinearGradient(0, top, 0, bottom);
+  ctx.fillStyle = CHART_COLORS.volume;
+  for (let index = visibleStart; index <= visibleEnd; index += 1) {
+    const volume = Number(points[index]?.v);
+    if (!Number.isFinite(volume) || volume <= 0 || maxVolume <= 0) continue;
+    const x = xFromIndex(index);
+    const barWidth = Math.max(1, plotWidth / Math.max(visibleEnd - visibleStart + 1, 1) * 0.7);
+    const barHeight = (volume / maxVolume) * volumeHeight;
+    ctx.fillRect(x - (barWidth / 2), volumeBottom - barHeight, barWidth, barHeight);
+  }
+
+  const area = ctx.createLinearGradient(0, top, 0, priceBottom);
   area.addColorStop(0, CHART_COLORS.lineArea);
   area.addColorStop(1, "rgba(19, 199, 255, 0.02)");
   ctx.fillStyle = area;
@@ -357,7 +447,7 @@ function drawChartFromState() {
     const y = yFromValue(value);
     areaEndX = x;
     if (!areaStarted) {
-      ctx.moveTo(x, bottom);
+      ctx.moveTo(x, priceBottom);
       ctx.lineTo(x, y);
       areaStarted = true;
     } else {
@@ -365,23 +455,20 @@ function drawChartFromState() {
     }
   }
   if (areaStarted) {
-    ctx.lineTo(areaEndX, bottom);
+    ctx.lineTo(areaEndX, priceBottom);
     ctx.closePath();
     ctx.fill();
   }
 
   ctx.strokeStyle = CHART_COLORS.line;
-  ctx.lineWidth = 5.4;
-  ctx.globalAlpha = 0.2;
-  ctx.shadowBlur = 18;
+  ctx.lineWidth = 2.2;
+  ctx.shadowBlur = 10;
   ctx.shadowColor = CHART_COLORS.lineGlow;
   ctx.beginPath();
   let started = false;
   for (let index = visibleStart; index <= visibleEnd; index += 1) {
     const value = Number(points[index]?.c);
-    if (!Number.isFinite(value)) {
-      continue;
-    }
+    if (!Number.isFinite(value)) continue;
     const x = xFromIndex(index);
     const y = yFromValue(value);
     if (!started) {
@@ -391,56 +478,35 @@ function drawChartFromState() {
       ctx.lineTo(x, y);
     }
   }
-  if (started) {
-    ctx.stroke();
-  }
-
-  ctx.strokeStyle = CHART_COLORS.line;
-  ctx.lineWidth = 2.4;
-  ctx.globalAlpha = 1;
-  ctx.shadowBlur = 12;
-  ctx.shadowColor = CHART_COLORS.lineGlow;
-  ctx.beginPath();
-  started = false;
-  for (let index = visibleStart; index <= visibleEnd; index += 1) {
-    const value = Number(points[index]?.c);
-    if (!Number.isFinite(value)) {
-      continue;
-    }
-    const x = xFromIndex(index);
-    const y = yFromValue(value);
-    if (!started) {
-      ctx.moveTo(x, y);
-      started = true;
-    } else {
-      ctx.lineTo(x, y);
-    }
-  }
-  if (started) {
-    ctx.stroke();
-  }
+  if (started) ctx.stroke();
   ctx.shadowBlur = 0;
-  ctx.globalAlpha = 1;
+
+  if (Number.isFinite(vwapValue)) {
+    const y = yFromValue(vwapValue);
+    ctx.strokeStyle = CHART_COLORS.vwap;
+    ctx.lineWidth = 1.4;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.moveTo(left, y);
+    ctx.lineTo(right, y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
 
   ctx.fillStyle = CHART_COLORS.label;
   ctx.font = "12px sans-serif";
   ctx.textAlign = "left";
   ctx.fillText(formatPrice(max), 8, top + 6);
-  ctx.fillText(formatPrice(min), 8, bottom);
-
+  ctx.fillText(formatPrice(min), 8, priceBottom);
   const startLabelIndex = Math.max(0, Math.min(points.length - 1, Math.round(chartState.viewportStart)));
   const endLabelIndex = Math.max(0, Math.min(points.length - 1, Math.round(chartState.viewportEnd)));
   ctx.textAlign = "left";
-  ctx.fillText(String(points[startLabelIndex]?.t || "-"), left, height - 16);
+  ctx.fillText(String(points[startLabelIndex]?.t || "-"), left, height - 12);
   ctx.textAlign = "right";
-  ctx.fillText(String(points[endLabelIndex]?.t || "-"), right, height - 16);
+  ctx.fillText(String(points[endLabelIndex]?.t || "-"), right, height - 12);
 
   const hoverIndex = chartState.hoveredIndex;
-  if (
-    Number.isInteger(hoverIndex)
-    && hoverIndex >= visibleStart
-    && hoverIndex <= visibleEnd
-  ) {
+  if (Number.isInteger(hoverIndex) && hoverIndex >= visibleStart && hoverIndex <= visibleEnd) {
     const hoverValue = Number(points[hoverIndex]?.c);
     if (Number.isFinite(hoverValue)) {
       const hoverX = xFromIndex(hoverIndex);
@@ -450,16 +516,13 @@ function drawChartFromState() {
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(hoverX, top);
-      ctx.lineTo(hoverX, bottom);
+      ctx.lineTo(hoverX, volumeBottom);
       ctx.stroke();
 
       ctx.fillStyle = CHART_COLORS.point;
-      ctx.shadowBlur = 10;
-      ctx.shadowColor = CHART_COLORS.lineGlow;
       ctx.beginPath();
       ctx.arc(hoverX, hoverY, 4, 0, Math.PI * 2);
       ctx.fill();
-      ctx.shadowBlur = 0;
 
       showTooltip(hoverIndex, hoverX, hoverY, width, height);
     } else {
@@ -473,28 +536,29 @@ function drawChartFromState() {
     left,
     right,
     top,
-    bottom,
+    priceBottom,
+    volumeBottom,
     plotWidth,
     viewStart: chartState.viewportStart,
     viewEnd: chartState.viewportEnd,
   };
 }
 
-function applyPayloadToChart(payload, resetView = false) {
-  const points = Array.isArray(payload?.points) ? payload.points : [];
-  chartState.points = points;
-  if (points.length < 2) {
+function applySeriesToChart(resetView = false) {
+  chartState.points = chartSeriesByInterval[activeInterval] || [];
+  if (chartState.points.length < 2) {
     drawPlaceholder("Not enough data points");
     return;
   }
 
-  if (resetView || chartState.viewportEnd <= chartState.viewportStart || chartState.viewportEnd > points.length - 1) {
+  if (resetView || chartState.viewportEnd <= chartState.viewportStart || chartState.viewportEnd > chartState.points.length - 1) {
     resetViewport();
   } else {
     const viewport = clampViewport(chartState.viewportStart, chartState.viewportEnd);
     chartState.viewportStart = viewport.start;
     chartState.viewportEnd = viewport.end;
   }
+
   drawChartFromState();
 }
 
@@ -538,14 +602,12 @@ function zoomAtCanvasX(canvasX, factor) {
   const currentSpan = Math.max(1, chartState.viewportEnd - chartState.viewportStart);
   let targetSpan = currentSpan * factor;
   targetSpan = Math.max(minSpan, Math.min(fullSpan, targetSpan));
-  if (Math.abs(targetSpan - currentSpan) < 0.001) {
-    return;
-  }
+  if (Math.abs(targetSpan - currentSpan) < 0.001) return;
 
   const centerIndex = getIndexFromCanvasX(canvasX) ?? Math.round((chartState.viewportStart + chartState.viewportEnd) / 2);
   const ratio = (centerIndex - chartState.viewportStart) / currentSpan;
-  let nextStart = centerIndex - (targetSpan * ratio);
-  let nextEnd = nextStart + targetSpan;
+  const nextStart = centerIndex - (targetSpan * ratio);
+  const nextEnd = nextStart + targetSpan;
 
   const viewport = clampViewport(nextStart, nextEnd);
   chartState.viewportStart = viewport.start;
@@ -595,56 +657,368 @@ function endDrag() {
   historyCanvas.classList.remove("dragging");
 }
 
-async function loadCurrentPrice() {
-  if (!currentSymbol) {
-    return;
+function setIntervalButtonState() {
+  interval1mBtn.classList.toggle("active", activeInterval === "1min");
+  interval5mBtn.classList.toggle("active", activeInterval === "5min");
+  interval1dBtn.classList.toggle("active", activeInterval === "1day");
+}
+
+function setIntervalButtonAvailability() {
+  interval1mBtn.disabled = chartSeriesByInterval["1min"].length < 2;
+  interval5mBtn.disabled = chartSeriesByInterval["5min"].length < 2;
+  interval1dBtn.disabled = chartSeriesByInterval["1day"].length < 2;
+  const dayReady = activeInterval === "1day" && chartSeriesByInterval["1day"].length >= 2;
+  rangeMaxBtn.disabled = !dayReady;
+  range10yBtn.disabled = !dayReady;
+  range5yBtn.disabled = !dayReady;
+  range1yBtn.disabled = !dayReady;
+  rangeYtdBtn.disabled = !dayReady;
+}
+
+async function setActiveInterval(nextInterval) {
+  if (!INTERVAL_KEYS.includes(nextInterval)) return;
+  if (
+    (nextInterval === "1min" || nextInterval === "5min")
+    && (!Array.isArray(chartSeriesByInterval[nextInterval]) || chartSeriesByInterval[nextInterval].length < 2)
+  ) {
+    await ensureIntradayLoaded(false);
   }
+  if (!Array.isArray(chartSeriesByInterval[nextInterval]) || chartSeriesByInterval[nextInterval].length < 2) return;
+  activeInterval = nextInterval;
+  setIntervalButtonAvailability();
+  setIntervalButtonState();
+  chartState.hoveredIndex = null;
+  applySeriesToChart(true);
+}
+
+async function ensureIntradayLoaded(refresh = false) {
+  if (!currentSymbol) return false;
+  const has1m = Array.isArray(chartSeriesByInterval["1min"]) && chartSeriesByInterval["1min"].length >= 2;
+  const has5m = Array.isArray(chartSeriesByInterval["5min"]) && chartSeriesByInterval["5min"].length >= 2;
+  if (!refresh && has1m && has5m) return true;
+
   try {
-    const response = await fetch("/api/snapshot");
+    const url = `/api/security-overview/${encodeURIComponent(currentSymbol)}/intraday${refresh ? "?refresh=true" : ""}`;
+    const response = await fetch(url);
     const result = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      return;
+    if (!response.ok || !result.ok) {
+      return false;
     }
-    const rows = Array.isArray(result?.data?.rows) ? result.data.rows : [];
-    const row = rows.find((item) => String(item?.symbol || "").toUpperCase() === currentSymbol);
-    if (!row) {
-      return;
+
+    chartSeriesByInterval["1min"] = Array.isArray(result?.charts?.["1min"]) ? result.charts["1min"] : [];
+    chartSeriesByInterval["5min"] = Array.isArray(result?.charts?.["5min"]) ? result.charts["5min"] : [];
+
+    const vwap1m = Number(result?.technical?.vwap_1m);
+    const vwap5m = Number(result?.technical?.vwap_5m);
+    if (Number.isFinite(vwap1m) || Number.isFinite(vwap5m)) {
+      const left = Number.isFinite(vwap1m) ? `$${formatPrice(vwap1m)}` : "-";
+      const right = Number.isFinite(vwap5m) ? `$${formatPrice(vwap5m)}` : "-";
+      techVwapEl.textContent = `${left} / ${right}`;
     }
-    setCurrentPrice(row.price);
+
+    setIntervalButtonAvailability();
+    return true;
   } catch (_error) {
-    // Keep chart and risk metrics usable even if snapshot fetch fails.
+    return false;
   }
 }
 
-async function loadHistorical(refresh = false) {
-  if (!currentSymbol) {
+function parsePointDate(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return null;
+  const dateText = text.includes(" ") ? text.split(" ")[0] : text;
+  const dt = new Date(`${dateText}T00:00:00`);
+  if (Number.isNaN(dt.getTime())) return null;
+  return dt;
+}
+
+function findStartIndexByDate(targetDate) {
+  const points = chartSeriesByInterval["1day"];
+  if (!Array.isArray(points) || points.length < 2) return 0;
+  for (let idx = 0; idx < points.length; idx += 1) {
+    const dt = parsePointDate(points[idx]?.t);
+    if (!dt) continue;
+    if (dt >= targetDate) return idx;
+  }
+  return 0;
+}
+
+function applyDateRangePreset(kind) {
+  if (activeInterval !== "1day") return;
+  const points = chartSeriesByInterval["1day"];
+  if (!Array.isArray(points) || points.length < 2) return;
+
+  const lastIndex = points.length - 1;
+  const lastDate = parsePointDate(points[lastIndex]?.t);
+  if (!lastDate) {
+    resetZoom();
     return;
   }
 
+  if (kind === "max") {
+    chartState.viewportStart = 0;
+    chartState.viewportEnd = lastIndex;
+    chartState.hoveredIndex = null;
+    drawChartFromState();
+    return;
+  }
+
+  let startDate = null;
+  if (kind === "10y") {
+    startDate = new Date(lastDate);
+    startDate.setFullYear(startDate.getFullYear() - 10);
+  } else if (kind === "5y") {
+    startDate = new Date(lastDate);
+    startDate.setFullYear(startDate.getFullYear() - 5);
+  } else if (kind === "1y") {
+    startDate = new Date(lastDate);
+    startDate.setFullYear(startDate.getFullYear() - 1);
+  } else if (kind === "ytd") {
+    startDate = new Date(lastDate.getFullYear(), 0, 1);
+  }
+
+  if (!startDate) {
+    return;
+  }
+
+  const startIndex = findStartIndexByDate(startDate);
+  chartState.viewportStart = startIndex;
+  chartState.viewportEnd = lastIndex;
+  chartState.hoveredIndex = null;
+  drawChartFromState();
+}
+
+function setOverviewFields(payload) {
+  const symbol = payload?.symbol || currentSymbol;
+  const name = payload?.name || "";
+  ovSymbolNameEl.textContent = name ? `${symbol} / ${name}` : symbol;
+
+  const price = payload?.price || {};
+  const volume = payload?.volume || {};
+  const spread = payload?.spread || {};
+  const technical = payload?.technical || {};
+  const market = payload?.market || {};
+  const support = payload?.support_status || {};
+
+  const current = Number(price.current);
+  const changeAbs = Number(price.change_abs);
+  const changePct = Number(price.change_pct);
+  const dayHigh = Number(price.day_high);
+  const dayLow = Number(price.day_low);
+  const volToday = Number(volume.today);
+  const volAvg = Number(volume.avg20);
+  const volRatio = Number(volume.avg_ratio);
+  const turnover = Number(volume.turnover);
+  const bid = Number(spread.bid);
+  const ask = Number(spread.ask);
+  const spreadAbs = Number(spread.spread_abs);
+  const spreadPct = Number(spread.spread_pct);
+
+  ovCurrentEl.textContent = Number.isFinite(current) ? `$${formatPrice(current)}` : "-";
+  ovChangeEl.textContent = Number.isFinite(changeAbs) && Number.isFinite(changePct)
+    ? `${formatSignedPrice(changeAbs)} (${formatPercent(changePct)})`
+    : "-";
+  ovDayRangeEl.textContent = Number.isFinite(dayHigh) && Number.isFinite(dayLow)
+    ? `$${formatPrice(dayHigh)} / $${formatPrice(dayLow)}`
+    : "-";
+  ovVolumeEl.textContent = Number.isFinite(volToday)
+    ? `${formatCompact(volToday)}${Number.isFinite(volAvg) && Number.isFinite(volRatio) ? ` (avg20 ${formatCompact(volAvg)}, x${volRatio.toFixed(2)})` : ""}`
+    : "-";
+  ovTurnoverEl.textContent = Number.isFinite(turnover) ? `$${formatCompact(turnover)}` : "-";
+  ovSpreadEl.textContent = Number.isFinite(bid) && Number.isFinite(ask)
+    ? `${formatPrice(bid)} / ${formatPrice(ask)} (${Number.isFinite(spreadAbs) ? formatPrice(spreadAbs) : "-"}, ${Number.isFinite(spreadPct) ? formatPercent(spreadPct) : "-"})`
+    : "-";
+  ovUpdatedEl.textContent = `${formatIsoTime(price.updated_at)}${price.delay_note ? ` | ${price.delay_note}` : ""}`;
+
+  const vwap1m = Number(technical.vwap_1m);
+  const vwap5m = Number(technical.vwap_5m);
+  const ma20 = Number(technical.ma_short_20);
+  const ma50 = Number(technical.ma_mid_50);
+  const beta = Number(market.beta_60d_vs_spy);
+  const corr = Number(market.corr_60d_vs_spy);
+
+  techVwapEl.textContent = Number.isFinite(vwap1m) || Number.isFinite(vwap5m)
+    ? `${Number.isFinite(vwap1m) ? `$${formatPrice(vwap1m)}` : "-"} / ${Number.isFinite(vwap5m) ? `$${formatPrice(vwap5m)}` : "-"}`
+    : "-";
+  techMaEl.textContent = Number.isFinite(ma20) || Number.isFinite(ma50)
+    ? `${Number.isFinite(ma20) ? `$${formatPrice(ma20)}` : "-"} / ${Number.isFinite(ma50) ? `$${formatPrice(ma50)}` : "-"}`
+    : "-";
+  techBetaEl.textContent = Number.isFinite(beta) ? beta.toFixed(3) : "-";
+  techCorrEl.textContent = Number.isFinite(corr) ? corr.toFixed(3) : "-";
+
+  marketSpyEl.textContent = formatMarketProxy(market.sp500_proxy);
+  marketQqqEl.textContent = formatMarketProxy(market.nasdaq_proxy);
+  if (loadQqqBtn) {
+    loadQqqBtn.disabled = market.nasdaq_proxy !== null;
+  }
+
+  supportSectorEl.textContent = support.sector_etf || "not_supported";
+  supportBoardEl.textContent = support.order_book || "not_supported";
+  supportEventsEl.textContent = support.earnings_calendar || "not_supported";
+  supportCorporateEl.textContent = support.corporate_events || "not_supported";
+  supportNewsEl.textContent = support.news_headlines || "not_supported";
+
+  setCurrentPrice(current);
+  setRiskMetrics(chartSeriesByInterval["1day"], payload);
+}
+
+function formatMarketProxy(item) {
+  if (item === null) return "Not loaded (credit saving mode)";
+  if (!item || typeof item !== "object") return "-";
+  const symbol = item.symbol || "-";
+  const price = Number(item.price);
+  const pct = Number(item.change_pct);
+  if (!Number.isFinite(price)) return symbol;
+  return `${symbol} $${formatPrice(price)} (${formatPercent(pct)})`;
+}
+
+async function loadOverview(refresh = false) {
+  if (!currentSymbol) return;
+
   refreshHistoryBtn.disabled = true;
-  setHistoryMeta("Loading historical data...");
+  clearHistoryCacheBtn.disabled = true;
+  setHistoryMeta("Loading market overview...");
   drawPlaceholder("Loading...");
 
   try {
-    const url = `/api/historical/${encodeURIComponent(currentSymbol)}?years=${HISTORICAL_YEARS}${refresh ? "&refresh=true" : ""}`;
+    const url = `/api/security-overview/${encodeURIComponent(currentSymbol)}?include_intraday=false&include_market=true&include_qqq=false${refresh ? "&refresh=true" : ""}`;
     const response = await fetch(url);
     const result = await response.json().catch(() => ({}));
 
     if (!response.ok || !result.ok) {
-      setHistoryMeta(result.detail || "Failed to load historical data", true);
-      drawPlaceholder("Historical data unavailable");
+      const fallbackOk = await loadDailyFallback(refresh);
+      if (!fallbackOk) {
+        setHistoryMeta(result.detail || "Failed to load overview", true);
+        drawPlaceholder("Overview unavailable");
+      }
       return;
     }
 
     currentPayload = result;
-    symbolSubtitleEl.textContent = `${result.years}Y ${result.interval} (${result.from} - ${result.to})`;
-    setHistoryMeta("Loaded historical data.");
+    chartSeriesByInterval["1min"] = Array.isArray(result?.charts?.["1min"]) ? result.charts["1min"] : [];
+    chartSeriesByInterval["5min"] = Array.isArray(result?.charts?.["5min"]) ? result.charts["5min"] : [];
+    chartSeriesByInterval["1day"] = Array.isArray(result?.charts?.["1day"]) ? result.charts["1day"] : [];
+
+    if (!Array.isArray(chartSeriesByInterval[activeInterval]) || chartSeriesByInterval[activeInterval].length < 2) {
+      const next = INTERVAL_KEYS.find((key) => Array.isArray(chartSeriesByInterval[key]) && chartSeriesByInterval[key].length >= 2);
+      activeInterval = next || "1day";
+    }
+
+    setIntervalButtonAvailability();
+    setIntervalButtonState();
+    setOverviewFields(result);
+    symbolSubtitleEl.textContent = `${result.exchange || "-"} | data source: ${result.source || "unknown"}`;
+    setHistoryMeta(`Loaded market overview (${activeInterval}).`);
     chartState.hoveredIndex = null;
-    applyPayloadToChart(result, true);
-    setRiskMetrics(result.points);
-    await loadCurrentPrice();
+    applySeriesToChart(true);
+    if (activeInterval === "1day") {
+      applyDateRangePreset("max");
+    }
   } finally {
     refreshHistoryBtn.disabled = false;
+    clearHistoryCacheBtn.disabled = false;
+  }
+}
+
+async function clearHistoryCacheAndReload() {
+  if (!currentSymbol) return;
+  refreshHistoryBtn.disabled = true;
+  clearHistoryCacheBtn.disabled = true;
+  setHistoryMeta("Clearing cache...");
+  try {
+    const response = await fetch(`/api/security-overview/${encodeURIComponent(currentSymbol)}/clear-cache`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.ok) {
+      setHistoryMeta(result.detail || "Failed to clear cache", true);
+      return;
+    }
+    setHistoryMeta("Cache cleared. Reloading...");
+    await loadOverview(true);
+  } finally {
+    refreshHistoryBtn.disabled = false;
+    clearHistoryCacheBtn.disabled = false;
+  }
+}
+
+async function loadQqqOnDemand() {
+  if (!currentSymbol || !loadQqqBtn) return;
+  loadQqqBtn.disabled = true;
+  try {
+    const url = `/api/security-overview/${encodeURIComponent(currentSymbol)}?include_intraday=false&include_market=true&include_qqq=true`;
+    const response = await fetch(url);
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.ok) {
+      marketQqqEl.textContent = "Load failed";
+      return;
+    }
+    const market = result?.market || {};
+    marketQqqEl.textContent = formatMarketProxy(market.nasdaq_proxy);
+    if (market.nasdaq_proxy === null) {
+      loadQqqBtn.disabled = false;
+    }
+  } catch (_error) {
+    marketQqqEl.textContent = "Load failed";
+    loadQqqBtn.disabled = false;
+  }
+}
+
+async function loadDailyFallback(refresh = false) {
+  try {
+    const url = `/api/historical/${encodeURIComponent(currentSymbol)}?years=5${refresh ? "&refresh=true" : ""}`;
+    const response = await fetch(url);
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.ok || !Array.isArray(result.points) || result.points.length < 2) {
+      return false;
+    }
+
+    chartSeriesByInterval["1min"] = [];
+    chartSeriesByInterval["5min"] = [];
+    chartSeriesByInterval["1day"] = result.points;
+    activeInterval = "1day";
+    setIntervalButtonAvailability();
+    setIntervalButtonState();
+
+    ovSymbolNameEl.textContent = currentSymbol;
+    ovCurrentEl.textContent = "-";
+    ovChangeEl.textContent = "-";
+    ovDayRangeEl.textContent = "-";
+    ovVolumeEl.textContent = "-";
+    ovTurnoverEl.textContent = "-";
+    ovSpreadEl.textContent = "-";
+    ovUpdatedEl.textContent = "-";
+    techVwapEl.textContent = "-";
+    techMaEl.textContent = "-";
+    techBetaEl.textContent = "-";
+    techCorrEl.textContent = "-";
+    marketSpyEl.textContent = "-";
+    marketQqqEl.textContent = "-";
+    if (loadQqqBtn) {
+      loadQqqBtn.disabled = false;
+    }
+    supportSectorEl.textContent = "not_supported_on_fallback";
+    supportBoardEl.textContent = "not_supported_on_fallback";
+    supportEventsEl.textContent = "not_supported_on_fallback";
+    supportCorporateEl.textContent = "not_supported_on_fallback";
+    supportNewsEl.textContent = "not_supported_on_fallback";
+    techAtrEl.textContent = "-";
+    priceGapEl.textContent = "-";
+
+    const lastClose = Number(result.points[result.points.length - 1]?.c);
+    setCurrentPrice(lastClose);
+    setRiskMetrics(result.points, {});
+    symbolSubtitleEl.textContent = `${result.years || "-"}Y ${result.interval || "1day"} (${result.from || "-"} - ${result.to || "-"})`;
+    setHistoryMeta("Overview API unavailable. Loaded daily historical fallback.");
+    chartState.hoveredIndex = null;
+    currentPayload = null;
+    applySeriesToChart(true);
+    return true;
+  } catch (_error) {
+    return false;
   }
 }
 
@@ -664,20 +1038,35 @@ backBtn.addEventListener("click", () => {
 });
 
 refreshHistoryBtn.addEventListener("click", async () => {
-  await loadHistorical(true);
+  await loadOverview(true);
+  if (activeInterval === "1min" || activeInterval === "5min") {
+    const loaded = await ensureIntradayLoaded(true);
+    if (loaded) {
+      applySeriesToChart(true);
+    }
+  }
 });
 
-zoomInBtn.addEventListener("click", () => {
-  zoomWithFactor(ZOOM_IN_FACTOR);
+zoomInBtn.addEventListener("click", () => zoomWithFactor(ZOOM_IN_FACTOR));
+zoomOutBtn.addEventListener("click", () => zoomWithFactor(ZOOM_OUT_FACTOR));
+resetZoomBtn.addEventListener("click", () => resetZoom());
+clearHistoryCacheBtn.addEventListener("click", async () => {
+  await clearHistoryCacheAndReload();
 });
+if (loadQqqBtn) {
+  loadQqqBtn.addEventListener("click", async () => {
+    await loadQqqOnDemand();
+  });
+}
 
-zoomOutBtn.addEventListener("click", () => {
-  zoomWithFactor(ZOOM_OUT_FACTOR);
-});
-
-resetZoomBtn.addEventListener("click", () => {
-  resetZoom();
-});
+interval1mBtn.addEventListener("click", async () => { await setActiveInterval("1min"); });
+interval5mBtn.addEventListener("click", async () => { await setActiveInterval("5min"); });
+interval1dBtn.addEventListener("click", async () => { await setActiveInterval("1day"); });
+rangeMaxBtn.addEventListener("click", () => applyDateRangePreset("max"));
+range10yBtn.addEventListener("click", () => applyDateRangePreset("10y"));
+range5yBtn.addEventListener("click", () => applyDateRangePreset("5y"));
+range1yBtn.addEventListener("click", () => applyDateRangePreset("1y"));
+rangeYtdBtn.addEventListener("click", () => applyDateRangePreset("ytd"));
 
 historyCanvas.addEventListener(
   "wheel",
@@ -699,8 +1088,7 @@ historyCanvas.addEventListener("mousedown", (event) => {
 
 window.addEventListener("mousemove", (event) => {
   if (!isDragging) return;
-  const canvasX = canvasXFromEvent(event);
-  dragTo(canvasX);
+  dragTo(canvasXFromEvent(event));
 });
 
 historyCanvas.addEventListener("mousemove", (event) => {
@@ -708,9 +1096,7 @@ historyCanvas.addEventListener("mousemove", (event) => {
   updateHoverFromCanvasX(canvasXFromEvent(event));
 });
 
-window.addEventListener("mouseup", () => {
-  endDrag();
-});
+window.addEventListener("mouseup", () => endDrag());
 
 historyCanvas.addEventListener("mouseleave", () => {
   if (isDragging) return;
@@ -718,13 +1104,11 @@ historyCanvas.addEventListener("mouseleave", () => {
   drawChartFromState();
 });
 
-historyCanvas.addEventListener("dblclick", () => {
-  resetZoom();
-});
+historyCanvas.addEventListener("dblclick", () => resetZoom());
 
 window.addEventListener("resize", () => {
   if (currentPayload) {
-    applyPayloadToChart(currentPayload, false);
+    applySeriesToChart(false);
   } else {
     drawPlaceholder("Loading...");
   }
@@ -733,18 +1117,22 @@ window.addEventListener("resize", () => {
 async function init() {
   currentSymbol = getSymbolFromPath();
   if (!currentSymbol) {
-    symbolTitleEl.textContent = "Historical Data";
+    document.title = "Stock Overview";
+    symbolTitleEl.textContent = "Stock Overview";
     symbolSubtitleEl.textContent = "Symbol not found";
     setHistoryMeta("Invalid symbol", true);
     drawPlaceholder("Invalid symbol");
     return;
   }
 
-  symbolTitleEl.textContent = `${currentSymbol} Historical Data`;
-  symbolSubtitleEl.textContent = `Loading ${HISTORICAL_YEARS}Y history...`;
+  document.title = `${currentSymbol} Stock Overview`;
+  symbolTitleEl.textContent = `${currentSymbol} Market Overview`;
+  symbolSubtitleEl.textContent = "Loading...";
+  setIntervalButtonAvailability();
+  setIntervalButtonState();
   drawPlaceholder("Loading...");
 
-  await loadHistorical(false);
+  await loadOverview(false);
 }
 
 void init();

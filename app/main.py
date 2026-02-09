@@ -33,9 +33,11 @@ MAX_BASIC_SYMBOLS = 8
 SYMBOL_PATTERN = re.compile(r"^[A-Z0-9.\-]{1,15}$")
 WS_URL_TEMPLATE = "wss://ws.twelvedata.com/v1/quotes/price?apikey={api_key}"
 REST_PRICE_URL = "https://api.twelvedata.com/price"
+QUOTE_URL = "https://api.twelvedata.com/quote"
 API_USAGE_URL = "https://api.twelvedata.com/api_usage"
 STOCKS_LIST_URL = "https://api.twelvedata.com/stocks"
 TIME_SERIES_URL = "https://api.twelvedata.com/time_series"
+EARLIEST_TIMESTAMP_URL = "https://api.twelvedata.com/earliest_timestamp"
 
 
 def _int_env(name: str, default: int, minimum: int) -> int:
@@ -66,6 +68,7 @@ SYMBOL_CATALOG_TTL_SEC = _int_env("SYMBOL_CATALOG_TTL_SEC", default=86400, minim
 SYMBOL_CATALOG_MAX_ITEMS = _int_env("SYMBOL_CATALOG_MAX_ITEMS", default=25000, minimum=1000)
 SYMBOL_CATALOG_CACHE_PATH = Path(__file__).resolve().parent / "cache" / "us_stock_symbol_catalog.json"
 LAST_PRICE_CACHE_PATH = Path(__file__).resolve().parent / "cache" / "last_prices.json"
+FULL_DAILY_HISTORY_CACHE_DIR = Path(__file__).resolve().parent / "cache" / "daily_history"
 HISTORICAL_DEFAULT_YEARS = _int_env("HISTORICAL_DEFAULT_YEARS", default=5, minimum=1)
 HISTORICAL_MAX_YEARS = _int_env("HISTORICAL_MAX_YEARS", default=10, minimum=1)
 ML_HISTORY_DEFAULT_MONTHS = 60
@@ -79,6 +82,12 @@ HISTORICAL_INTERVAL = os.getenv("HISTORICAL_INTERVAL", "1day").strip() or "1day"
 HISTORICAL_MAX_POINTS = _int_env("HISTORICAL_MAX_POINTS", default=2000, minimum=100)
 SPARKLINE_CACHE_TTL_SEC = _int_env("SPARKLINE_CACHE_TTL_SEC", default=21600, minimum=300)
 SPARKLINE_POINTS = _int_env("SPARKLINE_POINTS", default=30, minimum=10)
+OVERVIEW_CACHE_TTL_SEC = _int_env("OVERVIEW_CACHE_TTL_SEC", default=120, minimum=10)
+TIME_SERIES_MAX_OUTPUTSIZE = _int_env("TIME_SERIES_MAX_OUTPUTSIZE", default=5000, minimum=100)
+FULL_HISTORY_CHUNK_YEARS = _int_env("FULL_HISTORY_CHUNK_YEARS", default=15, minimum=1)
+FULL_HISTORY_MAX_CHUNKS = _int_env("FULL_HISTORY_MAX_CHUNKS", default=20, minimum=1)
+DAILY_DIFF_MIN_RECHECK_SEC = _int_env("DAILY_DIFF_MIN_RECHECK_SEC", default=21600, minimum=60)
+BETA_MARKET_RECHECK_SEC = _int_env("BETA_MARKET_RECHECK_SEC", default=86400, minimum=300)
 MARKET_CLOSED_SLEEP_SEC = _int_env("MARKET_CLOSED_SLEEP_SEC", default=60, minimum=10)
 SYMBOL_COUNTRY_MAP_RAW = os.getenv("SYMBOL_COUNTRY_MAP", "")
 
@@ -535,8 +544,163 @@ class SymbolCatalogStore:
             LOGGER.warning("Failed to write symbol catalog cache: %s", exc)
 
 
+class FullDailyHistoryStore:
+    def __init__(self, cache_dir: Path) -> None:
+        self.cache_dir = cache_dir
+        self._memory: dict[str, list[dict[str, Any]]] = {}
+        self._updated_at_epoch: dict[str, float] = {}
+        self._lock = asyncio.Lock()
+
+    @staticmethod
+    def _normalize_symbol(symbol: str) -> str:
+        return str(symbol or "").upper().strip()
+
+    def _path_for(self, symbol: str) -> Path:
+        return self.cache_dir / f"{symbol}.json"
+
+    @staticmethod
+    def _to_float(value: Any) -> float | None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _load_from_disk_no_lock(self, symbol: str) -> list[dict[str, Any]]:
+        path = self._path_for(symbol)
+        if not path.exists():
+            return []
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        updated_raw = payload.get("updated_at") if isinstance(payload, dict) else None
+        if isinstance(updated_raw, str):
+            try:
+                parsed = datetime.fromisoformat(updated_raw.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                self._updated_at_epoch[symbol] = parsed.astimezone(timezone.utc).timestamp()
+            except Exception:
+                pass
+        points = payload.get("points") if isinstance(payload, dict) else None
+        if not isinstance(points, list):
+            return []
+        normalized: list[dict[str, Any]] = []
+        for item in points:
+            if not isinstance(item, dict):
+                continue
+            t = str(item.get("t", "")).strip()
+            c = item.get("c")
+            if not t:
+                continue
+            close = self._to_float(c)
+            if close is None or close <= 0:
+                continue
+            o = self._to_float(item.get("o"))
+            h = self._to_float(item.get("h"))
+            l = self._to_float(item.get("l"))
+            v = self._to_float(item.get("v"))
+            open_value = o if o is not None and o > 0 else close
+            high_value = h if h is not None and h > 0 else max(open_value, close)
+            low_value = l if l is not None and l > 0 else min(open_value, close)
+            normalized.append(
+                {
+                    "t": t,
+                    "o": open_value,
+                    "h": max(high_value, open_value, close),
+                    "l": min(low_value, open_value, close),
+                    "c": close,
+                    "v": v,
+                }
+            )
+        return normalized
+
+    async def get(self, symbol: str) -> list[dict[str, Any]]:
+        normalized_symbol = self._normalize_symbol(symbol)
+        if not normalized_symbol or not SYMBOL_PATTERN.match(normalized_symbol):
+            return []
+        async with self._lock:
+            cached = self._memory.get(normalized_symbol)
+            if cached is not None:
+                return [dict(item) for item in cached]
+            loaded = self._load_from_disk_no_lock(normalized_symbol)
+            self._memory[normalized_symbol] = loaded
+            return [dict(item) for item in loaded]
+
+    async def upsert(self, symbol: str, points: list[dict[str, Any]]) -> None:
+        normalized_symbol = self._normalize_symbol(symbol)
+        if not normalized_symbol or not SYMBOL_PATTERN.match(normalized_symbol):
+            return
+        safe_points = [dict(item) for item in points if isinstance(item, dict)]
+        async with self._lock:
+            self._memory[normalized_symbol] = safe_points
+            try:
+                now_epoch = time.time()
+                self._updated_at_epoch[normalized_symbol] = now_epoch
+                self.cache_dir.mkdir(parents=True, exist_ok=True)
+                payload = {
+                    "symbol": normalized_symbol,
+                    "updated_at": datetime.fromtimestamp(now_epoch, tz=timezone.utc).isoformat(),
+                    "count": len(safe_points),
+                    "points": safe_points,
+                }
+                self._path_for(normalized_symbol).write_text(
+                    json.dumps(payload, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+            except Exception as exc:
+                LOGGER.warning("Failed to write full daily history cache for %s: %s", normalized_symbol, exc)
+
+    async def clear(self, symbol: str | None = None) -> int:
+        async with self._lock:
+            if symbol:
+                normalized_symbol = self._normalize_symbol(symbol)
+                self._memory.pop(normalized_symbol, None)
+                self._updated_at_epoch.pop(normalized_symbol, None)
+                removed = 0
+                path = self._path_for(normalized_symbol)
+                if path.exists():
+                    try:
+                        path.unlink()
+                        removed = 1
+                    except Exception as exc:
+                        LOGGER.warning("Failed to remove daily history cache for %s: %s", normalized_symbol, exc)
+                return removed
+
+            removed = 0
+            self._memory.clear()
+            self._updated_at_epoch.clear()
+            if not self.cache_dir.exists():
+                return 0
+            for path in self.cache_dir.glob("*.json"):
+                try:
+                    path.unlink()
+                    removed += 1
+                except Exception as exc:
+                    LOGGER.warning("Failed to remove daily history cache file %s: %s", path, exc)
+            return removed
+
+    async def last_updated_epoch(self, symbol: str) -> float | None:
+        normalized_symbol = self._normalize_symbol(symbol)
+        if not normalized_symbol or not SYMBOL_PATTERN.match(normalized_symbol):
+            return None
+        async with self._lock:
+            value = self._updated_at_epoch.get(normalized_symbol)
+            if value is not None:
+                return float(value)
+            _ = self._load_from_disk_no_lock(normalized_symbol)
+            value = self._updated_at_epoch.get(normalized_symbol)
+            return float(value) if value is not None else None
+
+
 class MarketDataHub:
-    def __init__(self, api_key: str, symbols: list[str], last_price_store: LastPriceStore) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        symbols: list[str],
+        last_price_store: LastPriceStore,
+        full_daily_history_store: FullDailyHistoryStore,
+    ) -> None:
         self.api_key = api_key
         self.symbols: list[str] = symbols
         self.default_country_key = _normalize_country_key(SYMBOL_CATALOG_COUNTRY)
@@ -544,6 +708,7 @@ class MarketDataHub:
         self.market_sessions = DEFAULT_MARKET_SESSIONS
         self.prices: dict[str, dict[str, Any]] = {}
         self.last_price_store = last_price_store
+        self.full_daily_history_store = full_daily_history_store
         self.ws_connected = False
         self.last_ws_message_at = 0.0
         self.mode = "starting"
@@ -566,6 +731,8 @@ class MarketDataHub:
         self._historical_lock = asyncio.Lock()
         self._sparkline_cache: dict[str, dict[str, Any]] = {}
         self._sparkline_lock = asyncio.Lock()
+        self._overview_cache: dict[tuple[str, bool, bool, bool], dict[str, Any]] = {}
+        self._overview_lock = asyncio.Lock()
 
     @staticmethod
     def _is_cache_fresh(cached_epoch: Any, ttl_sec: int) -> bool:
@@ -1015,6 +1182,720 @@ class MarketDataHub:
 
         return historical_payload
 
+    async def security_overview_payload(
+        self,
+        symbol: str,
+        refresh: bool = False,
+        include_intraday: bool = True,
+        include_market: bool = True,
+        include_qqq: bool = True,
+    ) -> dict[str, Any]:
+        normalized = symbol.upper().strip()
+        if not SYMBOL_PATTERN.match(normalized):
+            raise HTTPException(status_code=400, detail="Invalid symbol format.")
+        cache_key = (normalized, bool(include_intraday), bool(include_market), bool(include_qqq))
+
+        async with self._overview_lock:
+            cached = self._overview_cache.get(cache_key)
+            if cached and not refresh and self._is_cache_fresh(cached.get("cached_epoch"), OVERVIEW_CACHE_TTL_SEC):
+                payload = dict(cached["payload"])
+                payload["source"] = "cache"
+                return payload
+
+        timeout = httpx.Timeout(30.0, connect=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            quote_task = self._fetch_quote(client, normalized)
+            day_task = self._fetch_full_daily_series(client, normalized, refresh=refresh)
+            quote, day_points = await asyncio.gather(quote_task, day_task)
+
+            m1_points: list[dict[str, Any]] = []
+            m5_points: list[dict[str, Any]] = []
+            if include_intraday:
+                m1_points, m5_points = await asyncio.gather(
+                    self._fetch_series(client, normalized, "1min", outputsize=390),
+                    self._fetch_series(client, normalized, "5min", outputsize=390),
+                )
+
+            market_context: dict[str, Any] | None = None
+            if include_market:
+                market_context = await self._fetch_market_context(
+                    client,
+                    refresh=refresh,
+                    include_qqq=include_qqq,
+                )
+
+        if not day_points:
+            raise HTTPException(status_code=404, detail="No overview data found for this symbol.")
+
+        latest_day = day_points[-1]
+        previous_day = day_points[-2] if len(day_points) >= 2 else None
+
+        quote_price = self._pick_float(quote, "close", "price")
+        current_price = quote_price if quote_price is not None else latest_day["c"]
+        previous_close = (
+            self._pick_float(quote, "previous_close", "prev_close")
+            or (previous_day["c"] if previous_day else None)
+        )
+        day_open = self._pick_float(quote, "open")
+        day_high = self._pick_float(quote, "high")
+        day_low = self._pick_float(quote, "low")
+        day_volume = self._pick_float(quote, "volume")
+        bid = self._pick_float(quote, "bid")
+        ask = self._pick_float(quote, "ask")
+
+        if m1_points and (day_high is None or day_low is None or day_open is None):
+            latest_session = self._extract_latest_session_points(m1_points)
+            if latest_session:
+                if day_open is None:
+                    day_open = latest_session[0]["o"]
+                if day_high is None:
+                    day_high = max((item["h"] for item in latest_session), default=None)
+                if day_low is None:
+                    day_low = min((item["l"] for item in latest_session), default=None)
+                if day_volume is None:
+                    day_volume = sum((item["v"] or 0.0) for item in latest_session)
+
+        if day_open is None:
+            day_open = latest_day["o"]
+        if day_high is None:
+            day_high = latest_day["h"]
+        if day_low is None:
+            day_low = latest_day["l"]
+        if day_volume is None:
+            day_volume = latest_day["v"]
+
+        change_abs = None
+        change_pct = None
+        if current_price is not None and previous_close is not None and previous_close > 0:
+            change_abs = current_price - previous_close
+            change_pct = (change_abs / previous_close) * 100
+
+        recent_daily_volumes = [p["v"] for p in day_points[-21:-1] if p.get("v") is not None and p["v"] > 0]
+        avg_volume_20 = (
+            sum(recent_daily_volumes) / len(recent_daily_volumes)
+            if recent_daily_volumes
+            else None
+        )
+        avg_volume_ratio = (
+            (day_volume / avg_volume_20)
+            if day_volume is not None and avg_volume_20 is not None and avg_volume_20 > 0
+            else None
+        )
+
+        turnover = (
+            current_price * day_volume
+            if current_price is not None and day_volume is not None
+            else None
+        )
+
+        spread_abs = (
+            ask - bid
+            if ask is not None and bid is not None
+            else None
+        )
+        spread_pct = (
+            (spread_abs / current_price) * 100
+            if spread_abs is not None and current_price is not None and current_price > 0
+            else None
+        )
+
+        ma_short = self._moving_average(day_points, window=20)
+        ma_mid = self._moving_average(day_points, window=50)
+        atr_14 = self._atr(day_points, window=14)
+        intraday_vwap_1m = self._intraday_vwap(m1_points)
+        intraday_vwap_5m = self._intraday_vwap(m5_points)
+
+        gap_abs = None
+        gap_pct = None
+        if day_open is not None and previous_close is not None and previous_close > 0:
+            gap_abs = day_open - previous_close
+            gap_pct = (gap_abs / previous_close) * 100
+
+        spy_points = market_context.get("spy_points", []) if isinstance(market_context, dict) else []
+        qqq_points = market_context.get("qqq_points", []) if isinstance(market_context, dict) else []
+        beta_60, corr_60 = self._beta_and_corr_60d(day_points, spy_points) if include_market else (None, None)
+
+        spy_latest = spy_points[-1]["c"] if spy_points else None
+        spy_prev = spy_points[-2]["c"] if len(spy_points) >= 2 else None
+        qqq_latest = qqq_points[-1]["c"] if qqq_points else None
+        qqq_prev = qqq_points[-2]["c"] if len(qqq_points) >= 2 else None
+
+        overview_payload = {
+            "symbol": normalized,
+            "name": self._pick_string(quote, "name", "instrument_name"),
+            "exchange": self._pick_string(quote, "exchange"),
+            "price": {
+                "current": current_price,
+                "previous_close": previous_close,
+                "change_abs": change_abs,
+                "change_pct": change_pct,
+                "day_open": day_open,
+                "day_high": day_high,
+                "day_low": day_low,
+                "gap_abs": gap_abs,
+                "gap_pct": gap_pct,
+                "updated_at": self._best_updated_at(quote, m1_points, day_points),
+                "delay_note": "Twelve Data Basic plan (delayed feed may apply).",
+            },
+            "volume": {
+                "today": day_volume,
+                "avg20": avg_volume_20,
+                "avg_ratio": avg_volume_ratio,
+                "turnover": turnover,
+            },
+            "spread": {
+                "bid": bid,
+                "ask": ask,
+                "spread_abs": spread_abs,
+                "spread_pct": spread_pct,
+            },
+            "technical": {
+                "vwap_1m": intraday_vwap_1m,
+                "vwap_5m": intraday_vwap_5m,
+                "ma_short_20": ma_short,
+                "ma_mid_50": ma_mid,
+                "atr_14": atr_14,
+            },
+            "market": {
+                "sp500_proxy": self._build_market_item("SPY", spy_latest, spy_prev),
+                "nasdaq_proxy": self._build_market_item("QQQ", qqq_latest, qqq_prev) if include_qqq else None,
+                "beta_60d_vs_spy": beta_60,
+                "corr_60d_vs_spy": corr_60,
+            },
+            "charts": {
+                "1min": m1_points,
+                "5min": m5_points,
+                "1day": day_points,
+            },
+            "support_status": {
+                "order_book": "not_supported_on_current_data_source",
+                "corporate_events": "not_supported_on_current_data_source",
+                "earnings_calendar": "not_supported_on_current_data_source",
+                "news_headlines": "not_supported_on_current_data_source",
+                "sector_etf": "not_supported_on_current_data_source",
+            },
+            "source": "twelvedata-live",
+        }
+
+        async with self._overview_lock:
+            self._overview_cache[cache_key] = {
+                "cached_epoch": time.time(),
+                "payload": overview_payload,
+            }
+
+        return overview_payload
+
+    async def clear_symbol_overview_cache(self, symbol: str) -> dict[str, Any]:
+        normalized = symbol.upper().strip()
+        if not SYMBOL_PATTERN.match(normalized):
+            raise HTTPException(status_code=400, detail="Invalid symbol format.")
+
+        removed_overview = 0
+        async with self._overview_lock:
+            keys = [key for key in self._overview_cache.keys() if key[0] == normalized]
+            for key in keys:
+                self._overview_cache.pop(key, None)
+                removed_overview += 1
+
+        removed_historical = 0
+        async with self._historical_lock:
+            keys = [key for key in self._historical_cache.keys() if key[0] == normalized]
+            for key in keys:
+                self._historical_cache.pop(key, None)
+                removed_historical += 1
+
+        removed_daily_files = await self.full_daily_history_store.clear(normalized)
+        return {
+            "symbol": normalized,
+            "removed_overview_entries": removed_overview,
+            "removed_historical_entries": removed_historical,
+            "removed_daily_history_files": removed_daily_files,
+        }
+
+    async def _fetch_market_context(
+        self,
+        client: httpx.AsyncClient,
+        refresh: bool = False,
+        include_qqq: bool = True,
+    ) -> dict[str, Any]:
+        spy_points = await self._fetch_full_daily_series(
+            client,
+            "SPY",
+            refresh=refresh,
+            min_recheck_sec=BETA_MARKET_RECHECK_SEC,
+        )
+        qqq_points: list[dict[str, Any]] = []
+        if include_qqq:
+            qqq_points = await self._fetch_full_daily_series(
+                client,
+                "QQQ",
+                refresh=refresh,
+                min_recheck_sec=BETA_MARKET_RECHECK_SEC,
+            )
+        return {
+            "spy_points": spy_points[-90:] if len(spy_points) > 90 else spy_points,
+            "qqq_points": qqq_points[-90:] if len(qqq_points) > 90 else qqq_points,
+        }
+
+    async def _fetch_quote(self, client: httpx.AsyncClient, symbol: str) -> dict[str, Any]:
+        try:
+            response = await client.get(
+                QUOTE_URL,
+                params={
+                    "apikey": self.api_key,
+                    "symbol": symbol,
+                },
+            )
+            async with self._credits_lock:
+                await self._update_minute_credits_from_response(response)
+                await self._consume_daily_credit_estimate(1, source=f"quote:{symbol}")
+            payload = response.json()
+        except Exception as exc:
+            LOGGER.warning("Quote fetch failed for %s: %s", symbol, exc)
+            return {}
+        if isinstance(payload, dict) and payload.get("status") == "error":
+            LOGGER.warning("Quote API error for %s: %s", symbol, payload.get("message"))
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    async def _fetch_series(
+        self,
+        client: httpx.AsyncClient,
+        symbol: str,
+        interval: str,
+        outputsize: int,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        try:
+            params: dict[str, Any] = {
+                "apikey": self.api_key,
+                "symbol": symbol,
+                "interval": interval,
+                "order": "ASC",
+                "outputsize": min(max(1, int(outputsize)), TIME_SERIES_MAX_OUTPUTSIZE),
+            }
+            if start_date:
+                params["start_date"] = start_date
+            if end_date:
+                params["end_date"] = end_date
+            response = await client.get(
+                TIME_SERIES_URL,
+                params=params,
+            )
+            async with self._credits_lock:
+                await self._update_minute_credits_from_response(response)
+                await self._consume_daily_credit_estimate(1, source=f"series:{symbol}:{interval}")
+            payload = response.json()
+        except Exception as exc:
+            LOGGER.warning("Time series fetch failed for %s %s: %s", symbol, interval, exc)
+            return []
+
+        if isinstance(payload, dict) and payload.get("status") == "error":
+            LOGGER.warning("Time series API error for %s %s: %s", symbol, interval, payload.get("message"))
+            return []
+
+        values = payload.get("values") if isinstance(payload, dict) else None
+        if not isinstance(values, list):
+            return []
+
+        points: list[dict[str, Any]] = []
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            dt = str(item.get("datetime", "")).strip()
+            close_value = self._try_parse_float(item.get("close"))
+            if not dt or close_value is None or close_value <= 0:
+                continue
+
+            open_value = self._try_parse_float(item.get("open"))
+            high_value = self._try_parse_float(item.get("high"))
+            low_value = self._try_parse_float(item.get("low"))
+            volume_value = self._try_parse_float(item.get("volume"))
+
+            if open_value is None or open_value <= 0:
+                open_value = close_value
+            if high_value is None or high_value <= 0:
+                high_value = max(open_value, close_value)
+            if low_value is None or low_value <= 0:
+                low_value = min(open_value, close_value)
+
+            points.append(
+                {
+                    "t": dt,
+                    "o": open_value,
+                    "h": max(high_value, open_value, close_value),
+                    "l": min(low_value, open_value, close_value),
+                    "c": close_value,
+                    "v": volume_value,
+                }
+            )
+
+        return points
+
+    async def _fetch_full_daily_series(
+        self,
+        client: httpx.AsyncClient,
+        symbol: str,
+        refresh: bool = False,
+        min_recheck_sec: int | None = None,
+    ) -> list[dict[str, Any]]:
+        today = date.today()
+        if refresh:
+            await self.full_daily_history_store.clear(symbol)
+            cached_points: list[dict[str, Any]] = []
+        else:
+            cached_points = await self.full_daily_history_store.get(symbol)
+        if cached_points:
+            last_date = self._point_date(cached_points[-1])
+            if last_date and last_date >= today:
+                return cached_points
+
+            last_cache_update_epoch = await self.full_daily_history_store.last_updated_epoch(symbol)
+            if last_cache_update_epoch is not None:
+                last_cache_update_dt = datetime.fromtimestamp(last_cache_update_epoch, tz=timezone.utc)
+                now_utc = datetime.now(timezone.utc)
+                recheck_sec = DAILY_DIFF_MIN_RECHECK_SEC if min_recheck_sec is None else max(60, int(min_recheck_sec))
+                if (
+                    last_cache_update_dt.date() == now_utc.date()
+                    and (now_utc.timestamp() - last_cache_update_epoch) < recheck_sec
+                ):
+                    return cached_points
+
+            # Catch up in chunks to avoid truncation when the cached range is old.
+            merged_cached = [dict(item) for item in cached_points]
+            start_cursor = (last_date - timedelta(days=5)) if last_date else (today - timedelta(days=10))
+            chunks = 0
+            while start_cursor <= today and chunks < FULL_HISTORY_MAX_CHUNKS:
+                chunk_end = min(
+                    today,
+                    start_cursor + timedelta(days=(366 * FULL_HISTORY_CHUNK_YEARS) - 1),
+                )
+                incremental_points = await self._fetch_series(
+                    client,
+                    symbol=symbol,
+                    interval="1day",
+                    outputsize=TIME_SERIES_MAX_OUTPUTSIZE,
+                    start_date=start_cursor.isoformat(),
+                    end_date=chunk_end.isoformat(),
+                )
+                if incremental_points:
+                    merged_cached = self._merge_points_by_timestamp(merged_cached, incremental_points)
+                start_cursor = chunk_end + timedelta(days=1)
+                chunks += 1
+
+            if start_cursor <= today:
+                LOGGER.warning(
+                    "Daily cache catch-up truncated for %s: reached chunk limit (%s).",
+                    symbol,
+                    FULL_HISTORY_MAX_CHUNKS,
+                )
+
+            await self.full_daily_history_store.upsert(symbol, merged_cached)
+            return merged_cached
+
+        fallback_points = await self._fetch_series(
+            client,
+            symbol=symbol,
+            interval="1day",
+            outputsize=max(1300, HISTORICAL_MAX_POINTS),
+        )
+        earliest = await self._fetch_earliest_date(client, symbol=symbol, interval="1day")
+        if earliest is None:
+            if fallback_points:
+                await self.full_daily_history_store.upsert(symbol, fallback_points)
+            return fallback_points
+
+        start_cursor = earliest
+        chunks = 0
+        merged: list[dict[str, Any]] = []
+
+        while start_cursor <= today and chunks < FULL_HISTORY_MAX_CHUNKS:
+            chunk_end = min(
+                today,
+                start_cursor + timedelta(days=(366 * FULL_HISTORY_CHUNK_YEARS) - 1),
+            )
+            points = await self._fetch_series(
+                client,
+                symbol=symbol,
+                interval="1day",
+                outputsize=TIME_SERIES_MAX_OUTPUTSIZE,
+                start_date=start_cursor.isoformat(),
+                end_date=chunk_end.isoformat(),
+            )
+            if points:
+                merged.extend(points)
+            start_cursor = chunk_end + timedelta(days=1)
+            chunks += 1
+
+        if not merged:
+            if fallback_points:
+                await self.full_daily_history_store.upsert(symbol, fallback_points)
+            return fallback_points
+
+        if start_cursor <= today:
+            LOGGER.warning(
+                "Daily full history truncated for %s: reached chunk limit (%s).",
+                symbol,
+                FULL_HISTORY_MAX_CHUNKS,
+            )
+
+        deduped = self._merge_points_by_timestamp([], merged)
+        await self.full_daily_history_store.upsert(symbol, deduped)
+        return deduped
+
+    async def _fetch_earliest_date(self, client: httpx.AsyncClient, symbol: str, interval: str) -> date | None:
+        try:
+            response = await client.get(
+                EARLIEST_TIMESTAMP_URL,
+                params={
+                    "apikey": self.api_key,
+                    "symbol": symbol,
+                    "interval": interval,
+                },
+            )
+            async with self._credits_lock:
+                await self._update_minute_credits_from_response(response)
+                await self._consume_daily_credit_estimate(1, source=f"earliest:{symbol}:{interval}")
+            payload = response.json()
+        except Exception as exc:
+            LOGGER.warning("Earliest timestamp fetch failed for %s %s: %s", symbol, interval, exc)
+            return None
+
+        if isinstance(payload, dict) and payload.get("status") == "error":
+            LOGGER.warning("Earliest timestamp API error for %s %s: %s", symbol, interval, payload.get("message"))
+            return None
+
+        raw_value = None
+        if isinstance(payload, dict):
+            raw_value = payload.get("datetime") or payload.get("timestamp")
+        if raw_value is None:
+            return None
+
+        parsed_iso = self._parse_timestamp(raw_value)
+        if not parsed_iso:
+            text = str(raw_value).strip()
+            if text:
+                try:
+                    return date.fromisoformat(text.split(" ")[0])
+                except ValueError:
+                    return None
+            return None
+
+        try:
+            return date.fromisoformat(parsed_iso[:10])
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _pick_float(payload: dict[str, Any], *keys: str) -> float | None:
+        if not isinstance(payload, dict):
+            return None
+        for key in keys:
+            value = payload.get(key)
+            try:
+                num = float(value)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(num):
+                return num
+        return None
+
+    @staticmethod
+    def _pick_string(payload: dict[str, Any], *keys: str) -> str | None:
+        if not isinstance(payload, dict):
+            return None
+        for key in keys:
+            value = str(payload.get(key, "")).strip()
+            if value:
+                return value
+        return None
+
+    @staticmethod
+    def _extract_latest_session_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not points:
+            return []
+        latest_date = str(points[-1].get("t", "")).split(" ")[0]
+        if not latest_date:
+            return points
+        return [item for item in points if str(item.get("t", "")).startswith(latest_date)]
+
+    @staticmethod
+    def _point_date(point: dict[str, Any]) -> date | None:
+        raw_t = str(point.get("t", "")).strip()
+        if not raw_t:
+            return None
+        date_text = raw_t.split(" ")[0]
+        try:
+            return date.fromisoformat(date_text)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _merge_points_by_timestamp(
+        base_points: list[dict[str, Any]],
+        incoming_points: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        merged: dict[str, dict[str, Any]] = {}
+        for item in base_points:
+            key = str(item.get("t", "")).strip()
+            if not key:
+                continue
+            merged[key] = dict(item)
+        for item in incoming_points:
+            key = str(item.get("t", "")).strip()
+            if not key:
+                continue
+            merged[key] = dict(item)
+        return [merged[key] for key in sorted(merged.keys())]
+
+    @staticmethod
+    def _moving_average(points: list[dict[str, Any]], window: int) -> float | None:
+        closes = [item["c"] for item in points if isinstance(item.get("c"), (int, float))]
+        if len(closes) < window or window <= 0:
+            return None
+        sample = closes[-window:]
+        return sum(sample) / window
+
+    @staticmethod
+    def _atr(points: list[dict[str, Any]], window: int = 14) -> float | None:
+        if len(points) < window + 1:
+            return None
+        trs: list[float] = []
+        prev_close = points[0]["c"]
+        for item in points[1:]:
+            high = item.get("h")
+            low = item.get("l")
+            close = item.get("c")
+            if not isinstance(high, (int, float)) or not isinstance(low, (int, float)) or not isinstance(close, (int, float)):
+                prev_close = close if isinstance(close, (int, float)) else prev_close
+                continue
+            tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+            if tr >= 0:
+                trs.append(tr)
+            prev_close = close
+        if len(trs) < window:
+            return None
+        sample = trs[-window:]
+        return sum(sample) / window
+
+    @staticmethod
+    def _intraday_vwap(points: list[dict[str, Any]]) -> float | None:
+        if not points:
+            return None
+        latest_session = MarketDataHub._extract_latest_session_points(points)
+        if not latest_session:
+            return None
+        pv_sum = 0.0
+        v_sum = 0.0
+        for item in latest_session:
+            close = item.get("c")
+            volume = item.get("v")
+            if not isinstance(close, (int, float)) or not isinstance(volume, (int, float)) or volume <= 0:
+                continue
+            pv_sum += close * volume
+            v_sum += volume
+        if v_sum <= 0:
+            return None
+        return pv_sum / v_sum
+
+    @staticmethod
+    def _daily_returns(points: list[dict[str, Any]], max_len: int) -> dict[str, float]:
+        closes: list[tuple[str, float]] = []
+        for item in points:
+            raw_t = str(item.get("t", "")).strip()
+            close = item.get("c")
+            if not raw_t or not isinstance(close, (int, float)) or close <= 0:
+                continue
+            closes.append((raw_t.split(" ")[0], close))
+        if len(closes) < 2:
+            return {}
+        target = closes[-(max_len + 1):]
+        out: dict[str, float] = {}
+        for idx in range(1, len(target)):
+            date_key, close_value = target[idx]
+            prev_close = target[idx - 1][1]
+            if prev_close <= 0:
+                continue
+            out[date_key] = (close_value / prev_close) - 1
+        return out
+
+    @staticmethod
+    def _beta_and_corr_60d(symbol_points: list[dict[str, Any]], benchmark_points: list[dict[str, Any]]) -> tuple[float | None, float | None]:
+        symbol_returns = MarketDataHub._daily_returns(symbol_points, max_len=60)
+        benchmark_returns = MarketDataHub._daily_returns(benchmark_points, max_len=60)
+        common_dates = sorted(set(symbol_returns.keys()) & set(benchmark_returns.keys()))
+        if len(common_dates) < 20:
+            return None, None
+
+        x = [benchmark_returns[d] for d in common_dates]
+        y = [symbol_returns[d] for d in common_dates]
+        mean_x = sum(x) / len(x)
+        mean_y = sum(y) / len(y)
+
+        cov = sum((xv - mean_x) * (yv - mean_y) for xv, yv in zip(x, y)) / max(1, len(x) - 1)
+        var_x = sum((xv - mean_x) ** 2 for xv in x) / max(1, len(x) - 1)
+        var_y = sum((yv - mean_y) ** 2 for yv in y) / max(1, len(y) - 1)
+        if var_x <= 0 or var_y <= 0:
+            return None, None
+        beta = cov / var_x
+        corr = cov / math.sqrt(var_x * var_y)
+        return beta, corr
+
+    @staticmethod
+    def _parse_timestamp(raw: Any) -> str | None:
+        if raw is None:
+            return None
+        if isinstance(raw, (int, float)):
+            return datetime.fromtimestamp(float(raw), tz=timezone.utc).isoformat()
+        text = str(raw).strip()
+        if not text:
+            return None
+        if text.isdigit():
+            try:
+                return datetime.fromtimestamp(float(text), tz=timezone.utc).isoformat()
+            except (TypeError, ValueError):
+                return None
+        normalized = text.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).isoformat()
+
+    def _best_updated_at(
+        self,
+        quote_payload: dict[str, Any],
+        intraday_points: list[dict[str, Any]],
+        day_points: list[dict[str, Any]],
+    ) -> str | None:
+        candidates = [
+            self._parse_timestamp(quote_payload.get("timestamp")) if isinstance(quote_payload, dict) else None,
+            self._parse_timestamp(quote_payload.get("datetime")) if isinstance(quote_payload, dict) else None,
+            self._parse_timestamp(intraday_points[-1]["t"]) if intraday_points else None,
+            self._parse_timestamp(day_points[-1]["t"]) if day_points else None,
+        ]
+        for item in candidates:
+            if item:
+                return item
+        return None
+
+    @staticmethod
+    def _build_market_item(symbol: str, latest: float | None, previous: float | None) -> dict[str, Any]:
+        change_abs = None
+        change_pct = None
+        if latest is not None and previous is not None and previous > 0:
+            change_abs = latest - previous
+            change_pct = (change_abs / previous) * 100
+        return {
+            "symbol": symbol,
+            "price": latest,
+            "change_abs": change_abs,
+            "change_pct": change_pct,
+        }
+
     async def sparkline_payload(self, symbols: list[str], refresh: bool = False) -> list[dict[str, Any]]:
         target_symbols = normalize_symbols(symbols)
         if not target_symbols:
@@ -1366,7 +2247,13 @@ if not API_KEY:
     raise RuntimeError("TWELVE_DATA_API_KEY is required. Set it in your environment or .env file.")
 
 last_price_store = LastPriceStore(cache_path=LAST_PRICE_CACHE_PATH)
-hub = MarketDataHub(api_key=API_KEY, symbols=DEFAULT_SYMBOLS, last_price_store=last_price_store)
+full_daily_history_store = FullDailyHistoryStore(cache_dir=FULL_DAILY_HISTORY_CACHE_DIR)
+hub = MarketDataHub(
+    api_key=API_KEY,
+    symbols=DEFAULT_SYMBOLS,
+    last_price_store=last_price_store,
+    full_daily_history_store=full_daily_history_store,
+)
 symbol_catalog_store = SymbolCatalogStore(
     api_key=API_KEY,
     cache_path=SYMBOL_CATALOG_CACHE_PATH,
@@ -2031,6 +2918,53 @@ async def symbol_catalog(refresh: bool = False) -> JSONResponse:
 @app.get("/api/historical/{symbol}")
 async def historical(symbol: str, years: int = HISTORICAL_DEFAULT_YEARS, refresh: bool = False) -> JSONResponse:
     payload = await hub.historical_payload(symbol=symbol, years=years, refresh=refresh)
+    return ok_json_response(**payload)
+
+
+@app.get("/api/security-overview/{symbol}")
+async def security_overview(
+    symbol: str,
+    refresh: bool = False,
+    include_intraday: bool = True,
+    include_market: bool = True,
+    include_qqq: bool = True,
+) -> JSONResponse:
+    payload = await hub.security_overview_payload(
+        symbol=symbol,
+        refresh=refresh,
+        include_intraday=include_intraday,
+        include_market=include_market,
+        include_qqq=include_qqq,
+    )
+    return ok_json_response(**payload)
+
+
+@app.get("/api/security-overview/{symbol}/intraday")
+async def security_overview_intraday(symbol: str, refresh: bool = False) -> JSONResponse:
+    payload = await hub.security_overview_payload(
+        symbol=symbol,
+        refresh=refresh,
+        include_intraday=True,
+        include_market=False,
+        include_qqq=False,
+    )
+    return ok_json_response(
+        symbol=payload.get("symbol"),
+        technical={
+            "vwap_1m": payload.get("technical", {}).get("vwap_1m") if isinstance(payload.get("technical"), dict) else None,
+            "vwap_5m": payload.get("technical", {}).get("vwap_5m") if isinstance(payload.get("technical"), dict) else None,
+        },
+        charts={
+            "1min": payload.get("charts", {}).get("1min") if isinstance(payload.get("charts"), dict) else [],
+            "5min": payload.get("charts", {}).get("5min") if isinstance(payload.get("charts"), dict) else [],
+        },
+        source=payload.get("source"),
+    )
+
+
+@app.post("/api/security-overview/{symbol}/clear-cache")
+async def clear_security_overview_cache(symbol: str) -> JSONResponse:
+    payload = await hub.clear_symbol_overview_cache(symbol=symbol)
     return ok_json_response(**payload)
 
 
