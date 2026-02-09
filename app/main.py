@@ -68,6 +68,12 @@ SYMBOL_CATALOG_CACHE_PATH = Path(__file__).resolve().parent / "cache" / "us_stoc
 LAST_PRICE_CACHE_PATH = Path(__file__).resolve().parent / "cache" / "last_prices.json"
 HISTORICAL_DEFAULT_YEARS = _int_env("HISTORICAL_DEFAULT_YEARS", default=5, minimum=1)
 HISTORICAL_MAX_YEARS = _int_env("HISTORICAL_MAX_YEARS", default=10, minimum=1)
+ML_HISTORY_DEFAULT_MONTHS = 60
+ML_HISTORY_MIN_MONTHS = 3
+ML_HISTORY_MAX_MONTHS = 60
+ML_EVAL_MONTHS = 2
+ML_SPLIT_EVAL_DAYS = ML_EVAL_MONTHS * 31
+ML_SPLIT_TRAIN_VAL_RATIO = 0.8
 HISTORICAL_CACHE_TTL_SEC = _int_env("HISTORICAL_CACHE_TTL_SEC", default=43200, minimum=60)
 HISTORICAL_INTERVAL = os.getenv("HISTORICAL_INTERVAL", "1day").strip() or "1day"
 HISTORICAL_MAX_POINTS = _int_env("HISTORICAL_MAX_POINTS", default=2000, minimum=100)
@@ -240,7 +246,7 @@ class SymbolUpdateRequest(BaseModel):
 
 class QuantileLstmJobRequest(BaseModel):
     symbol: str
-    years: int = HISTORICAL_DEFAULT_YEARS
+    months: int = ML_HISTORY_DEFAULT_MONTHS
     sequence_length: int = 60
     hidden_size: int = 64
     num_layers: int = 2
@@ -257,7 +263,7 @@ class QuantileLstmJobRequest(BaseModel):
 class MlComparisonJobRequest(BaseModel):
     symbols: str = "AAPL,MSFT,GOOG,JPM,XOM,UNH,WMT,META,LLY,BRK.B,NVDA,HD"
     models: str = "quantile_lstm,patchtst_quantile"
-    years: int = HISTORICAL_DEFAULT_YEARS
+    months: int = ML_HISTORY_DEFAULT_MONTHS
     sequence_length: int = 60
     hidden_size: int = 64
     num_layers: int = 2
@@ -268,11 +274,20 @@ class MlComparisonJobRequest(BaseModel):
     patience: int = 10
     seed: int = 42
     refresh: bool = False
-    eval_months: int = 2
 
 
 class MlJobCancelledError(Exception):
     pass
+
+
+def _normalize_ml_history_months(months: int) -> int:
+    value = int(months)
+    if value < ML_HISTORY_MIN_MONTHS or value > ML_HISTORY_MAX_MONTHS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"months は {ML_HISTORY_MIN_MONTHS}〜{ML_HISTORY_MAX_MONTHS} の範囲で指定してください。",
+        )
+    return value
 
 
 class LastPriceStore:
@@ -880,13 +895,20 @@ class MarketDataHub:
             await self._update_daily_credits_from_api_usage(payload)
             return await self.status_payload()
 
-    async def historical_payload(self, symbol: str, years: int, refresh: bool = False) -> dict[str, Any]:
+    async def historical_payload(
+        self,
+        symbol: str,
+        years: int = HISTORICAL_DEFAULT_YEARS,
+        months: int | None = None,
+        refresh: bool = False,
+    ) -> dict[str, Any]:
         normalized = symbol.upper().strip()
         if not SYMBOL_PATTERN.match(normalized):
             raise HTTPException(status_code=400, detail="Invalid symbol format.")
         years = max(1, min(years, HISTORICAL_MAX_YEARS))
+        months = None if months is None else max(1, min(int(months), ML_HISTORY_MAX_MONTHS))
 
-        cache_key = (normalized, years)
+        cache_key = (normalized, f"years:{years}") if months is None else (normalized, f"months:{months}")
         async with self._historical_lock:
             cached = self._historical_cache.get(cache_key)
             if cached and not refresh and self._is_cache_fresh(cached.get("cached_epoch"), HISTORICAL_CACHE_TTL_SEC):
@@ -895,7 +917,10 @@ class MarketDataHub:
                 return payload
 
         end_date = date.today()
-        start_date = end_date - timedelta(days=(365 * years) + (years // 4))
+        if months is None:
+            start_date = end_date - timedelta(days=(365 * years) + (years // 4))
+        else:
+            start_date = end_date - timedelta(days=(31 * months) + 7)
 
         timeout = httpx.Timeout(40.0, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -973,6 +998,7 @@ class MarketDataHub:
         historical_payload = {
             "symbol": normalized,
             "years": years,
+            "months": months,
             "interval": HISTORICAL_INTERVAL,
             "from": points[0]["t"],
             "to": points[-1]["t"],
@@ -1404,7 +1430,7 @@ ml_job_store = MlJobStore(max_jobs=120)
 async def _run_quantile_lstm_pipeline(
     *,
     symbol: str,
-    years: int = HISTORICAL_DEFAULT_YEARS,
+    months: int = ML_HISTORY_DEFAULT_MONTHS,
     sequence_length: int = 60,
     hidden_size: int = 64,
     num_layers: int = 2,
@@ -1418,7 +1444,7 @@ async def _run_quantile_lstm_pipeline(
     refresh: bool = False,
     split_eval_days: int | None = None,
     split_train_val_ratio: float | None = None,
-    progress_callback: Callable[[int, str], None] | None = None,
+    progress_callback: Callable[[float, str], None] | None = None,
     cancel_check: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     if cancel_check is not None:
@@ -1427,8 +1453,8 @@ async def _run_quantile_lstm_pipeline(
     if progress_callback is not None:
         progress_callback(2, "ヒストリカルデータを取得しています。")
 
-    effective_years = max(5, years)
-    historical_data = await hub.historical_payload(symbol=symbol, years=effective_years, refresh=refresh)
+    effective_months = _normalize_ml_history_months(months)
+    historical_data = await hub.historical_payload(symbol=symbol, months=effective_months, refresh=refresh)
     points = historical_data.get("points")
     if not isinstance(points, list):
         raise HTTPException(status_code=502, detail="Unexpected historical payload format.")
@@ -1445,10 +1471,12 @@ async def _run_quantile_lstm_pipeline(
         "representative_days": representative_days,
         "seed": seed,
     }
-    if split_eval_days is not None and split_eval_days > 0:
-        config_payload["split_eval_days"] = int(split_eval_days)
-    if split_train_val_ratio is not None:
-        config_payload["split_train_val_ratio"] = float(split_train_val_ratio)
+    effective_split_eval_days = int(split_eval_days) if split_eval_days is not None else ML_SPLIT_EVAL_DAYS
+    effective_split_train_val_ratio = (
+        float(split_train_val_ratio) if split_train_val_ratio is not None else ML_SPLIT_TRAIN_VAL_RATIO
+    )
+    config_payload["split_eval_days"] = max(1, effective_split_eval_days)
+    config_payload["split_train_val_ratio"] = max(0.5, min(0.95, effective_split_train_val_ratio))
 
     if progress_callback is not None:
         progress_callback(5, "モデル学習を開始します。")
@@ -1474,7 +1502,7 @@ async def _run_quantile_lstm_pipeline(
 
     return {
         "symbol": historical_data.get("symbol"),
-        "years": effective_years,
+        "months": effective_months,
         "historical_source": historical_data.get("source"),
         **model_payload,
     }
@@ -1483,7 +1511,7 @@ async def _run_quantile_lstm_pipeline(
 async def _run_patchtst_pipeline(
     *,
     symbol: str,
-    years: int = HISTORICAL_DEFAULT_YEARS,
+    months: int = ML_HISTORY_DEFAULT_MONTHS,
     sequence_length: int = 256,
     hidden_size: int = 128,
     num_layers: int = 3,
@@ -1497,7 +1525,7 @@ async def _run_patchtst_pipeline(
     refresh: bool = False,
     split_eval_days: int | None = None,
     split_train_val_ratio: float | None = None,
-    progress_callback: Callable[[int, str], None] | None = None,
+    progress_callback: Callable[[float, str], None] | None = None,
     cancel_check: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     if cancel_check is not None:
@@ -1506,8 +1534,8 @@ async def _run_patchtst_pipeline(
     if progress_callback is not None:
         progress_callback(2, "ヒストリカルデータを取得しています。")
 
-    effective_years = max(5, years)
-    historical_data = await hub.historical_payload(symbol=symbol, years=effective_years, refresh=refresh)
+    effective_months = _normalize_ml_history_months(months)
+    historical_data = await hub.historical_payload(symbol=symbol, months=effective_months, refresh=refresh)
     points = historical_data.get("points")
     if not isinstance(points, list):
         raise HTTPException(status_code=502, detail="Unexpected historical payload format.")
@@ -1524,10 +1552,12 @@ async def _run_patchtst_pipeline(
         "representative_days": representative_days,
         "seed": seed,
     }
-    if split_eval_days is not None and split_eval_days > 0:
-        config_payload["split_eval_days"] = int(split_eval_days)
-    if split_train_val_ratio is not None:
-        config_payload["split_train_val_ratio"] = float(split_train_val_ratio)
+    effective_split_eval_days = int(split_eval_days) if split_eval_days is not None else ML_SPLIT_EVAL_DAYS
+    effective_split_train_val_ratio = (
+        float(split_train_val_ratio) if split_train_val_ratio is not None else ML_SPLIT_TRAIN_VAL_RATIO
+    )
+    config_payload["split_eval_days"] = max(1, effective_split_eval_days)
+    config_payload["split_train_val_ratio"] = max(0.5, min(0.95, effective_split_train_val_ratio))
 
     if progress_callback is not None:
         progress_callback(5, "PatchTST学習を開始します。")
@@ -1553,14 +1583,14 @@ async def _run_patchtst_pipeline(
 
     return {
         "symbol": historical_data.get("symbol"),
-        "years": effective_years,
+        "months": effective_months,
         "historical_source": historical_data.get("source"),
         **model_payload,
     }
 
 
 def _progress_callback_for_job(job_id: str):
-    def _cb(progress: int, message: str) -> None:
+    def _cb(progress: float, message: str) -> None:
         if ml_job_store.is_cancel_requested(job_id):
             raise MlJobCancelledError("ML job cancelled.")
         current = ml_job_store.get(job_id)
@@ -1573,7 +1603,7 @@ def _progress_callback_for_job(job_id: str):
         ml_job_store.update(
             job_id,
             status=next_status,
-            progress=max(0, min(100, int(progress))),
+            progress=max(0.0, min(100.0, float(progress))),
             message=message,
         )
 
@@ -1694,9 +1724,8 @@ async def _run_ml_comparison_job(job_id: str, req: MlComparisonJobRequest) -> No
         if not selected_models:
             raise HTTPException(status_code=400, detail="比較対象モデルが空です。")
 
-        eval_months = max(1, min(6, int(req.eval_months)))
-        split_eval_days = eval_months * 31
-        split_train_val_ratio = 0.8
+        split_eval_days = ML_SPLIT_EVAL_DAYS
+        split_train_val_ratio = ML_SPLIT_TRAIN_VAL_RATIO
 
         ml_job_store.update(job_id, status="running", progress=1, message="比較ジョブを開始しました。")
         cancel_check = _cancel_check_for_job(job_id)
@@ -1710,14 +1739,14 @@ async def _run_ml_comparison_job(job_id: str, req: MlComparisonJobRequest) -> No
             progress_start = 5 + int((task_idx * 88) / max(1, task_count))
             progress_end = 5 + int(((task_idx + 1) * 88) / max(1, task_count))
 
-            def _task_progress(progress: int, message: str) -> None:
+            def _task_progress(progress: float, message: str) -> None:
                 cancel_check()
-                clamped = max(0, min(100, int(progress)))
-                mapped = progress_start + int(((progress_end - progress_start) * clamped) / 100)
+                clamped = max(0.0, min(100.0, float(progress)))
+                mapped = progress_start + (((progress_end - progress_start) * clamped) / 100.0)
                 ml_job_store.update(
                     job_id,
                     status="running",
-                    progress=max(1, min(99, mapped)),
+                    progress=max(1.0, min(99.0, mapped)),
                     message=f"[{task_idx + 1}/{task_count}] {symbol} | {model_id}: {message}",
                 )
 
@@ -1725,7 +1754,7 @@ async def _run_ml_comparison_job(job_id: str, req: MlComparisonJobRequest) -> No
                 if model_id == "quantile_lstm":
                     payload = await _run_quantile_lstm_pipeline(
                         symbol=symbol,
-                        years=req.years,
+                        months=req.months,
                         sequence_length=req.sequence_length,
                         hidden_size=req.hidden_size,
                         num_layers=req.num_layers,
@@ -1745,7 +1774,7 @@ async def _run_ml_comparison_job(job_id: str, req: MlComparisonJobRequest) -> No
                 elif model_id == "patchtst_quantile":
                     payload = await _run_patchtst_pipeline(
                         symbol=symbol,
-                        years=req.years,
+                        months=req.months,
                         sequence_length=req.sequence_length,
                         hidden_size=req.hidden_size,
                         num_layers=req.num_layers,
@@ -1824,7 +1853,7 @@ async def _run_ml_comparison_job(job_id: str, req: MlComparisonJobRequest) -> No
             "symbols": symbols,
             "models": selected_models,
             "config": {
-                "years": int(req.years),
+                "months": int(req.months),
                 "sequence_length": int(req.sequence_length),
                 "hidden_size": int(req.hidden_size),
                 "num_layers": int(req.num_layers),
@@ -1837,9 +1866,9 @@ async def _run_ml_comparison_job(job_id: str, req: MlComparisonJobRequest) -> No
                 "refresh": bool(req.refresh),
             },
             "evaluation_policy": {
-                "eval_months": eval_months,
-                "eval_days_approx": split_eval_days,
-                "test_window": "latest N months (relative to the latest available trading date)",
+                "eval_months": ML_EVAL_MONTHS,
+                "eval_days_approx": ML_SPLIT_EVAL_DAYS,
+                "test_window": "latest 2 months (relative to the latest available trading date)",
                 "train_val_split": "remaining history split by 4:1",
                 "train_ratio": split_train_val_ratio,
                 "val_ratio": 1.0 - split_train_val_ratio,
@@ -1866,7 +1895,7 @@ async def _run_quantile_lstm_job(job_id: str, req: QuantileLstmJobRequest) -> No
         ml_job_store.update(job_id, status="running", progress=1, message="ジョブを開始しました。")
         result = await _run_quantile_lstm_pipeline(
             symbol=req.symbol,
-            years=req.years,
+            months=req.months,
             sequence_length=req.sequence_length,
             hidden_size=req.hidden_size,
             num_layers=req.num_layers,
@@ -1898,7 +1927,7 @@ async def _run_patchtst_job(job_id: str, req: QuantileLstmJobRequest) -> None:
         ml_job_store.update(job_id, status="running", progress=1, message="ジョブを開始しました。")
         result = await _run_patchtst_pipeline(
             symbol=req.symbol,
-            years=req.years,
+            months=req.months,
             sequence_length=req.sequence_length,
             hidden_size=req.hidden_size,
             num_layers=req.num_layers,
@@ -2013,7 +2042,7 @@ async def ml_models() -> JSONResponse:
 @app.get("/api/ml/quantile-lstm")
 async def quantile_lstm_forecast(
     symbol: str,
-    years: int = HISTORICAL_DEFAULT_YEARS,
+    months: int = ML_HISTORY_DEFAULT_MONTHS,
     sequence_length: int = 60,
     hidden_size: int = 64,
     num_layers: int = 2,
@@ -2028,7 +2057,7 @@ async def quantile_lstm_forecast(
 ) -> JSONResponse:
     payload = await _run_quantile_lstm_pipeline(
         symbol=symbol,
-        years=years,
+        months=months,
         sequence_length=sequence_length,
         hidden_size=hidden_size,
         num_layers=num_layers,
@@ -2047,7 +2076,7 @@ async def quantile_lstm_forecast(
 @app.get("/api/ml/patchtst")
 async def patchtst_forecast(
     symbol: str,
-    years: int = HISTORICAL_DEFAULT_YEARS,
+    months: int = ML_HISTORY_DEFAULT_MONTHS,
     sequence_length: int = 256,
     hidden_size: int = 128,
     num_layers: int = 3,
@@ -2062,7 +2091,7 @@ async def patchtst_forecast(
 ) -> JSONResponse:
     payload = await _run_patchtst_pipeline(
         symbol=symbol,
-        years=years,
+        months=months,
         sequence_length=sequence_length,
         hidden_size=hidden_size,
         num_layers=num_layers,
@@ -2084,6 +2113,7 @@ async def start_quantile_lstm_job(req: QuantileLstmJobRequest) -> JSONResponse:
     if not symbol:
         raise HTTPException(status_code=400, detail="Symbolを入力してください。")
     req.symbol = symbol[0]
+    req.months = _normalize_ml_history_months(req.months)
 
     job_id = ml_job_store.create(kind="quantile_lstm", symbol=req.symbol)
     asyncio.create_task(_run_quantile_lstm_job(job_id, req))
@@ -2096,6 +2126,7 @@ async def start_patchtst_job(req: QuantileLstmJobRequest) -> JSONResponse:
     if not symbol:
         raise HTTPException(status_code=400, detail="Symbolを入力してください。")
     req.symbol = symbol[0]
+    req.months = _normalize_ml_history_months(req.months)
 
     job_id = ml_job_store.create(kind="patchtst_quantile", symbol=req.symbol)
     asyncio.create_task(_run_patchtst_job(job_id, req))
@@ -2110,6 +2141,7 @@ async def start_ml_compare_job(req: MlComparisonJobRequest) -> JSONResponse:
     if not symbols:
         raise HTTPException(status_code=400, detail="At least one valid symbol is required.")
     req.symbols = ",".join(symbols)
+    req.months = _normalize_ml_history_months(req.months)
 
     selected_models = _parse_compare_models(req.models)
     if not selected_models:

@@ -41,7 +41,7 @@
                 <span>Symbol</span>
                 <details class="param-help">
                   <summary>?</summary>
-                  <p>予測対象のティッカー。米国株シンボル（例: AAPL）。</p>
+                  <p>予測対象のティッカー。米国株シンボル（例: AAPL）。許容範囲: 1〜15文字。</p>
                 </details>
               </span>
               <div id="ml-symbol-search-area" class="symbol-search-area">
@@ -58,73 +58,83 @@
             </label>
             <label>
               <span class="ml-label-row">
-                <span>Years</span>
+                <span>History Months</span>
                 <details class="param-help">
                   <summary>?</summary>
-                  <p>学習に使うヒストリカル期間。現在の分割仕様では最低5年が必要。</p>
+                  <p>学習に使うヒストリカル期間（月）。直近2カ月は表示・評価用として学習から除外されます。許容範囲: 3〜60。</p>
                 </details>
               </span>
-              <input id="ml-years" type="number" value="5" min="5" max="10" />
+              <input id="ml-years" type="number" value="60" min="3" max="60" />
             </label>
             <label>
               <span class="ml-label-row">
                 <span>Sequence Length</span>
                 <details class="param-help">
                   <summary>?</summary>
-                  <p>1サンプルに使う過去営業日数（L）。例: 60なら過去60営業日から翌日を予測。</p>
+                  <p>1サンプルに使う過去営業日数（L）。例: 60なら過去60営業日から翌日を予測。推奨範囲: 20〜240。</p>
                 </details>
               </span>
-              <input id="ml-seq-len" type="number" value="60" min="20" max="240" />
+              <input id="ml-seq-len" type="number" value="60" min="20" max="1024" />
             </label>
             <label>
               <span class="ml-label-row">
                 <span>Hidden Size</span>
                 <details class="param-help">
                   <summary>?</summary>
-                  <p>LSTM隠れ状態の次元。大きいほど表現力は上がるが学習時間も増える。</p>
+                  <p>LSTM隠れ状態の次元。大きいほど表現力は上がるが学習時間も増える。推奨範囲: 16〜256。</p>
                 </details>
               </span>
-              <input id="ml-hidden-size" type="number" value="64" min="16" max="256" />
+              <input id="ml-hidden-size" type="number" value="64" min="16" max="2048" />
             </label>
             <label>
               <span class="ml-label-row">
                 <span>Layers</span>
                 <details class="param-help">
                   <summary>?</summary>
-                  <p>LSTMの層数。増やすと複雑な時系列を捉えやすいが過学習リスクも増える。</p>
+                  <p>LSTMの層数。増やすと複雑な時系列を捉えやすいが過学習リスクも増える。推奨範囲: 1〜4。</p>
                 </details>
               </span>
-              <input id="ml-num-layers" type="number" value="2" min="1" max="4" />
+              <input id="ml-num-layers" type="number" value="2" min="1" max="12" />
             </label>
             <label>
               <span class="ml-label-row">
                 <span>Dropout</span>
                 <details class="param-help">
                   <summary>?</summary>
-                  <p>過学習抑制のための無効化率。0.1〜0.3程度が一般的。</p>
+                  <p>過学習抑制のための無効化率。0.1〜0.3程度が一般的。推奨範囲: 0.00〜0.60（0.05刻み）。</p>
                 </details>
               </span>
               <input id="ml-dropout" type="number" value="0.2" min="0" max="0.6" step="0.05" />
             </label>
             <label>
               <span class="ml-label-row">
+                <span>Batch Size</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>1ステップで処理するサンプル数。大きいほど高速化しやすいがメモリ消費が増えます。推奨範囲: 8〜512。</p>
+                </details>
+              </span>
+              <input id="ml-batch-size" type="number" value="64" min="8" max="1024" />
+            </label>
+            <label>
+              <span class="ml-label-row">
                 <span>Epochs</span>
                 <details class="param-help">
                   <summary>?</summary>
-                  <p>学習データ全体を何回繰り返すかの上限。実際はEarlyStoppingで早く止まることがある。</p>
+                  <p>学習データ全体を何回繰り返すかの上限。実際はEarlyStoppingで早く止まることがある。推奨範囲: 10〜400。</p>
                 </details>
               </span>
-              <input id="ml-max-epochs" type="number" value="80" min="10" max="400" />
+              <input id="ml-max-epochs" type="number" value="80" min="10" max="2000" />
             </label>
             <label>
               <span class="ml-label-row">
                 <span>Patience</span>
                 <details class="param-help">
                   <summary>?</summary>
-                  <p>検証損失が改善しない状態を何epoch許容するか（EarlyStopping）。</p>
+                  <p>検証損失が改善しない状態を何epoch許容するか（EarlyStopping）。推奨範囲: 2〜80。</p>
                 </details>
               </span>
-              <input id="ml-patience" type="number" value="10" min="2" max="80" />
+              <input id="ml-patience" type="number" value="10" min="2" max="400" />
             </label>
           </div>
           <div class="row ml-form-actions">
@@ -144,16 +154,17 @@
           <summary>Parameter Guide（まとめ）</summary>
           <p>`Sequence Length`: 過去何日を見るか。長いほど長期文脈を拾う。</p>
           <p>`Hidden Size` / `Layers`: モデル容量。大きいと表現力は上がるが重くなる。</p>
-          <p>`Dropout`: 過学習対策。大きすぎると学習不足になりやすい。</p>
+          <p>`Dropout` / `Batch Size`: 過学習対策と学習安定性・速度の調整。</p>
           <p>`Epochs` / `Patience`: 学習回数上限と早期終了条件。計算時間とのトレードオフ。</p>
-          <p>`Years`: 学習データ期間。現仕様では5年以上を前提。</p>
+          <p>`History Months`: 学習データ期間（月）。直近2カ月を除いた残りを train/val=4:1 で分割。</p>
         </details>
+        <p id="ml-recommend-warning" class="hint"></p>
         <p id="ml-status" class="hint">設定後に実行してください。</p>
         <div id="ml-progress-wrap" class="ml-progress hidden" aria-live="polite">
           <div class="ml-progress-track">
             <div id="ml-progress-bar" class="ml-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
           </div>
-          <p id="ml-progress-text" class="hint">0%</p>
+          <p id="ml-progress-text" class="hint">0.0%</p>
         </div>
       </section>
 
@@ -161,7 +172,7 @@
         <h2>Distribution Metrics (Test)</h2>
         <div class="ml-metric-grid">
           <div class="risk-item">
-            <span class="label">Mean Pinball Loss (Test 10%)</span>
+            <span class="label">Mean Pinball Loss (Test: Latest 2 Months)</span>
             <span id="metric-pinball">-</span>
           </div>
           <div class="risk-item">
@@ -305,7 +316,7 @@
           <p>薄い帯: 90%予測区間（q05〜q95）。</p>
           <p>黄色の点: 実測値（翌営業日の実現値）。帯内に入るほど被覆が良い。</p>
         </details>
-        <p id="fan-meta" class="hint">test 10% 期間の q50（中央値）、50%帯、90%帯、実測値を表示します。</p>
+        <p id="fan-meta" class="hint">直近2カ月(test)の q50（中央値）、50%帯、90%帯、実測値を表示します。</p>
       </section>
     </main>
     <script src="/static/ml_lab.js"></script>

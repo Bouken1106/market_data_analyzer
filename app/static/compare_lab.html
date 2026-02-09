@@ -33,7 +33,7 @@
               <span>Symbols (comma separated)</span>
               <details class="param-help">
                 <summary>?</summary>
-                <p>比較対象ティッカー。カンマ区切りで複数指定（例: AAPL,MSFT,NVDA）。</p>
+                <p>比較対象ティッカー。カンマ区切りで複数指定（例: AAPL,MSFT,NVDA）。各シンボルは1〜15文字を想定。</p>
               </details>
             </span>
             <input id="cmp-symbols" type="text" value="AAPL,MSFT,GOOG,JPM,XOM,UNH,WMT,META,LLY,BRK.B,NVDA,HD" />
@@ -47,50 +47,50 @@
           <div class="ml-form-grid">
             <label>
               <span class="ml-label-row">
-                <span>Years</span>
+                <span>History Months</span>
                 <details class="param-help">
                   <summary>?</summary>
-                  <p>取得するヒストリカル期間（年）。この期間から train/val/test を切ります。</p>
+                  <p>取得するヒストリカル期間（月）。直近2カ月は表示・評価用として学習から除外します。許容範囲: 3〜60。</p>
                 </details>
               </span>
-              <input id="cmp-years" type="number" value="5" min="2" max="10" />
+              <input id="cmp-years" type="number" value="60" min="3" max="60" />
             </label>
             <label>
               <span class="ml-label-row">
                 <span>Sequence Length</span>
                 <details class="param-help">
                   <summary>?</summary>
-                  <p>1サンプルに使う過去営業日数。全銘柄・全モデルで同じ値を使用します。</p>
+                  <p>1サンプルに使う過去営業日数。全銘柄・全モデルで同じ値を使用します。推奨範囲: 20〜512。</p>
                 </details>
               </span>
-              <input id="cmp-seq-len" type="number" value="60" min="20" max="512" />
+              <input id="cmp-seq-len" type="number" value="60" min="20" max="1024" />
             </label>
             <label>
               <span class="ml-label-row">
                 <span>Hidden Size</span>
                 <details class="param-help">
                   <summary>?</summary>
-                  <p>モデル内部の隠れ次元。大きいほど表現力は上がるが計算コストも増えます。</p>
+                  <p>モデル内部の隠れ次元。大きいほど表現力は上がるが計算コストも増えます。推奨範囲: 16〜256。</p>
                 </details>
               </span>
-              <input id="cmp-hidden" type="number" value="64" min="16" max="256" />
+              <input id="cmp-hidden" type="number" value="64" min="16" max="2048" />
             </label>
             <label>
               <span class="ml-label-row">
                 <span>Layers</span>
                 <details class="param-help">
                   <summary>?</summary>
-                  <p>ネットワーク層数。増やすと複雑なパターンを捉えやすい反面、過学習しやすくなります。</p>
+                  <p>ネットワーク層数。増やすと複雑なパターンを捉えやすい反面、過学習しやすくなります。推奨範囲: 1〜6。</p>
                 </details>
               </span>
-              <input id="cmp-layers" type="number" value="2" min="1" max="6" />
+              <input id="cmp-layers" type="number" value="2" min="1" max="12" />
             </label>
             <label>
               <span class="ml-label-row">
                 <span>Dropout</span>
                 <details class="param-help">
                   <summary>?</summary>
-                  <p>過学習抑制率。一般には 0.1〜0.3 を起点に調整します。</p>
+                  <p>過学習抑制率。一般には 0.1〜0.3 を起点に調整します。推奨範囲: 0.00〜0.60（0.05刻み）。</p>
                 </details>
               </span>
               <input id="cmp-dropout" type="number" value="0.2" min="0" max="0.6" step="0.05" />
@@ -100,7 +100,7 @@
                 <span>Learning Rate</span>
                 <details class="param-help">
                   <summary>?</summary>
-                  <p>学習率。大きすぎると不安定、小さすぎると収束が遅くなります。</p>
+                  <p>学習率。大きすぎると不安定、小さすぎると収束が遅くなります。推奨範囲: 0.00001〜0.1（0.00001刻み）。</p>
                 </details>
               </span>
               <input id="cmp-lr" type="number" value="0.001" min="0.00001" max="0.1" step="0.00001" />
@@ -110,50 +110,40 @@
                 <span>Batch Size</span>
                 <details class="param-help">
                   <summary>?</summary>
-                  <p>1ステップで処理するサンプル数。大きいほど高速化しやすいがメモリ消費が増えます。</p>
+                  <p>1ステップで処理するサンプル数。大きいほど高速化しやすいがメモリ消費が増えます。推奨範囲: 4〜512。</p>
                 </details>
               </span>
-              <input id="cmp-batch" type="number" value="64" min="4" max="512" />
+              <input id="cmp-batch" type="number" value="64" min="4" max="1024" />
             </label>
             <label>
               <span class="ml-label-row">
                 <span>Max Epochs</span>
                 <details class="param-help">
                   <summary>?</summary>
-                  <p>学習の最大反復回数。実際は Early Stopping で早く終了する場合があります。</p>
+                  <p>学習の最大反復回数。実際は Early Stopping で早く終了する場合があります。推奨範囲: 5〜400。</p>
                 </details>
               </span>
-              <input id="cmp-epochs" type="number" value="80" min="5" max="400" />
+              <input id="cmp-epochs" type="number" value="80" min="5" max="2000" />
             </label>
             <label>
               <span class="ml-label-row">
                 <span>Patience</span>
                 <details class="param-help">
                   <summary>?</summary>
-                  <p>検証損失の改善が止まってから待つエポック数（Early Stopping用）。</p>
+                  <p>検証損失の改善が止まってから待つエポック数（Early Stopping用）。推奨範囲: 2〜80。</p>
                 </details>
               </span>
-              <input id="cmp-patience" type="number" value="10" min="2" max="80" />
+              <input id="cmp-patience" type="number" value="10" min="2" max="400" />
             </label>
             <label>
               <span class="ml-label-row">
                 <span>Seed</span>
                 <details class="param-help">
                   <summary>?</summary>
-                  <p>乱数シード。再現実験時は固定し、比較の公平性を保ちます。</p>
+                  <p>乱数シード。再現実験時は固定し、比較の公平性を保ちます。推奨範囲: 1〜100000。</p>
                 </details>
               </span>
               <input id="cmp-seed" type="number" value="42" min="1" max="100000" />
-            </label>
-            <label>
-              <span class="ml-label-row">
-                <span>Evaluation Months</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>比較対象に使うテスト期間（月）。指定月数の直近データを test として評価します。</p>
-                </details>
-              </span>
-              <input id="cmp-eval-months" type="number" value="2" min="1" max="6" />
             </label>
           </div>
 
@@ -165,12 +155,13 @@
             </label>
           </div>
         </form>
+        <p id="cmp-recommend-warning" class="hint"></p>
         <p id="cmp-status" class="hint">条件を設定して比較を実行してください。</p>
         <div id="cmp-progress-wrap" class="ml-progress hidden" aria-live="polite">
           <div class="ml-progress-track">
             <div id="cmp-progress-bar" class="ml-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
           </div>
-          <p id="cmp-progress-text" class="hint">0%</p>
+          <p id="cmp-progress-text" class="hint">0.0%</p>
         </div>
       </section>
 

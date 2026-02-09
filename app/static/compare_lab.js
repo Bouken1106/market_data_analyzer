@@ -1,5 +1,6 @@
 const formEl = document.getElementById("compare-form");
 const statusEl = document.getElementById("cmp-status");
+const recommendWarningEl = document.getElementById("cmp-recommend-warning");
 const runBtn = document.getElementById("cmp-run");
 const cancelBtn = document.getElementById("cmp-cancel");
 const progressWrapEl = document.getElementById("cmp-progress-wrap");
@@ -22,7 +23,6 @@ const epochsEl = document.getElementById("cmp-epochs");
 const patienceEl = document.getElementById("cmp-patience");
 const seedEl = document.getElementById("cmp-seed");
 const refreshEl = document.getElementById("cmp-refresh");
-const evalMonthsEl = document.getElementById("cmp-eval-months");
 
 let currentJobId = "";
 let pollingTimer = null;
@@ -42,19 +42,53 @@ function setStatus(message, isError = false) {
   statusEl.classList.toggle("error", Boolean(isError));
 }
 
+function setRecommendWarning(messages) {
+  if (!recommendWarningEl) return;
+  const list = Array.isArray(messages) ? messages : [];
+  if (list.length === 0) {
+    recommendWarningEl.textContent = "";
+    recommendWarningEl.classList.remove("error");
+    return;
+  }
+  recommendWarningEl.classList.add("error");
+  recommendWarningEl.textContent =
+    `Warning: 推奨範囲外の設定があります（学習は継続可能）: ${list.join(" / ")}。比較完了まで時間がかかる可能性があります。`;
+}
+
+function collectRecommendWarnings(payload) {
+  const warnings = [];
+  const addRangeWarn = (label, value, min, max) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return;
+    if (num < min || num > max) {
+      warnings.push(`${label}=${num} (推奨 ${min}〜${max})`);
+    }
+  };
+  addRangeWarn("Sequence Length", payload.sequence_length, 20, 512);
+  addRangeWarn("Hidden Size", payload.hidden_size, 16, 256);
+  addRangeWarn("Layers", payload.num_layers, 1, 6);
+  addRangeWarn("Dropout", payload.dropout, 0.0, 0.6);
+  addRangeWarn("Learning Rate", payload.learning_rate, 0.00001, 0.1);
+  addRangeWarn("Batch Size", payload.batch_size, 4, 512);
+  addRangeWarn("Max Epochs", payload.max_epochs, 5, 400);
+  addRangeWarn("Patience", payload.patience, 2, 80);
+  return warnings;
+}
+
 function setProgress(value, message = "") {
   const safe = Math.max(0, Math.min(100, Number(value) || 0));
+  const shown = safe.toFixed(1);
   progressWrapEl.classList.remove("hidden");
   progressBarEl.style.width = `${safe}%`;
-  progressBarEl.setAttribute("aria-valuenow", String(Math.round(safe)));
-  progressTextEl.textContent = message ? `${Math.round(safe)}% | ${message}` : `${Math.round(safe)}%`;
+  progressBarEl.setAttribute("aria-valuenow", shown);
+  progressTextEl.textContent = message ? `${shown}% | ${message}` : `${shown}%`;
 }
 
 function resetProgress() {
   progressWrapEl.classList.add("hidden");
   progressBarEl.style.width = "0%";
   progressBarEl.setAttribute("aria-valuenow", "0");
-  progressTextEl.textContent = "0%";
+  progressTextEl.textContent = "0.0%";
 }
 
 function syncButtons() {
@@ -149,7 +183,7 @@ function requestPayload() {
   return {
     symbols: String(symbolsEl.value || "").trim(),
     models: collectModels().join(","),
-    years: Number(yearsEl.value || 5),
+    months: Number(yearsEl.value || 60),
     sequence_length: Number(seqLenEl.value || 60),
     hidden_size: Number(hiddenEl.value || 64),
     num_layers: Number(layersEl.value || 2),
@@ -160,7 +194,6 @@ function requestPayload() {
     patience: Number(patienceEl.value || 10),
     seed: Number(seedEl.value || 42),
     refresh: Boolean(refreshEl.checked),
-    eval_months: Number(evalMonthsEl.value || 2),
   };
 }
 
@@ -235,12 +268,18 @@ async function startComparison() {
   }
 
   const payload = requestPayload();
+  const recommendationWarnings = collectRecommendWarnings(payload);
+  setRecommendWarning(recommendationWarnings);
   running = true;
   cancelling = false;
   currentJobId = "";
   syncButtons();
   setProgress(0, "ジョブを開始しています。");
-  setStatus("比較ジョブを開始しています...");
+  setStatus(
+    recommendationWarnings.length > 0
+      ? "比較ジョブを開始しています...（推奨範囲外の設定あり）"
+      : "比較ジョブを開始しています..."
+  );
 
   const { response, result } = await fetchJson("/api/ml/compare/jobs", {
     method: "POST",
@@ -292,6 +331,14 @@ formEl.addEventListener("submit", async (event) => {
   await startComparison();
 });
 
+if (formEl) {
+  const updateRecommendationWarning = () => {
+    setRecommendWarning(collectRecommendWarnings(requestPayload()));
+  };
+  formEl.addEventListener("input", updateRecommendationWarning);
+  formEl.addEventListener("change", updateRecommendationWarning);
+}
+
 cancelBtn.addEventListener("click", async () => {
   await cancelComparison();
 });
@@ -314,3 +361,4 @@ resetProgress();
 renderSummary([]);
 renderDetails([]);
 syncButtons();
+setRecommendWarning([]);

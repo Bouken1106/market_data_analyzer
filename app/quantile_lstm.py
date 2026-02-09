@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import random
+import time
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any, Callable
@@ -35,14 +36,14 @@ FEATURE_NAMES = [
     "range_ratio",
     "volume_z_20",
 ]
-ProgressCallback = Callable[[int, str], None]
+ProgressCallback = Callable[[float, str], None]
 CancelCheck = Callable[[], None]
 
 
-def _emit_progress(progress_callback: ProgressCallback | None, progress: int, message: str) -> None:
+def _emit_progress(progress_callback: ProgressCallback | None, progress: float, message: str) -> None:
     if progress_callback is None:
         return
-    safe_progress = max(0, min(100, int(progress)))
+    safe_progress = max(0.0, min(100.0, float(progress)))
     progress_callback(safe_progress, str(message))
 
 
@@ -87,14 +88,14 @@ class QuantileLstmConfig:
             return max(minimum, min(maximum, parsed))
 
         return cls(
-            sequence_length=int_value("sequence_length", default=60, minimum=20, maximum=240),
-            hidden_size=int_value("hidden_size", default=64, minimum=16, maximum=256),
-            num_layers=int_value("num_layers", default=2, minimum=1, maximum=4),
+            sequence_length=int_value("sequence_length", default=60, minimum=20, maximum=1024),
+            hidden_size=int_value("hidden_size", default=64, minimum=16, maximum=2048),
+            num_layers=int_value("num_layers", default=2, minimum=1, maximum=12),
             dropout=float_value("dropout", default=0.2, minimum=0.0, maximum=0.6),
             learning_rate=float_value("learning_rate", default=1e-3, minimum=1e-5, maximum=1e-1),
-            batch_size=int_value("batch_size", default=64, minimum=8, maximum=512),
-            max_epochs=int_value("max_epochs", default=80, minimum=10, maximum=400),
-            patience=int_value("patience", default=10, minimum=2, maximum=80),
+            batch_size=int_value("batch_size", default=64, minimum=8, maximum=2048),
+            max_epochs=int_value("max_epochs", default=80, minimum=10, maximum=2000),
+            patience=int_value("patience", default=10, minimum=2, maximum=400),
             min_delta=float_value("min_delta", default=1e-5, minimum=0.0, maximum=1e-2),
             representative_days=int_value("representative_days", default=5, minimum=1, maximum=12),
             seed=int_value("seed", default=42, minimum=1, maximum=100000),
@@ -158,9 +159,9 @@ def run_quantile_lstm_forecast(
     _run_cancel_check(cancel_check)
     _emit_progress(progress_callback, 10, "特徴量を生成しています。")
     dates, features, closes = _build_feature_matrix(points)
-    if len(dates) < (config.sequence_length + 190):
+    if len(dates) < (config.sequence_length + 30):
         raise ValueError(
-            "ヒストリカルデータが不足しています。少なくとも約9か月以上の営業日データが必要です。"
+            "ヒストリカルデータが不足しています。sequence_length + 30 営業日以上が必要です。"
         )
 
     _run_cancel_check(cancel_check)
@@ -304,6 +305,7 @@ def run_quantile_lstm_forecast(
         },
         "metrics": {
             "mean_pinball_loss": mean_pinball,
+            "test_pinball_loss": mean_pinball,
             "test_10pct_pinball_loss": mean_pinball,
             "coverage_90": coverage_90,
             "coverage_50": coverage_50,
@@ -695,11 +697,15 @@ def _train_model(
     best_val_loss = float("inf")
     patience_counter = 0
     epochs_trained = 0
+    train_steps_per_epoch = max(1, len(train_loader))
+    total_train_steps = max(1, config.max_epochs * train_steps_per_epoch)
+    last_emit_at = 0.0
+    last_progress = 29.0
 
     for epoch in range(config.max_epochs):
         _run_cancel_check(cancel_check)
         model.train()
-        for batch_x, batch_y in train_loader:
+        for step, (batch_x, batch_y) in enumerate(train_loader, start=1):
             _run_cancel_check(cancel_check)
             batch_x = batch_x.to(device)
             batch_y = batch_y.to(device)
@@ -710,10 +716,28 @@ def _train_model(
             loss.backward()
             optimizer.step()
 
+            completed_steps = (epoch * train_steps_per_epoch) + min(step, train_steps_per_epoch)
+            train_progress = 30.0 + (completed_steps / total_train_steps) * 55.0
+            train_progress = max(30.0, min(85.0, train_progress))
+            now = time.monotonic()
+            if (
+                (train_progress > (last_progress + 0.05))
+                or ((now - last_emit_at) >= 0.8)
+                or (step == train_steps_per_epoch)
+            ):
+                _emit_progress(
+                    progress_callback,
+                    train_progress,
+                    f"LSTM学習中: epoch {epoch + 1}/{config.max_epochs} (batch {step}/{train_steps_per_epoch})",
+                )
+                last_progress = max(last_progress, train_progress)
+                last_emit_at = now
+
         _run_cancel_check(cancel_check)
         val_loss = _evaluate(model=model, loader=val_loader, quantiles=quantiles, device=device)
         epochs_trained = epoch + 1
-        training_progress = 30 + int((epochs_trained / max(1, config.max_epochs)) * 55)
+        training_progress = 30.0 + (epochs_trained / max(1, config.max_epochs)) * 55.0
+        training_progress = max(last_progress, min(85.0, training_progress))
         _emit_progress(
             progress_callback,
             training_progress,

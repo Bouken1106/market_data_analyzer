@@ -101,7 +101,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
    - 予測に毎日従った場合の「過去60営業日」実績バックテスト（戦略 vs 固定株数ホールド）
    - 戦略は「1日1%超損失の確率が3%を超えない上限」の範囲で期待リターン最大の株式比率を採用
    - test の平均ピンボール損失 / 被覆率（q05-q95, q25-q75）
-   - 時系列分割は取得データを時系列順で train=75%, val=15%, test=10% に分割
+   - 時系列分割は「直近2カ月を test、残りを train/val=4:1」で分割
    - 現在 `Ready` は Quantile LSTM / PatchTST Quantile、他モデルは `Coming Soon` として UI 上で選択可能
 9. `/compare-lab` では、複数銘柄（例: AAPL, MSFT, GOOG, JPM, XOM, UNH, WMT, META, LLY, BRK.B, NVDA, HD）に同一ハイパーパラメータを適用してモデルを一括学習・比較
    - 比較期間（test）は「最新データから直近2カ月」
@@ -146,8 +146,8 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `GET /api/symbol-catalog?refresh=true`: シンボル一覧を強制再取得
 - `GET /api/historical/{symbol}?years=5`: 過去N年ヒストリカルデータ（デフォルト5年）
 - `GET /api/ml/models`: ML Forecast Lab のモデル一覧（Ready / Coming Soon）
-- `GET /api/ml/quantile-lstm?...`: Quantile LSTM を学習・推論し、分位点/評価/描画データを返却
-- `GET /api/ml/patchtst?...`: PatchTST Quantile を学習・推論し、分位点/評価/描画データを返却
+- `GET /api/ml/quantile-lstm?...`: Quantile LSTM を学習・推論し、分位点/評価/描画データを返却（`months=3..60`, デフォルト `60`）
+- `GET /api/ml/patchtst?...`: PatchTST Quantile を学習・推論し、分位点/評価/描画データを返却（`months=3..60`, デフォルト `60`）
 - `POST /api/ml/quantile-lstm/jobs`: Quantile LSTM 非同期ジョブを開始
 - `POST /api/ml/patchtst/jobs`: PatchTST 非同期ジョブを開始
 - `POST /api/ml/compare/jobs`: 複数銘柄 × 複数モデル比較ジョブを開始（直近2カ月評価、残り4:1分割）

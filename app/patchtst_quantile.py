@@ -20,7 +20,7 @@ DEFAULT_QUANTILES = np.concatenate(
         np.array([1.0 - TAIL_QUANTILE], dtype=np.float32),
     )
 )
-ProgressCallback = Callable[[int, str], None]
+ProgressCallback = Callable[[float, str], None]
 CancelCheck = Callable[[], None]
 
 
@@ -92,17 +92,17 @@ class PatchTSTRuntimeConfig:
                 parsed = default
             return max(minimum, min(maximum, parsed))
 
-        input_length = int_value("sequence_length", default=256, minimum=32, maximum=512)
-        d_model = int_value("hidden_size", default=128, minimum=32, maximum=256)
+        input_length = int_value("sequence_length", default=256, minimum=32, maximum=1024)
+        d_model = int_value("hidden_size", default=128, minimum=32, maximum=2048)
         n_heads = 4 if d_model >= 128 else 2
         if d_model % n_heads != 0:
             n_heads = 2
-        n_layers = int_value("num_layers", default=3, minimum=1, maximum=6)
+        n_layers = int_value("num_layers", default=3, minimum=1, maximum=12)
         dropout = float_value("dropout", default=0.1, minimum=0.0, maximum=0.6)
         learning_rate = float_value("learning_rate", default=1e-3, minimum=1e-5, maximum=1e-1)
-        batch_size = int_value("batch_size", default=32, minimum=4, maximum=256)
-        max_epochs = int_value("max_epochs", default=40, minimum=5, maximum=300)
-        patience = int_value("patience", default=8, minimum=2, maximum=80)
+        batch_size = int_value("batch_size", default=32, minimum=4, maximum=1024)
+        max_epochs = int_value("max_epochs", default=40, minimum=5, maximum=2000)
+        patience = int_value("patience", default=8, minimum=2, maximum=400)
         seed = int_value("seed", default=42, minimum=1, maximum=100000)
         representative_days = int_value("representative_days", default=5, minimum=1, maximum=12)
 
@@ -167,10 +167,10 @@ class PatchTSTArtifact:
     device: torch.device
 
 
-def _emit_progress(progress_callback: ProgressCallback | None, progress: int, message: str) -> None:
+def _emit_progress(progress_callback: ProgressCallback | None, progress: float, message: str) -> None:
     if progress_callback is None:
         return
-    progress_callback(max(0, min(100, int(progress))), str(message))
+    progress_callback(max(0.0, min(100.0, float(progress))), str(message))
 
 
 def _run_cancel_check(cancel_check: CancelCheck | None) -> None:
@@ -611,8 +611,8 @@ def _train_one_attempt(
             train_loss_sum += float(loss.detach().cpu()) * batch_size_now
             train_count += batch_size_now
             completed_steps = ((epoch - 1) * train_steps_per_epoch) + min(step, train_steps_per_epoch)
-            train_progress = 30 + int((completed_steps / total_train_steps) * 48)
-            train_progress = max(30, min(78, train_progress))
+            train_progress = 30.0 + ((completed_steps / total_train_steps) * 48.0)
+            train_progress = max(30.0, min(78.0, train_progress))
             now = time.monotonic()
             # Emit at most ~1Hz unless progress advanced, to keep updates smooth without excessive lock contention.
             if (train_progress > last_progress) or ((now - last_emit_at) >= 1.0) or (step == train_steps_per_epoch):
@@ -644,8 +644,8 @@ def _train_one_attempt(
         train_loss = train_loss_sum / max(1, train_count)
         val_loss = val_loss_sum / max(1, val_count)
         history.append({"epoch": float(epoch), "train_loss": train_loss, "val_loss": val_loss})
-        train_progress = 30 + int((epoch / max(1, config.max_epochs)) * 48)
-        train_progress = max(30, min(78, train_progress))
+        train_progress = 30.0 + ((epoch / max(1, config.max_epochs)) * 48.0)
+        train_progress = max(30.0, min(78.0, train_progress))
         if train_progress < last_progress:
             train_progress = last_progress
         _emit_progress(
@@ -1175,8 +1175,8 @@ def run_patchtst_forecast(
     _emit_progress(progress_callback, 5, "PatchTSTの学習準備を開始しました。")
     _run_cancel_check(cancel_check)
     df = _points_to_dataframe(points)
-    if len(df) < (config.input_length + 190):
-        raise ValueError("ヒストリカルデータが不足しています。少なくとも約9か月以上の営業日データが必要です。")
+    if len(df) < (config.input_length + 30):
+        raise ValueError("ヒストリカルデータが不足しています。sequence_length + 30 営業日以上が必要です。")
 
     _emit_progress(progress_callback, 10, "PatchTST用のデータを整形しています。")
     trained = train_patchtst_quantile(
@@ -1285,6 +1285,7 @@ def run_patchtst_forecast(
         },
         "metrics": {
             "mean_pinball_loss": float(trained["metrics"]["test_pinball_loss"]),
+            "test_pinball_loss": float(trained["metrics"]["test_pinball_loss"]),
             "test_10pct_pinball_loss": float(trained["metrics"]["test_pinball_loss"]),
             "coverage_90": coverage_90,
             "coverage_50": coverage_50,

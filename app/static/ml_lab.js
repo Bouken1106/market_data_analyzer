@@ -11,6 +11,7 @@ const mlModelDescriptionEl = document.getElementById("ml-model-description");
 const runBtn = document.getElementById("ml-run-btn");
 const cancelBtn = document.getElementById("ml-cancel-btn");
 const statusEl = document.getElementById("ml-status");
+const recommendWarningEl = document.getElementById("ml-recommend-warning");
 const progressWrapEl = document.getElementById("ml-progress-wrap");
 const progressBarEl = document.getElementById("ml-progress-bar");
 const progressTextEl = document.getElementById("ml-progress-text");
@@ -256,6 +257,39 @@ function setStatus(message, isError = false) {
   statusEl.classList.toggle("error", Boolean(isError));
 }
 
+function setRecommendWarning(messages) {
+  if (!recommendWarningEl) return;
+  const list = Array.isArray(messages) ? messages : [];
+  if (list.length === 0) {
+    recommendWarningEl.textContent = "";
+    recommendWarningEl.classList.remove("error");
+    return;
+  }
+  recommendWarningEl.classList.add("error");
+  recommendWarningEl.textContent =
+    `Warning: 推奨範囲外の設定があります（学習は継続可能）: ${list.join(" / ")}。学習時間が大幅に増える可能性があります。`;
+}
+
+function collectRecommendWarnings(payload) {
+  const warnings = [];
+  const addRangeWarn = (label, value, min, max) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return;
+    if (num < min || num > max) {
+      warnings.push(`${label}=${num} (推奨 ${min}〜${max})`);
+    }
+  };
+
+  addRangeWarn("Sequence Length", payload.sequence_length, 20, 240);
+  addRangeWarn("Hidden Size", payload.hidden_size, 16, 256);
+  addRangeWarn("Layers", payload.num_layers, 1, 4);
+  addRangeWarn("Dropout", payload.dropout, 0.0, 0.6);
+  addRangeWarn("Batch Size", payload.batch_size, 8, 512);
+  addRangeWarn("Max Epochs", payload.max_epochs, 10, 400);
+  addRangeWarn("Patience", payload.patience, 2, 80);
+  return warnings;
+}
+
 async function fetchJson(url, options) {
   const response = await fetch(url, options);
   const result = await response.json().catch(() => ({}));
@@ -298,7 +332,7 @@ function getOrCreateProgressElements() {
   text = document.createElement("p");
   text.id = "ml-progress-text";
   text.className = "hint";
-  text.textContent = "0%";
+  text.textContent = "0.0%";
 
   wrap.appendChild(track);
   wrap.appendChild(text);
@@ -311,10 +345,11 @@ function updateProgress(value, message = "") {
   if (!els) return;
   const { wrap, bar, text } = els;
   const safe = Math.max(0, Math.min(100, Number(value) || 0));
+  const shown = safe.toFixed(1);
   wrap.classList.remove("hidden");
   bar.style.width = `${safe}%`;
-  bar.setAttribute("aria-valuenow", String(Math.round(safe)));
-  text.textContent = message ? `${Math.round(safe)}% | ${message}` : `${Math.round(safe)}%`;
+  bar.setAttribute("aria-valuenow", shown);
+  text.textContent = message ? `${shown}% | ${message}` : `${shown}%`;
 }
 
 function hideProgress() {
@@ -324,7 +359,7 @@ function hideProgress() {
   wrap.classList.add("hidden");
   bar.style.width = "0%";
   bar.setAttribute("aria-valuenow", "0");
-  text.textContent = "0%";
+  text.textContent = "0.0%";
 }
 
 function getActiveModel() {
@@ -374,7 +409,7 @@ function resetMetricCards() {
   btCapitalBuyholdEl.textContent = "-";
   btWindowEl.textContent = "-";
   quantileLegendEl.textContent = "テスト期間の代表日を表示します。";
-  fanMetaEl.textContent = "test 10% 期間の q50（中央値）、50%帯、90%帯、実測値を表示します。";
+  fanMetaEl.textContent = "直近2カ月(test)の q50（中央値）、50%帯、90%帯、実測値を表示します。";
   nextDayMetaEl.textContent = "最新終値から翌営業日の上昇/下落確率を表示します。";
 }
 
@@ -1763,21 +1798,27 @@ async function runModelForecast() {
 
   const requestPayload = {
     symbol,
-    years: Number(document.getElementById("ml-years").value || "5"),
+    months: Number(document.getElementById("ml-years").value || "60"),
     sequence_length: Number(document.getElementById("ml-seq-len").value || "60"),
     hidden_size: Number(document.getElementById("ml-hidden-size").value || "64"),
     num_layers: Number(document.getElementById("ml-num-layers").value || "2"),
     dropout: Number(document.getElementById("ml-dropout").value || "0.2"),
+    batch_size: Number(document.getElementById("ml-batch-size").value || "64"),
     max_epochs: Number(document.getElementById("ml-max-epochs").value || "80"),
     patience: Number(document.getElementById("ml-patience").value || "10"),
     refresh: Boolean(document.getElementById("ml-refresh").checked),
   };
+  const recommendationWarnings = collectRecommendWarnings(requestPayload);
+  setRecommendWarning(recommendationWarnings);
 
   activeJobId = "";
   isCancelling = false;
   isRunning = true;
   syncRunButtonState();
-  setStatus(`${activeModel.name} の学習と推論を実行中です...`);
+  const runStatus = recommendationWarnings.length > 0
+    ? `${activeModel.name} の学習と推論を実行中です...（推奨範囲外の設定あり）`
+    : `${activeModel.name} の学習と推論を実行中です...`;
+  setStatus(runStatus);
   updateProgress(0, "ジョブを開始しています。");
 
   try {
@@ -1941,6 +1982,24 @@ mlForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   await runModelForecast();
 });
+
+if (mlForm) {
+  const updateRecommendationWarning = () => {
+    const requestPayload = {
+      months: Number(document.getElementById("ml-years").value || "60"),
+      sequence_length: Number(document.getElementById("ml-seq-len").value || "60"),
+      hidden_size: Number(document.getElementById("ml-hidden-size").value || "64"),
+      num_layers: Number(document.getElementById("ml-num-layers").value || "2"),
+      dropout: Number(document.getElementById("ml-dropout").value || "0.2"),
+      batch_size: Number(document.getElementById("ml-batch-size").value || "64"),
+      max_epochs: Number(document.getElementById("ml-max-epochs").value || "80"),
+      patience: Number(document.getElementById("ml-patience").value || "10"),
+    };
+    setRecommendWarning(collectRecommendWarnings(requestPayload));
+  };
+  mlForm.addEventListener("input", updateRecommendationWarning);
+  mlForm.addEventListener("change", updateRecommendationWarning);
+}
 
 if (cancelBtn) {
   cancelBtn.addEventListener("click", async () => {
@@ -2125,6 +2184,7 @@ window.addEventListener("resize", () => {
 resetMetricCards();
 drawModelPlaceholders();
 hideProgress();
+setRecommendWarning([]);
 applySymbolFromQuery();
 
 loadMlSymbolCatalog().catch(() => {
