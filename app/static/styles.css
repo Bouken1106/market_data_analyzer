@@ -112,6 +112,39 @@ body {
   color: #bfdaf7;
 }
 
+.live-monitor-chips {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.live-monitor-chips .pill {
+  border-width: 1px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.live-monitor-chips .chip-cyan {
+  border-color: rgba(70, 216, 255, 0.62);
+  background: linear-gradient(135deg, rgba(13, 46, 63, 0.9), rgba(10, 25, 38, 0.86));
+  color: #d7f7ff;
+  box-shadow: inset 0 0 0 1px rgba(133, 231, 255, 0.14), 0 0 14px rgba(70, 216, 255, 0.2);
+}
+
+.live-monitor-chips .chip-green {
+  border-color: rgba(55, 226, 186, 0.58);
+  background: linear-gradient(135deg, rgba(11, 47, 36, 0.9), rgba(8, 30, 23, 0.86));
+  color: #d7ffef;
+  box-shadow: inset 0 0 0 1px rgba(125, 248, 212, 0.14), 0 0 14px rgba(55, 226, 186, 0.18);
+}
+
+.live-monitor-chips .chip-amber {
+  border-color: rgba(247, 173, 82, 0.58);
+  background: linear-gradient(135deg, rgba(54, 35, 10, 0.9), rgba(36, 23, 8, 0.86));
+  color: #fff0d1;
+  box-shadow: inset 0 0 0 1px rgba(255, 215, 152, 0.14), 0 0 14px rgba(247, 173, 82, 0.18);
+}
+
 .overview-hero-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.8fr) minmax(280px, 1fr);
