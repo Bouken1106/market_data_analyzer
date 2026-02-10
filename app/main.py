@@ -87,6 +87,25 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Market Data Analyzer", lifespan=lifespan)
 
+
+@app.middleware("http")
+async def disable_monitor_asset_cache(request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    no_cache_paths = {
+        "/",
+        "/static/app.js",
+        "/static/page_menu.js",
+        "/static/app.monitor.20260211b.js",
+        "/static/page_menu.20260211b.js",
+        "/static/index.html",
+    }
+    if path in no_cache_paths:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
