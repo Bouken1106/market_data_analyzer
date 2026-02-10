@@ -1,0 +1,70 @@
+"""Pydantic request models, dataclasses, and custom exceptions."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from zoneinfo import ZoneInfo
+
+from pydantic import BaseModel
+
+from .config import ML_HISTORY_DEFAULT_MONTHS
+
+
+# ---------------------------------------------------------------------------
+# Dataclasses
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class MarketSession:
+    tz: ZoneInfo
+    open_minutes: int
+    close_minutes: int
+    weekdays: frozenset[int]
+
+
+# ---------------------------------------------------------------------------
+# Pydantic request models
+# ---------------------------------------------------------------------------
+
+class SymbolUpdateRequest(BaseModel):
+    symbols: str
+
+
+class QuantileLstmJobRequest(BaseModel):
+    symbol: str
+    months: int = ML_HISTORY_DEFAULT_MONTHS
+    sequence_length: int = 60
+    hidden_size: int = 64
+    num_layers: int = 2
+    dropout: float = 0.2
+    learning_rate: float = 1e-3
+    batch_size: int = 64
+    max_epochs: int = 80
+    patience: int = 10
+    representative_days: int = 5
+    seed: int = 42
+    refresh: bool = False
+
+
+class MlComparisonJobRequest(BaseModel):
+    symbols: str = "AAPL,MSFT,GOOG,JPM,XOM,UNH,WMT,META,LLY,BRK.B,NVDA,HD"
+    models: str = "quantile_lstm,patchtst_quantile"
+    months: int = ML_HISTORY_DEFAULT_MONTHS
+    sequence_length: int = 60
+    hidden_size: int = 64
+    num_layers: int = 2
+    dropout: float = 0.2
+    learning_rate: float = 1e-3
+    batch_size: int = 64
+    max_epochs: int = 80
+    patience: int = 10
+    seed: int = 42
+    refresh: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+class MlJobCancelledError(Exception):
+    pass
