@@ -645,6 +645,7 @@ select:focus-visible,
   background: rgba(16, 24, 37, 0.9);
   padding: 8px 10px;
   min-height: 66px;
+  min-width: 0;
   display: grid;
   align-content: center;
   gap: 3px;
@@ -652,13 +653,17 @@ select:focus-visible,
 
 .overview-help-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
 }
 
 .overview-help-row .label {
+  flex: 1 1 auto;
+  min-width: 0;
   margin-right: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .overview-metrics .status-row > div {
@@ -683,6 +688,12 @@ select:focus-visible,
 .overview-tech .status-row > div:focus-within,
 .overview-tech .status-row > div:has(details.param-help[open]) {
   z-index: 30;
+}
+
+.overview-tech .status-row > div > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .overview-metrics .status-row > div::before {
@@ -934,6 +945,7 @@ select:focus-visible,
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 auto;
   width: 18px;
   height: 18px;
   border-radius: 999px;

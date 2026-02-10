@@ -219,10 +219,35 @@ def normalize_symbols(raw: str | list[str]) -> list[str]:
 
 def to_iso8601(value: Any) -> str:
     if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(float(value), tz=timezone.utc).isoformat()
+        parsed = _datetime_from_unix(value)
+        if parsed is not None:
+            return parsed.isoformat()
     if isinstance(value, str) and value:
         return value
     return datetime.now(timezone.utc).isoformat()
+
+
+def _datetime_from_unix(value: Any) -> datetime | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric):
+        return None
+
+    # Support unix values in second/ms/us/ns order of magnitude.
+    abs_value = abs(numeric)
+    if abs_value >= 1e18:
+        numeric /= 1_000_000_000
+    elif abs_value >= 1e15:
+        numeric /= 1_000_000
+    elif abs_value >= 1e12:
+        numeric /= 1_000
+
+    try:
+        return datetime.fromtimestamp(numeric, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
 
 
 def fallback_interval_seconds(symbol_count: int) -> int:
@@ -1847,15 +1872,14 @@ class MarketDataHub:
         if raw is None:
             return None
         if isinstance(raw, (int, float)):
-            return datetime.fromtimestamp(float(raw), tz=timezone.utc).isoformat()
+            parsed = _datetime_from_unix(raw)
+            return parsed.isoformat() if parsed is not None else None
         text = str(raw).strip()
         if not text:
             return None
         if text.isdigit():
-            try:
-                return datetime.fromtimestamp(float(text), tz=timezone.utc).isoformat()
-            except (TypeError, ValueError):
-                return None
+            parsed = _datetime_from_unix(text)
+            return parsed.isoformat() if parsed is not None else None
         normalized = text.replace("Z", "+00:00")
         try:
             parsed = datetime.fromisoformat(normalized)
@@ -2334,86 +2358,57 @@ async def _run_quantile_lstm_pipeline(
     progress_callback: Callable[[float, str], None] | None = None,
     cancel_check: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
-    if cancel_check is not None:
-        cancel_check()
-
-    if progress_callback is not None:
-        progress_callback(2, "ヒストリカルデータを取得しています。")
-
-    effective_months = _normalize_ml_history_months(months)
-    historical_data = await hub.historical_payload(symbol=symbol, months=effective_months, refresh=refresh)
-    points = historical_data.get("points")
-    if not isinstance(points, list):
-        raise HTTPException(status_code=502, detail="Unexpected historical payload format.")
-
-    config_payload = {
-        "sequence_length": sequence_length,
-        "hidden_size": hidden_size,
-        "num_layers": num_layers,
-        "dropout": dropout,
-        "learning_rate": learning_rate,
-        "batch_size": batch_size,
-        "max_epochs": max_epochs,
-        "patience": patience,
-        "representative_days": representative_days,
-        "seed": seed,
-    }
-    effective_split_eval_days = int(split_eval_days) if split_eval_days is not None else ML_SPLIT_EVAL_DAYS
-    effective_split_train_val_ratio = (
-        float(split_train_val_ratio) if split_train_val_ratio is not None else ML_SPLIT_TRAIN_VAL_RATIO
+    return await _run_ml_pipeline(
+        symbol=symbol,
+        months=months,
+        sequence_length=sequence_length,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+        dropout=dropout,
+        learning_rate=learning_rate,
+        batch_size=batch_size,
+        max_epochs=max_epochs,
+        patience=patience,
+        representative_days=representative_days,
+        seed=seed,
+        refresh=refresh,
+        split_eval_days=split_eval_days,
+        split_train_val_ratio=split_train_val_ratio,
+        progress_callback=progress_callback,
+        cancel_check=cancel_check,
+        trainer=run_quantile_lstm_forecast,
+        training_start_message="モデル学習を開始します。",
+        error_log_message="Quantile LSTM training failed for %s",
+        error_detail="Quantile LSTM training failed.",
     )
-    config_payload["split_eval_days"] = max(1, effective_split_eval_days)
-    config_payload["split_train_val_ratio"] = max(0.5, min(0.95, effective_split_train_val_ratio))
-
-    if progress_callback is not None:
-        progress_callback(5, "モデル学習を開始します。")
-
-    try:
-        model_payload = await asyncio.to_thread(
-            run_quantile_lstm_forecast,
-            points,
-            config_payload,
-            progress_callback,
-            cancel_check,
-        )
-    except MlJobCancelledError:
-        raise
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        LOGGER.exception("Quantile LSTM training failed for %s", symbol, exc_info=exc)
-        raise HTTPException(status_code=500, detail="Quantile LSTM training failed.") from exc
-
-    if progress_callback is not None:
-        progress_callback(100, "結果を整形しました。")
-
-    return {
-        "symbol": historical_data.get("symbol"),
-        "months": effective_months,
-        "historical_source": historical_data.get("source"),
-        **model_payload,
-    }
 
 
-async def _run_patchtst_pipeline(
+async def _run_ml_pipeline(
     *,
     symbol: str,
-    months: int = ML_HISTORY_DEFAULT_MONTHS,
-    sequence_length: int = 256,
-    hidden_size: int = 128,
-    num_layers: int = 3,
-    dropout: float = 0.1,
-    learning_rate: float = 1e-3,
-    batch_size: int = 32,
-    max_epochs: int = 40,
-    patience: int = 8,
-    representative_days: int = 5,
-    seed: int = 42,
-    refresh: bool = False,
-    split_eval_days: int | None = None,
-    split_train_val_ratio: float | None = None,
-    progress_callback: Callable[[float, str], None] | None = None,
-    cancel_check: Callable[[], None] | None = None,
+    months: int,
+    sequence_length: int,
+    hidden_size: int,
+    num_layers: int,
+    dropout: float,
+    learning_rate: float,
+    batch_size: int,
+    max_epochs: int,
+    patience: int,
+    representative_days: int,
+    seed: int,
+    refresh: bool,
+    split_eval_days: int | None,
+    split_train_val_ratio: float | None,
+    progress_callback: Callable[[float, str], None] | None,
+    cancel_check: Callable[[], None] | None,
+    trainer: Callable[
+        [list[dict[str, Any]], dict[str, Any], Callable[[float, str], None] | None, Callable[[], None] | None],
+        dict[str, Any],
+    ],
+    training_start_message: str,
+    error_log_message: str,
+    error_detail: str,
 ) -> dict[str, Any]:
     if cancel_check is not None:
         cancel_check()
@@ -2447,11 +2442,11 @@ async def _run_patchtst_pipeline(
     config_payload["split_train_val_ratio"] = max(0.5, min(0.95, effective_split_train_val_ratio))
 
     if progress_callback is not None:
-        progress_callback(5, "PatchTST学習を開始します。")
+        progress_callback(5, training_start_message)
 
     try:
         model_payload = await asyncio.to_thread(
-            run_patchtst_forecast,
+            trainer,
             points,
             config_payload,
             progress_callback,
@@ -2462,8 +2457,8 @@ async def _run_patchtst_pipeline(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        LOGGER.exception("PatchTST training failed for %s", symbol, exc_info=exc)
-        raise HTTPException(status_code=500, detail="PatchTST training failed.") from exc
+        LOGGER.exception(error_log_message, symbol, exc_info=exc)
+        raise HTTPException(status_code=500, detail=error_detail) from exc
 
     if progress_callback is not None:
         progress_callback(100, "結果を整形しました。")
@@ -2474,6 +2469,51 @@ async def _run_patchtst_pipeline(
         "historical_source": historical_data.get("source"),
         **model_payload,
     }
+
+
+async def _run_patchtst_pipeline(
+    *,
+    symbol: str,
+    months: int = ML_HISTORY_DEFAULT_MONTHS,
+    sequence_length: int = 256,
+    hidden_size: int = 128,
+    num_layers: int = 3,
+    dropout: float = 0.1,
+    learning_rate: float = 1e-3,
+    batch_size: int = 32,
+    max_epochs: int = 40,
+    patience: int = 8,
+    representative_days: int = 5,
+    seed: int = 42,
+    refresh: bool = False,
+    split_eval_days: int | None = None,
+    split_train_val_ratio: float | None = None,
+    progress_callback: Callable[[float, str], None] | None = None,
+    cancel_check: Callable[[], None] | None = None,
+) -> dict[str, Any]:
+    return await _run_ml_pipeline(
+        symbol=symbol,
+        months=months,
+        sequence_length=sequence_length,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+        dropout=dropout,
+        learning_rate=learning_rate,
+        batch_size=batch_size,
+        max_epochs=max_epochs,
+        patience=patience,
+        representative_days=representative_days,
+        seed=seed,
+        refresh=refresh,
+        split_eval_days=split_eval_days,
+        split_train_val_ratio=split_train_val_ratio,
+        progress_callback=progress_callback,
+        cancel_check=cancel_check,
+        trainer=run_patchtst_forecast,
+        training_start_message="PatchTST学習を開始します。",
+        error_log_message="PatchTST training failed for %s",
+        error_detail="PatchTST training failed.",
+    )
 
 
 def _progress_callback_for_job(job_id: str):
@@ -2546,6 +2586,21 @@ def _as_aligned_arrays(left: list[Any], right: list[Any]) -> tuple[list[float], 
 
 
 def _compute_loss_metrics(payload: dict[str, Any]) -> dict[str, Any]:
+    def _safe_int(value: Any) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    def _safe_float(value: Any) -> float | None:
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(parsed):
+            return None
+        return parsed
+
     fan_chart = payload.get("fan_chart") if isinstance(payload, dict) else None
     metrics = payload.get("metrics") if isinstance(payload, dict) else None
     splits = payload.get("splits") if isinstance(payload, dict) else None
@@ -2583,14 +2638,14 @@ def _compute_loss_metrics(payload: dict[str, Any]) -> dict[str, Any]:
 
     test_split = splits.get("test") if isinstance(splits, dict) else {}
     return {
-        "test_count": int(test_split.get("count") or 0),
+        "test_count": _safe_int(test_split.get("count")),
         "test_from": test_split.get("from"),
         "test_to": test_split.get("to"),
-        "epochs_trained": int(training.get("epochs_trained") or 0) if isinstance(training, dict) else 0,
-        "best_val_pinball_loss": float(training.get("best_val_pinball_loss")) if isinstance(training, dict) and training.get("best_val_pinball_loss") is not None else None,
-        "mean_pinball_loss": float(metrics.get("mean_pinball_loss")) if isinstance(metrics, dict) and metrics.get("mean_pinball_loss") is not None else None,
-        "coverage_90": float(metrics.get("coverage_90")) if isinstance(metrics, dict) and metrics.get("coverage_90") is not None else None,
-        "coverage_50": float(metrics.get("coverage_50")) if isinstance(metrics, dict) and metrics.get("coverage_50") is not None else None,
+        "epochs_trained": _safe_int(training.get("epochs_trained")) if isinstance(training, dict) else 0,
+        "best_val_pinball_loss": _safe_float(training.get("best_val_pinball_loss")) if isinstance(training, dict) else None,
+        "mean_pinball_loss": _safe_float(metrics.get("mean_pinball_loss")) if isinstance(metrics, dict) else None,
+        "coverage_90": _safe_float(metrics.get("coverage_90")) if isinstance(metrics, dict) else None,
+        "coverage_50": _safe_float(metrics.get("coverage_50")) if isinstance(metrics, dict) else None,
         "mae_return": mae_return,
         "rmse_return": rmse_return,
         "mae_price": mae_price,
