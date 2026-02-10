@@ -1,325 +1,346 @@
 <!doctype html>
 <html lang="ja">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Stock Overview</title>
-    <link rel="stylesheet" href="/static/styles.css" />
-  </head>
-  <body class="overview-page">
-    <main class="container overview-layout">
-      <header class="header overview-header">
-        <div class="header-top">
-          <button id="go-back" type="button" class="secondary overview-back-btn">Back</button>
-          <h1 id="symbol-title">Stock Overview</h1>
-        </div>
-        <p id="symbol-subtitle">Loading...</p>
-        <div class="overview-header-chips">
-          <span class="pill">Live Snapshot</span>
-          <span class="pill">Range Presets</span>
-          <span class="pill">Cached History</span>
-        </div>
-      </header>
 
-      <section class="overview-hero-grid">
-        <section class="card chart-card overview-main-chart">
-          <button id="refresh-history" type="button" class="minor-action chart-refresh-btn">Refresh</button>
-          <button id="clear-history-cache" type="button" class="minor-action chart-clear-btn">Clear Cache</button>
-          <div class="chart-actions">
-            <button id="interval-1m" type="button" class="secondary">1m</button>
-            <button id="interval-5m" type="button" class="secondary">5m</button>
-            <button id="interval-1d" type="button" class="secondary">1D</button>
-            <button id="range-max" type="button" class="secondary">MAX</button>
-            <button id="range-10y" type="button" class="secondary">10Y</button>
-            <button id="range-5y" type="button" class="secondary">5Y</button>
-            <button id="range-1y" type="button" class="secondary">1Y</button>
-            <button id="range-ytd" type="button" class="secondary">YTD</button>
-            <button id="zoom-in" type="button" class="secondary">Zoom In</button>
-            <button id="zoom-out" type="button" class="secondary">Zoom Out</button>
-            <button id="reset-zoom" type="button" class="secondary">Reset Zoom</button>
-            <span class="hint">Wheel: zoom / Drag: pan / Hover: date, close, volume</span>
-          </div>
-          <div class="chart-shell">
-            <canvas id="history-canvas"></canvas>
-            <div id="history-tooltip" class="chart-tooltip hidden"></div>
-          </div>
-          <p class="hint">Vol bars = 出来高（各足の取引量）</p>
-          <p id="history-meta" class="hint">Loading overview data...</p>
-        </section>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stock Overview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="/static/styles.css?v=20260210e" />
+</head>
 
-        <section class="card history-toolbar overview-side-panel">
-          <h2 class="section-title">Risk Snapshot</h2>
-          <div class="risk-strip">
-            <div class="risk-item">
-              <div class="overview-help-row">
-                <span class="label">Current</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>最新価格です（通常は直近約定値）。</p>
-                </details>
-              </div>
-              <span id="current-price">-</span>
-            </div>
-            <div class="risk-item">
-              <div class="overview-help-row">
-                <span class="label">30D Volatility</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>直近30営業日の日次リターンから計算した年率換算ボラティリティです。</p>
-                </details>
-              </div>
-              <span id="risk-vol30">-</span>
-            </div>
-            <div class="risk-item">
-              <div class="overview-help-row">
-                <span class="label">30D Max Drawdown</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>直近30営業日で、直前ピークからの最大下落率です。</p>
-                </details>
-              </div>
-              <span id="risk-dd30">-</span>
-            </div>
-            <div class="risk-item">
-              <div class="overview-help-row">
-                <span class="label">1D VaR (95%)</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>直近30営業日の分布推定に基づく、1日損失の95% VaR（目安）です。</p>
-                </details>
-              </div>
-              <span id="risk-var95">-</span>
-            </div>
-            <div class="risk-item">
-              <div class="overview-help-row">
-                <span class="label">ATR(14)</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>14期間のAverage True Rangeです。価格の変動幅の大きさを示します。</p>
-                </details>
-              </div>
-              <span id="tech-atr">-</span>
-            </div>
-            <div class="risk-item">
-              <div class="overview-help-row">
-                <span class="label">Gap vs Prev Close</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>当日始値と前日終値の差分（絶対値・%）です。</p>
-                </details>
-              </div>
-              <span id="price-gap">-</span>
-            </div>
-          </div>
-        </section>
+<body class="overview-page">
+  <!-- Top Navigation Tab Bar -->
+  <nav class="nav-tabs" aria-label="Main navigation">
+    <a href="/" class="nav-tab" data-path="/">
+      <span class="nav-tab-icon">📊</span> Monitor
+    </a>
+    <a href="/ml-lab" class="nav-tab" data-path="/ml-lab">
+      <span class="nav-tab-icon">🧠</span> ML Lab
+    </a>
+    <a href="/compare-lab" class="nav-tab" data-path="/compare-lab">
+      <span class="nav-tab-icon">⚖️</span> Compare
+    </a>
+    <a href="/strategy-lab" class="nav-tab" data-path="/strategy-lab">
+      <span class="nav-tab-icon">🎯</span> Strategy
+    </a>
+  </nav>
+
+  <main class="container overview-layout">
+    <header class="header overview-header">
+      <div class="header-top">
+        <button id="go-back" type="button" class="secondary overview-back-btn">Back</button>
+        <h1 id="symbol-title">Stock Overview</h1>
+      </div>
+      <p id="symbol-subtitle">Loading...</p>
+      <div class="overview-header-chips">
+        <span class="pill">Live Snapshot</span>
+        <span class="pill">Range Presets</span>
+        <span class="pill">Cached History</span>
+      </div>
+    </header>
+
+    <section class="overview-hero-grid">
+      <section class="card chart-card overview-main-chart">
+        <button id="refresh-history" type="button" class="minor-action chart-refresh-btn">Refresh</button>
+        <button id="clear-history-cache" type="button" class="minor-action chart-clear-btn">Clear Cache</button>
+        <div class="chart-actions">
+          <button id="interval-1m" type="button" class="secondary">1m</button>
+          <button id="interval-5m" type="button" class="secondary">5m</button>
+          <button id="interval-1d" type="button" class="secondary">1D</button>
+          <button id="range-max" type="button" class="secondary">MAX</button>
+          <button id="range-10y" type="button" class="secondary">10Y</button>
+          <button id="range-5y" type="button" class="secondary">5Y</button>
+          <button id="range-1y" type="button" class="secondary">1Y</button>
+          <button id="range-ytd" type="button" class="secondary">YTD</button>
+          <button id="zoom-in" type="button" class="secondary">Zoom In</button>
+          <button id="zoom-out" type="button" class="secondary">Zoom Out</button>
+          <button id="reset-zoom" type="button" class="secondary">Reset Zoom</button>
+          <span class="hint">Wheel: zoom / Drag: pan / Hover: date, close, volume</span>
+        </div>
+        <div class="chart-shell">
+          <canvas id="history-canvas"></canvas>
+          <div id="history-tooltip" class="chart-tooltip hidden"></div>
+        </div>
+        <p class="hint">Vol bars = 出来高（各足の取引量）</p>
+        <p id="history-meta" class="hint">Loading overview data...</p>
       </section>
 
-      <section class="overview-detail-grid">
-        <section class="card overview-metrics">
-          <h2 class="section-title">Market Overview</h2>
-          <div class="status-row">
-            <div>
-              <div class="overview-help-row">
-                <span class="label">Ticker / Name</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>現在表示中の銘柄コードと会社名です。</p>
-                </details>
-              </div>
-              <span id="ov-symbol-name">-</span>
+      <section class="card history-toolbar overview-side-panel">
+        <h2 class="section-title">Risk Snapshot</h2>
+        <div class="risk-strip">
+          <div class="risk-item">
+            <div class="overview-help-row">
+              <span class="label">Current</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>最新価格です（通常は直近約定値）。</p>
+              </details>
             </div>
-            <div>
-              <div class="overview-help-row">
-                <span class="label">Current</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>最新価格です（通常は直近約定値）。</p>
-                </details>
-              </div>
-              <span id="ov-current">-</span>
-            </div>
-            <div>
-              <div class="overview-help-row">
-                <span class="label">Prev Change</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>前日終値からの変化額と変化率です。</p>
-                </details>
-              </div>
-              <span id="ov-change">-</span>
-            </div>
-            <div>
-              <div class="overview-help-row">
-                <span class="label">Day High / Low</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>当日セッションの高値と安値です。</p>
-                </details>
-              </div>
-              <span id="ov-day-range">-</span>
-            </div>
-            <div>
-              <div class="overview-help-row">
-                <span class="label">Volume</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>当日の出来高です。avg20 は20日平均、x は平均比です。</p>
-                </details>
-              </div>
-              <span id="ov-volume">-</span>
-            </div>
-            <div>
-              <div class="overview-help-row">
-                <span class="label">Turnover</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>当日の売買代金です（概算: 価格 x 出来高）。</p>
-                </details>
-              </div>
-              <span id="ov-turnover">-</span>
-            </div>
-            <div>
-              <div class="overview-help-row">
-                <span class="label">Bid / Ask Spread</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>最良買気配 / 売気配と、その差（絶対値・%）です。</p>
-                </details>
-              </div>
-              <span id="ov-spread">-</span>
-            </div>
-            <div>
-              <div class="overview-help-row">
-                <span class="label">Updated At</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>価格データの更新時刻です。遅延注記がある場合は併記します。</p>
-                </details>
-              </div>
-              <span id="ov-updated">-</span>
-            </div>
+            <span id="current-price">-</span>
           </div>
-        </section>
-
-        <section class="card overview-tech">
-          <h2 class="section-title">Technical + Relative</h2>
-          <div class="status-row">
-            <div>
-              <div class="overview-help-row">
-                <span class="label">VWAP (1m / 5m)</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>1分足 / 5分足ベースの出来高加重平均価格です。</p>
-                </details>
-              </div>
-              <span id="tech-vwap">-</span>
+          <div class="risk-item">
+            <div class="overview-help-row">
+              <span class="label">30D Volatility</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>直近30営業日の日次リターンから計算した年率換算ボラティリティです。</p>
+              </details>
             </div>
-            <div>
-              <div class="overview-help-row">
-                <span class="label">MA (20 / 50)</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>20日と50日の移動平均です。</p>
-                </details>
-              </div>
-              <span id="tech-ma">-</span>
-            </div>
-            <div>
-              <div class="overview-help-row">
-                <span class="label">Beta (60d vs SPY)</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>直近60営業日でのSPYに対する感応度（β）です。</p>
-                </details>
-              </div>
-              <span id="tech-beta">-</span>
-            </div>
-            <div>
-              <div class="overview-help-row">
-                <span class="label">Correlation (60d)</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>直近60営業日のSPYとのリターン相関係数です。</p>
-                </details>
-              </div>
-              <span id="tech-corr">-</span>
-            </div>
-            <div>
-              <div class="overview-help-row">
-                <span class="label">S&P500 Proxy (SPY)</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>S&P500の代理指標としてSPYの価格と騰落率を表示します。</p>
-                </details>
-              </div>
-              <span id="market-spy">-</span>
-            </div>
-            <div>
-              <div class="overview-help-row">
-                <span class="label">NASDAQ Proxy (QQQ)</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>NASDAQの代理指標としてQQQを表示します。必要時に手動読込します。</p>
-                </details>
-              </div>
-              <span id="market-qqq">-</span>
-              <button id="load-qqq" type="button" class="minor-action">Load QQQ</button>
-            </div>
-            <div>
-              <div class="overview-help-row">
-                <span class="label">Sector ETF</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>同セクターETF連携の提供可否です。</p>
-                </details>
-              </div>
-              <span id="support-sector">Not available</span>
-            </div>
-            <div>
-              <div class="overview-help-row">
-                <span class="label">Orderbook / L2</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>板情報（Level 2）連携の提供可否です。</p>
-                </details>
-              </div>
-              <span id="support-board">Not available</span>
-            </div>
-            <div>
-              <div class="overview-help-row">
-                <span class="label">Corporate Events</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>企業イベント情報（例: 決算関連カレンダー）の提供可否です。</p>
-                </details>
-              </div>
-              <span id="support-events">Not available</span>
-            </div>
-            <div>
-              <div class="overview-help-row">
-                <span class="label">Earnings / Dividend / Split</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>決算・配当・株式分割などコーポレートアクションの提供可否です。</p>
-                </details>
-              </div>
-              <span id="support-corporate">Not available</span>
-            </div>
-            <div>
-              <div class="overview-help-row">
-                <span class="label">News Headlines</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>ニュース見出し連携の提供可否です。</p>
-                </details>
-              </div>
-              <span id="support-news">Not available</span>
-            </div>
+            <span id="risk-vol30">-</span>
           </div>
-        </section>
+          <div class="risk-item">
+            <div class="overview-help-row">
+              <span class="label">30D Max Drawdown</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>直近30営業日で、直前ピークからの最大下落率です。</p>
+              </details>
+            </div>
+            <span id="risk-dd30">-</span>
+          </div>
+          <div class="risk-item">
+            <div class="overview-help-row">
+              <span class="label">1D VaR (95%)</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>直近30営業日の分布推定に基づく、1日損失の95% VaR（目安）です。</p>
+              </details>
+            </div>
+            <span id="risk-var95">-</span>
+          </div>
+          <div class="risk-item">
+            <div class="overview-help-row">
+              <span class="label">ATR(14)</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>14期間のAverage True Rangeです。価格の変動幅の大きさを示します。</p>
+              </details>
+            </div>
+            <span id="tech-atr">-</span>
+          </div>
+          <div class="risk-item">
+            <div class="overview-help-row">
+              <span class="label">Gap vs Prev Close</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>当日始値と前日終値の差分（絶対値・%）です。</p>
+              </details>
+            </div>
+            <span id="price-gap">-</span>
+          </div>
+        </div>
       </section>
-    </main>
+    </section>
 
-    <script src="/static/historical.js?v=20260210" defer></script>
-  </body>
+    <section class="overview-detail-grid">
+      <section class="card overview-metrics">
+        <h2 class="section-title">Market Overview</h2>
+        <div class="status-row">
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Ticker / Name</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>現在表示中の銘柄コードと会社名です。</p>
+              </details>
+            </div>
+            <span id="ov-symbol-name">-</span>
+          </div>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Current</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>最新価格です（通常は直近約定値）。</p>
+              </details>
+            </div>
+            <span id="ov-current">-</span>
+          </div>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Prev Change</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>前日終値からの変化額と変化率です。</p>
+              </details>
+            </div>
+            <span id="ov-change">-</span>
+          </div>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Day High / Low</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>当日セッションの高値と安値です。</p>
+              </details>
+            </div>
+            <span id="ov-day-range">-</span>
+          </div>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Volume</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>当日の出来高です。avg20 は20日平均、x は平均比です。</p>
+              </details>
+            </div>
+            <span id="ov-volume">-</span>
+          </div>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Turnover</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>当日の売買代金です（概算: 価格 x 出来高）。</p>
+              </details>
+            </div>
+            <span id="ov-turnover">-</span>
+          </div>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Bid / Ask Spread</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>最良買気配 / 売気配と、その差（絶対値・%）です。</p>
+              </details>
+            </div>
+            <span id="ov-spread">-</span>
+          </div>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Updated At</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>価格データの更新時刻です。遅延注記がある場合は併記します。</p>
+              </details>
+            </div>
+            <span id="ov-updated">-</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="card overview-tech">
+        <h2 class="section-title">Technical + Relative</h2>
+        <div class="status-row">
+          <div>
+            <div class="overview-help-row">
+              <span class="label">VWAP (1m / 5m)</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>1分足 / 5分足ベースの出来高加重平均価格です。</p>
+              </details>
+            </div>
+            <span id="tech-vwap">-</span>
+          </div>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">MA (20 / 50)</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>20日と50日の移動平均です。</p>
+              </details>
+            </div>
+            <span id="tech-ma">-</span>
+          </div>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Beta (60d vs SPY)</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>直近60営業日でのSPYに対する感応度（β）です。</p>
+              </details>
+            </div>
+            <span id="tech-beta">-</span>
+          </div>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Correlation (60d)</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>直近60営業日のSPYとのリターン相関係数です。</p>
+              </details>
+            </div>
+            <span id="tech-corr">-</span>
+          </div>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">S&P500 Proxy (SPY)</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>S&P500の代理指標としてSPYの価格と騰落率を表示します。</p>
+              </details>
+            </div>
+            <span id="market-spy">-</span>
+          </div>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">NASDAQ Proxy (QQQ)</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>NASDAQの代理指標としてQQQを表示します。必要時に手動読込します。</p>
+              </details>
+            </div>
+            <span id="market-qqq">-</span>
+            <button id="load-qqq" type="button" class="minor-action">Load QQQ</button>
+          </div>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Sector ETF</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>同セクターETF連携の提供可否です。</p>
+              </details>
+            </div>
+            <span id="support-sector">Not available</span>
+          </div>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Orderbook / L2</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>板情報（Level 2）連携の提供可否です。</p>
+              </details>
+            </div>
+            <span id="support-board">Not available</span>
+          </div>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Corporate Events</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>企業イベント情報（例: 決算関連カレンダー）の提供可否です。</p>
+              </details>
+            </div>
+            <span id="support-events">Not available</span>
+          </div>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Earnings / Dividend / Split</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>決算・配当・株式分割などコーポレートアクションの提供可否です。</p>
+              </details>
+            </div>
+            <span id="support-corporate">Not available</span>
+          </div>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">News Headlines</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>ニュース見出し連携の提供可否です。</p>
+              </details>
+            </div>
+            <span id="support-news">Not available</span>
+          </div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script src="/static/historical.js?v=20260210" defer></script>
+</body>
+
 </html>

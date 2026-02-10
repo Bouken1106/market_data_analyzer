@@ -1,20 +1,12 @@
 (() => {
-  const pageMenus = Array.from(document.querySelectorAll("details.page-menu"));
-  if (pageMenus.length === 0) return;
+  // Highlight the active page in the top tab bar
+  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  const tabs = document.querySelectorAll(".nav-tab");
 
-  document.addEventListener("pointerdown", (event) => {
-    const target = event.target;
-    pageMenus.forEach((menu) => {
-      if (!menu.open) return;
-      if (target instanceof Node && menu.contains(target)) return;
-      menu.removeAttribute("open");
-    });
-  });
-
-  document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape") return;
-    pageMenus.forEach((menu) => {
-      if (menu.open) menu.removeAttribute("open");
-    });
+  tabs.forEach((tab) => {
+    const tabPath = (tab.getAttribute("data-path") || "").replace(/\/+$/, "") || "/";
+    if (path === tabPath) {
+      tab.classList.add("active");
+    }
   });
 })();

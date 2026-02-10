@@ -1,198 +1,206 @@
 <!doctype html>
 <html lang="ja">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ML Forecast Lab</title>
-    <link rel="stylesheet" href="/static/styles.css" />
-  </head>
-  <body>
-    <main class="container">
-      <header class="header">
-        <div class="header-top">
-          <h1>ML Forecast Lab</h1>
-          <details class="page-menu">
-            <summary class="page-menu-btn">Pages</summary>
-            <nav class="page-menu-list" aria-label="Page navigation">
-              <a href="/">US Stock Live Monitor</a>
-              <a href="/ml-lab">ML Forecast Lab</a>
-              <a href="/strategy-lab">Strategy Lab</a>
-              <a href="/compare-lab">Model Compare Lab</a>
-            </nav>
-          </details>
-        </div>
-        <p>モデルを選択して、翌営業日の分布予測とバックテストを実行します。</p>
-      </header>
 
-      <section class="card">
-        <h2>Model Catalog</h2>
-        <p class="hint">使いたいモデルを選択してください。将来的にこの一覧へ追加していけます。</p>
-        <div id="ml-model-grid" class="ml-model-grid"></div>
-      </section>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ML Forecast Lab</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="/static/styles.css?v=20260210e" />
+</head>
 
-      <section class="card">
-        <span id="ml-active-model-pill" class="pill">-</span>
-        <h2 id="ml-config-title">Forecast Config</h2>
-        <p id="ml-model-description" class="hint">-</p>
-        <form id="ml-form" class="ml-form">
-          <div class="ml-form-grid">
-            <label>
-              <span class="ml-label-row">
-                <span>Symbol</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>予測対象のティッカー。米国株シンボル（例: AAPL）。許容範囲: 1〜15文字。</p>
-                </details>
-              </span>
-              <div id="ml-symbol-search-area" class="symbol-search-area">
-                <input
-                  id="ml-symbol"
-                  type="text"
-                  value="AAPL"
-                  placeholder="Click and search: AAPL, MSFT, NVDA..."
-                  maxlength="15"
-                  autocomplete="off"
-                />
-                <div id="ml-symbol-dropdown" class="symbol-dropdown hidden"></div>
-              </div>
-            </label>
-            <label>
-              <span class="ml-label-row">
-                <span>History Months</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>学習に使うヒストリカル期間（月）。直近2カ月は表示・評価用として学習から除外されます。許容範囲: 3〜60。</p>
-                </details>
-              </span>
-              <input id="ml-years" type="number" value="60" min="3" max="60" />
-            </label>
-            <label>
-              <span class="ml-label-row">
-                <span>Sequence Length</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>1サンプルに使う過去営業日数（L）。例: 60なら過去60営業日から翌日を予測。推奨範囲: 20〜240。</p>
-                </details>
-              </span>
-              <input id="ml-seq-len" type="number" value="60" min="20" max="1024" />
-            </label>
-            <label>
-              <span class="ml-label-row">
-                <span>Hidden Size</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>LSTM隠れ状態の次元。大きいほど表現力は上がるが学習時間も増える。推奨範囲: 16〜256。</p>
-                </details>
-              </span>
-              <input id="ml-hidden-size" type="number" value="64" min="16" max="2048" />
-            </label>
-            <label>
-              <span class="ml-label-row">
-                <span>Layers</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>LSTMの層数。増やすと複雑な時系列を捉えやすいが過学習リスクも増える。推奨範囲: 1〜4。</p>
-                </details>
-              </span>
-              <input id="ml-num-layers" type="number" value="2" min="1" max="12" />
-            </label>
-            <label>
-              <span class="ml-label-row">
-                <span>Dropout</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>過学習抑制のための無効化率。0.1〜0.3程度が一般的。推奨範囲: 0.00〜0.60（0.05刻み）。</p>
-                </details>
-              </span>
-              <input id="ml-dropout" type="number" value="0.2" min="0" max="0.6" step="0.05" />
-            </label>
-            <label>
-              <span class="ml-label-row">
-                <span>Batch Size</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>1ステップで処理するサンプル数。大きいほど高速化しやすいがメモリ消費が増えます。推奨範囲: 8〜512。</p>
-                </details>
-              </span>
-              <input id="ml-batch-size" type="number" value="64" min="8" max="1024" />
-            </label>
-            <label>
-              <span class="ml-label-row">
-                <span>Epochs</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>学習データ全体を何回繰り返すかの上限。実際はEarlyStoppingで早く止まることがある。推奨範囲: 10〜400。</p>
-                </details>
-              </span>
-              <input id="ml-max-epochs" type="number" value="80" min="10" max="2000" />
-            </label>
-            <label>
-              <span class="ml-label-row">
-                <span>Patience</span>
-                <details class="param-help">
-                  <summary>?</summary>
-                  <p>検証損失が改善しない状態を何epoch許容するか（EarlyStopping）。推奨範囲: 2〜80。</p>
-                </details>
-              </span>
-              <input id="ml-patience" type="number" value="10" min="2" max="400" />
-            </label>
-          </div>
-          <div class="row ml-form-actions">
-            <button id="ml-run-btn" type="submit">Run Model</button>
-            <button id="ml-cancel-btn" type="button" class="danger-action" disabled>停止</button>
-            <label class="ml-checkbox">
-              <input id="ml-refresh" type="checkbox" />
-              Force refresh historical data
-            </label>
-          </div>
-        </form>
-        <div class="row">
-          <p id="ml-catalog-meta" class="hint">Loading symbol catalog...</p>
-          <button id="ml-refresh-catalog" type="button" class="minor-action">Refresh Symbol List</button>
-        </div>
-        <details class="param-guide">
-          <summary>Parameter Guide（まとめ）</summary>
-          <p>`Sequence Length`: 過去何日を見るか。長いほど長期文脈を拾う。</p>
-          <p>`Hidden Size` / `Layers`: モデル容量。大きいと表現力は上がるが重くなる。</p>
-          <p>`Dropout` / `Batch Size`: 過学習対策と学習安定性・速度の調整。</p>
-          <p>`Epochs` / `Patience`: 学習回数上限と早期終了条件。計算時間とのトレードオフ。</p>
-          <p>`History Months`: 学習データ期間（月）。直近2カ月を除いた残りを train/val=4:1 で分割。</p>
-        </details>
-        <p id="ml-recommend-warning" class="hint"></p>
-        <p id="ml-status" class="hint">設定後に実行してください。</p>
-        <div id="ml-progress-wrap" class="ml-progress hidden" aria-live="polite">
-          <div class="ml-progress-track">
-            <div id="ml-progress-bar" class="ml-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
-          </div>
-          <p id="ml-progress-text" class="hint">0.0%</p>
-        </div>
-      </section>
+<body>
+  <!-- Top Navigation Tab Bar -->
+  <nav class="nav-tabs" aria-label="Main navigation">
+    <a href="/" class="nav-tab" data-path="/">
+      <span class="nav-tab-icon">📊</span> Monitor
+    </a>
+    <a href="/ml-lab" class="nav-tab" data-path="/ml-lab">
+      <span class="nav-tab-icon">🧠</span> ML Lab
+    </a>
+    <a href="/compare-lab" class="nav-tab" data-path="/compare-lab">
+      <span class="nav-tab-icon">⚖️</span> Compare
+    </a>
+    <a href="/strategy-lab" class="nav-tab" data-path="/strategy-lab">
+      <span class="nav-tab-icon">🎯</span> Strategy
+    </a>
+  </nav>
 
-      <section class="card">
-        <h2>Distribution Metrics (Test)</h2>
-        <div class="ml-metric-grid">
-          <div class="risk-item">
-            <span class="label">Mean Pinball Loss (Test: Latest 2 Months)</span>
-            <span id="metric-pinball">-</span>
-          </div>
-          <div class="risk-item">
-            <span class="label">Coverage q05-q95</span>
-            <span id="metric-cov90">-</span>
-          </div>
-          <div class="risk-item">
-            <span class="label">Coverage q25-q75</span>
-            <span id="metric-cov50">-</span>
-          </div>
-          <div class="risk-item">
-            <span class="label">Samples (train / val / test)</span>
-            <span id="metric-samples">-</span>
-          </div>
-        </div>
-      </section>
+  <main class="container">
+    <header class="header">
+      <div class="header-top">
+        <h1>ML Forecast Lab</h1>
+      </div>
+      <p>モデルを選択して、翌営業日の分布予測とバックテストを実行します。</p>
+    </header>
 
+    <section class="card">
+      <h2>Model Catalog</h2>
+      <p class="hint">使いたいモデルを選択してください。将来的にこの一覧へ追加していけます。</p>
+      <div id="ml-model-grid" class="ml-model-grid"></div>
+    </section>
+
+    <section class="card">
+      <span id="ml-active-model-pill" class="pill">-</span>
+      <h2 id="ml-config-title">Forecast Config</h2>
+      <p id="ml-model-description" class="hint">-</p>
+      <form id="ml-form" class="ml-form">
+        <div class="ml-form-grid">
+          <label>
+            <span class="ml-label-row">
+              <span>Symbol</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>予測対象のティッカー。米国株シンボル（例: AAPL）。許容範囲: 1〜15文字。</p>
+              </details>
+            </span>
+            <div id="ml-symbol-search-area" class="symbol-search-area">
+              <input id="ml-symbol" type="text" value="AAPL" placeholder="Click and search: AAPL, MSFT, NVDA..."
+                maxlength="15" autocomplete="off" />
+              <div id="ml-symbol-dropdown" class="symbol-dropdown hidden"></div>
+            </div>
+          </label>
+          <label>
+            <span class="ml-label-row">
+              <span>History Months</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>学習に使うヒストリカル期間（月）。直近2カ月は表示・評価用として学習から除外されます。許容範囲: 3〜60。</p>
+              </details>
+            </span>
+            <input id="ml-years" type="number" value="60" min="3" max="60" />
+          </label>
+          <label>
+            <span class="ml-label-row">
+              <span>Sequence Length</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>1サンプルに使う過去営業日数（L）。例: 60なら過去60営業日から翌日を予測。推奨範囲: 20〜240。</p>
+              </details>
+            </span>
+            <input id="ml-seq-len" type="number" value="60" min="20" max="1024" />
+          </label>
+          <label>
+            <span class="ml-label-row">
+              <span>Hidden Size</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>LSTM隠れ状態の次元。大きいほど表現力は上がるが学習時間も増える。推奨範囲: 16〜256。</p>
+              </details>
+            </span>
+            <input id="ml-hidden-size" type="number" value="64" min="16" max="2048" />
+          </label>
+          <label>
+            <span class="ml-label-row">
+              <span>Layers</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>LSTMの層数。増やすと複雑な時系列を捉えやすいが過学習リスクも増える。推奨範囲: 1〜4。</p>
+              </details>
+            </span>
+            <input id="ml-num-layers" type="number" value="2" min="1" max="12" />
+          </label>
+          <label>
+            <span class="ml-label-row">
+              <span>Dropout</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>過学習抑制のための無効化率。0.1〜0.3程度が一般的。推奨範囲: 0.00〜0.60（0.05刻み）。</p>
+              </details>
+            </span>
+            <input id="ml-dropout" type="number" value="0.2" min="0" max="0.6" step="0.05" />
+          </label>
+          <label>
+            <span class="ml-label-row">
+              <span>Batch Size</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>1ステップで処理するサンプル数。大きいほど高速化しやすいがメモリ消費が増えます。推奨範囲: 8〜512。</p>
+              </details>
+            </span>
+            <input id="ml-batch-size" type="number" value="64" min="8" max="1024" />
+          </label>
+          <label>
+            <span class="ml-label-row">
+              <span>Epochs</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>学習データ全体を何回繰り返すかの上限。実際はEarlyStoppingで早く止まることがある。推奨範囲: 10〜400。</p>
+              </details>
+            </span>
+            <input id="ml-max-epochs" type="number" value="80" min="10" max="2000" />
+          </label>
+          <label>
+            <span class="ml-label-row">
+              <span>Patience</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>検証損失が改善しない状態を何epoch許容するか（EarlyStopping）。推奨範囲: 2〜80。</p>
+              </details>
+            </span>
+            <input id="ml-patience" type="number" value="10" min="2" max="400" />
+          </label>
+        </div>
+        <div class="row ml-form-actions">
+          <button id="ml-run-btn" type="submit">Run Model</button>
+          <button id="ml-cancel-btn" type="button" class="danger-action" disabled>停止</button>
+          <label class="ml-checkbox">
+            <input id="ml-refresh" type="checkbox" />
+            Force refresh historical data
+          </label>
+        </div>
+      </form>
+      <div class="row">
+        <p id="ml-catalog-meta" class="hint">Loading symbol catalog...</p>
+        <button id="ml-refresh-catalog" type="button" class="minor-action">Refresh Symbol List</button>
+      </div>
+      <details class="param-guide">
+        <summary>Parameter Guide（まとめ）</summary>
+        <p>`Sequence Length`: 過去何日を見るか。長いほど長期文脈を拾う。</p>
+        <p>`Hidden Size` / `Layers`: モデル容量。大きいと表現力は上がるが重くなる。</p>
+        <p>`Dropout` / `Batch Size`: 過学習対策と学習安定性・速度の調整。</p>
+        <p>`Epochs` / `Patience`: 学習回数上限と早期終了条件。計算時間とのトレードオフ。</p>
+        <p>`History Months`: 学習データ期間（月）。直近2カ月を除いた残りを train/val=4:1 で分割。</p>
+      </details>
+      <p id="ml-recommend-warning" class="hint"></p>
+      <p id="ml-status" class="hint">設定後に実行してください。</p>
+      <div id="ml-progress-wrap" class="ml-progress hidden" aria-live="polite">
+        <div class="ml-progress-track">
+          <div id="ml-progress-bar" class="ml-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"
+            aria-valuenow="0"></div>
+        </div>
+        <p id="ml-progress-text" class="hint">0.0%</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Distribution Metrics (Test)</h2>
+      <div class="ml-metric-grid">
+        <div class="risk-item">
+          <span class="label">Mean Pinball Loss (Test: Latest 2 Months)</span>
+          <span id="metric-pinball">-</span>
+        </div>
+        <div class="risk-item">
+          <span class="label">Coverage q05-q95</span>
+          <span id="metric-cov90">-</span>
+        </div>
+        <div class="risk-item">
+          <span class="label">Coverage q25-q75</span>
+          <span id="metric-cov50">-</span>
+        </div>
+        <div class="risk-item">
+          <span class="label">Samples (train / val / test)</span>
+          <span id="metric-samples">-</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Chart Duo: Next Day Distribution + Backtest -->
+    <div class="ml-chart-duo">
       <section class="card">
         <div class="ml-section-head">
-          <h2>Next Business Day Distribution (From Latest Close)</h2>
+          <h2>Next Day Distribution</h2>
           <div class="ml-section-tools">
             <label class="ml-inline-select">
               <span>Scale</span>
@@ -202,7 +210,7 @@
               </select>
             </label>
             <label class="ml-inline-select">
-              <span>Distribution</span>
+              <span>Dist</span>
               <select id="next-day-dist-type">
                 <option value="pdf">PDF</option>
                 <option value="cdf">CDF</option>
@@ -211,55 +219,56 @@
           </div>
         </div>
         <div class="ml-canvas-shell">
-          <canvas id="next-day-canvas" class="ml-canvas" height="320"></canvas>
+          <canvas id="next-day-canvas" class="ml-canvas" height="260"></canvas>
         </div>
-        <p id="next-day-meta" class="hint">最新終値から翌営業日の上昇/下落確率を表示します。</p>
+        <p id="next-day-meta" class="hint">翌営業日の上昇/下落確率を表示</p>
       </section>
 
       <section class="card">
-        <h2>Past 60-Day Realized Backtest (If You Followed Daily Forecasts)</h2>
+        <h2>60-Day Backtest</h2>
         <div class="ml-metric-grid">
           <div class="risk-item">
-            <span class="label">Strategy Return (60D)</span>
+            <span class="label">Strategy Return</span>
             <span id="bt-return-strategy">-</span>
           </div>
           <div class="risk-item">
-            <span class="label">Fixed-Shares Hold Return (60D)</span>
+            <span class="label">Hold Return</span>
             <span id="bt-return-buyhold">-</span>
           </div>
           <div class="risk-item">
-            <span class="label">Outperformance</span>
+            <span class="label">Outperf</span>
             <span id="bt-outperf">-</span>
           </div>
           <div class="risk-item">
-            <span class="label">Final Capital Strategy</span>
+            <span class="label">Capital (Strat)</span>
             <span id="bt-capital-strategy">-</span>
           </div>
           <div class="risk-item">
-            <span class="label">Final Capital Fixed-Shares Hold</span>
+            <span class="label">Capital (Hold)</span>
             <span id="bt-capital-buyhold">-</span>
           </div>
           <div class="risk-item">
-            <span class="label">Backtest Window / Allocation</span>
+            <span class="label">Window</span>
             <span id="bt-window">-</span>
           </div>
         </div>
         <div class="ml-canvas-shell">
-          <canvas id="backtest-canvas" class="ml-canvas" height="280"></canvas>
+          <canvas id="backtest-canvas" class="ml-canvas" height="260"></canvas>
         </div>
         <details class="param-guide">
           <summary>Assumptions</summary>
-          <p>各日で、その日に予測した翌営業日分布のみを使って投資比率を決定。</p>
-          <p>リスク上限: 翌日で資産の1%超損失となる確率が3%を超えない株式比率までに制限。</p>
-          <p>その上限内で期待リターン最大（0〜100%）の比率を採用。</p>
-          <p>実績リターンで日次更新して、直近60営業日の実現パフォーマンスを算出。</p>
-          <p>比較対象は、初日に買った株数を売買せず持ち続ける固定株数ホールド。</p>
+          <p>各日で翌営業日分布のみを使い投資比率を決定。</p>
+          <p>リスク上限: 1%損失確率3%以下。</p>
+          <p>比較: 固定株数ホールド。</p>
         </details>
       </section>
+    </div>
 
+    <!-- Chart Duo: Quantile Function + Fan Chart -->
+    <div class="ml-chart-duo">
       <section class="card">
         <div class="ml-section-head">
-          <h2>Quantile Function Plot</h2>
+          <h2>Quantile Function</h2>
           <div class="ml-section-tools">
             <label class="ml-inline-select">
               <span>Scale</span>
@@ -269,23 +278,16 @@
               </select>
             </label>
             <div class="ml-zoom-actions">
-              <button id="quantile-zoom-in" type="button" class="secondary">Zoom In</button>
-              <button id="quantile-zoom-out" type="button" class="secondary">Zoom Out</button>
-              <button id="quantile-zoom-reset" type="button" class="minor-action">Reset Zoom</button>
+              <button id="quantile-zoom-in" type="button" class="secondary">+</button>
+              <button id="quantile-zoom-out" type="button" class="secondary">−</button>
+              <button id="quantile-zoom-reset" type="button" class="minor-action">Reset</button>
             </div>
           </div>
         </div>
         <div class="ml-canvas-shell">
-          <canvas id="quantile-function-canvas" class="ml-canvas ml-draggable" height="340"></canvas>
+          <canvas id="quantile-function-canvas" class="ml-canvas ml-draggable" height="280"></canvas>
         </div>
-        <details class="param-guide">
-          <summary>Plot Guide（Quantile Function）</summary>
-          <p>各色の線: テスト期間の代表日ごとの分位点カーブ（1本=1日）。</p>
-          <p>横軸: 分位点 τ（0.001〜0.999）。右に行くほど「高い値側」の予測。</p>
-          <p>縦軸: 予測値（Scaleで Returns / Prices を切替）。</p>
-          <p>凡例の actual: その代表日に対する翌営業日の実測値。</p>
-        </details>
-        <p id="quantile-legend" class="hint">テスト期間の代表日を表示します。</p>
+        <p id="quantile-legend" class="hint">テスト期間の代表日を表示</p>
       </section>
 
       <section class="card">
@@ -300,26 +302,22 @@
               </select>
             </label>
             <div class="ml-zoom-actions">
-              <button id="fan-zoom-in" type="button" class="secondary">Zoom In</button>
-              <button id="fan-zoom-out" type="button" class="secondary">Zoom Out</button>
-              <button id="fan-zoom-reset" type="button" class="minor-action">Reset Zoom</button>
+              <button id="fan-zoom-in" type="button" class="secondary">+</button>
+              <button id="fan-zoom-out" type="button" class="secondary">−</button>
+              <button id="fan-zoom-reset" type="button" class="minor-action">Reset</button>
             </div>
           </div>
         </div>
         <div class="ml-canvas-shell">
-          <canvas id="fan-chart-canvas" class="ml-canvas ml-draggable" height="360"></canvas>
+          <canvas id="fan-chart-canvas" class="ml-canvas ml-draggable" height="280"></canvas>
         </div>
-        <details class="param-guide">
-          <summary>Plot Guide（Fan Chart）</summary>
-          <p>水色の線: 中央値予測（q50）。</p>
-          <p>濃い帯: 50%予測区間（q25〜q75）。</p>
-          <p>薄い帯: 90%予測区間（q05〜q95）。</p>
-          <p>黄色の点: 実測値（翌営業日の実現値）。帯内に入るほど被覆が良い。</p>
-        </details>
-        <p id="fan-meta" class="hint">直近2カ月(test)の q50（中央値）、50%帯、90%帯、実測値を表示します。</p>
+        <p id="fan-meta" class="hint">q50, 50%帯, 90%帯, 実測値を表示</p>
       </section>
-    </main>
-    <script src="/static/ml_lab.js"></script>
-    <script src="/static/page_menu.js" defer></script>
-  </body>
+    </div>
+  </main>
+
+  <script src="/static/ml_lab.js"></script>
+  <script src="/static/page_menu.js" defer></script>
+</body>
+
 </html>

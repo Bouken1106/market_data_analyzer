@@ -1,101 +1,108 @@
 <!doctype html>
 <html lang="ja">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Market Data Analyzer</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260210c" />
-  </head>
-  <body>
-    <main class="container">
-      <header class="header">
-        <div class="header-top">
-          <h1>US Stock Live Monitor</h1>
-          <details class="page-menu">
-            <summary class="page-menu-btn">Pages</summary>
-            <nav class="page-menu-list" aria-label="Page navigation">
-              <a href="/">US Stock Live Monitor</a>
-              <a href="/ml-lab">ML Forecast Lab</a>
-              <a href="/strategy-lab">Strategy Lab</a>
-              <a href="/compare-lab">Model Compare Lab</a>
-            </nav>
-          </details>
-        </div>
-        <p>Twelve Data Basic プラン対応 (WebSocket + REST fallback)</p>
-        <div class="live-monitor-chips" aria-label="Monitor highlights">
-          <span class="pill chip-cyan">Realtime Feed</span>
-          <span class="pill chip-green">US Equities</span>
-          <span class="pill chip-amber">Sparkline Trends</span>
-        </div>
-      </header>
 
-      <section class="card market-time-card">
-        <div class="market-time-grid">
-          <div class="market-time-item">
-            <span class="label">Japan Time (JST)</span>
-            <span id="clock-jst" class="market-time-value">-</span>
-          </div>
-          <div class="market-time-item">
-            <span class="label">US Time (ET)</span>
-            <span id="clock-et" class="market-time-value">-</span>
-          </div>
-          <div class="market-time-item">
-            <span class="label">US Market Hours</span>
-            <span id="market-hours-et" class="market-time-value">09:30-16:00 ET (Mon-Fri)</span>
-            <span id="market-open-state" class="market-state">-</span>
-          </div>
-        </div>
-      </section>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Market Data Analyzer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="/static/styles.css?v=20260210e" />
+</head>
 
-      <section class="card controls">
-        <label for="symbol-search">Search & add symbols (max 8)</label>
-        <div id="symbol-search-area" class="symbol-search-area">
-          <input
-            id="symbol-search"
-            name="symbol-search"
-            type="text"
-            autocomplete="off"
-            placeholder="Click and search: AAPL, MSFT, NVDA..."
-          />
-          <div id="symbol-dropdown" class="symbol-dropdown hidden"></div>
-        </div>
-        <p id="catalog-meta" class="hint">Loading symbol catalog...</p>
-        <p id="selection-error" class="hint error"></p>
-        <details id="technical-panel" class="technical-panel">
-          <summary class="minor-action technical-toggle">Show diagnostics</summary>
-          <div class="status-row">
-            <div><span class="label">Mode</span> <span id="mode">-</span></div>
-            <div><span class="label">WS</span> <span id="ws-state">-</span></div>
-            <div><span class="label">Fallback interval</span> <span id="fallback-interval">-</span></div>
-            <div><span class="label">Daily credits left</span> <span id="credits-left">-</span></div>
-            <div><span class="label">Credits updated</span> <span id="credits-updated">-</span></div>
-          </div>
-          <div class="minor-tools-body technical-actions">
-            <button id="refresh-catalog" type="button" class="minor-action">Refresh Symbol List</button>
-            <button id="refresh-credits" type="button" class="minor-action">Refresh Credits</button>
-          </div>
-        </details>
-      </section>
+<body>
+  <!-- Top Navigation Tab Bar -->
+  <nav class="nav-tabs" aria-label="Main navigation">
+    <a href="/" class="nav-tab" data-path="/">
+      <span class="nav-tab-icon">📊</span> Monitor
+    </a>
+    <a href="/ml-lab" class="nav-tab" data-path="/ml-lab">
+      <span class="nav-tab-icon">🧠</span> ML Lab
+    </a>
+    <a href="/compare-lab" class="nav-tab" data-path="/compare-lab">
+      <span class="nav-tab-icon">⚖️</span> Compare
+    </a>
+    <a href="/strategy-lab" class="nav-tab" data-path="/strategy-lab">
+      <span class="nav-tab-icon">🎯</span> Strategy
+    </a>
+  </nav>
 
-      <section class="card">
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Symbol</th>
-                <th>Price (USD)</th>
-                <th>Change (%)</th>
-                <th>30D Trend</th>
-                <th>Updated</th>
-              </tr>
-            </thead>
-            <tbody id="price-table"></tbody>
-          </table>
-        </div>
-      </section>
-    </main>
+  <main class="container">
+    <header class="header">
+      <div class="header-top">
+        <h1>US Stock Live Monitor</h1>
+      </div>
+      <p>Twelve Data Basic プラン対応 (WebSocket + REST fallback)</p>
+      <div class="live-monitor-chips" aria-label="Monitor highlights">
+        <span class="pill chip-cyan">Realtime Feed</span>
+        <span class="pill chip-green">US Equities</span>
+        <span class="pill chip-amber">Sparkline Trends</span>
+      </div>
+    </header>
 
-    <script src="/static/app.js" defer></script>
-    <script src="/static/page_menu.js" defer></script>
-  </body>
+    <section class="card market-time-card">
+      <div class="market-time-grid">
+        <div class="market-time-item">
+          <span class="label">Japan Time (JST)</span>
+          <span id="clock-jst" class="market-time-value">-</span>
+        </div>
+        <div class="market-time-item">
+          <span class="label">US Time (ET)</span>
+          <span id="clock-et" class="market-time-value">-</span>
+        </div>
+        <div class="market-time-item">
+          <span class="label">US Market Hours</span>
+          <span id="market-hours-et" class="market-time-value">09:30-16:00 ET (Mon-Fri)</span>
+          <span id="market-open-state" class="market-state">-</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card controls">
+      <label for="symbol-search">Search & add symbols (max 8)</label>
+      <div id="symbol-search-area" class="symbol-search-area">
+        <input id="symbol-search" name="symbol-search" type="text" autocomplete="off"
+          placeholder="Click and search: AAPL, MSFT, NVDA..." />
+        <div id="symbol-dropdown" class="symbol-dropdown hidden"></div>
+      </div>
+      <p id="catalog-meta" class="hint">Loading symbol catalog...</p>
+      <p id="selection-error" class="hint error"></p>
+      <details id="technical-panel" class="technical-panel">
+        <summary class="minor-action technical-toggle">Show diagnostics</summary>
+        <div class="status-row">
+          <div><span class="label">Mode</span> <span id="mode">-</span></div>
+          <div><span class="label">WS</span> <span id="ws-state">-</span></div>
+          <div><span class="label">Fallback interval</span> <span id="fallback-interval">-</span></div>
+          <div><span class="label">Daily credits left</span> <span id="credits-left">-</span></div>
+          <div><span class="label">Credits updated</span> <span id="credits-updated">-</span></div>
+        </div>
+        <div class="minor-tools-body technical-actions">
+          <button id="refresh-catalog" type="button" class="minor-action">Refresh Symbol List</button>
+          <button id="refresh-credits" type="button" class="minor-action">Refresh Credits</button>
+        </div>
+      </details>
+    </section>
+
+    <section class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Price (USD)</th>
+              <th>Change (%)</th>
+              <th>30D Trend</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody id="price-table"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js" defer></script>
+  <script src="/static/page_menu.js" defer></script>
+</body>
+
 </html>

@@ -1,40 +1,53 @@
 <!doctype html>
 <html lang="ja">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Strategy Lab</title>
-    <link rel="stylesheet" href="/static/styles.css" />
-  </head>
-  <body>
-    <main class="container">
-      <header class="header">
-        <div class="header-top">
-          <h1>Strategy Lab</h1>
-          <details class="page-menu">
-            <summary class="page-menu-btn">Pages</summary>
-            <nav class="page-menu-list" aria-label="Page navigation">
-              <a href="/">US Stock Live Monitor</a>
-              <a href="/ml-lab">ML Forecast Lab</a>
-              <a href="/strategy-lab">Strategy Lab</a>
-              <a href="/compare-lab">Model Compare Lab</a>
-            </nav>
-          </details>
-        </div>
-        <p>将来のバックテストやシグナル評価を収容する拡張ページ</p>
-      </header>
 
-      <section class="page-grid">
-        <article class="card page-card">
-          <h2>Signal Rules</h2>
-          <p class="hint">エントリー/イグジット条件やフィルタを定義する領域</p>
-        </article>
-        <article class="card page-card">
-          <h2>Backtest Summary</h2>
-          <p class="hint">収益率・Sharpe・ドローダウン・勝率などのサマリー表示を想定</p>
-        </article>
-      </section>
-    </main>
-    <script src="/static/page_menu.js" defer></script>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Strategy Lab</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="/static/styles.css?v=20260210e" />
+</head>
+
+<body>
+  <!-- Top Navigation Tab Bar -->
+  <nav class="nav-tabs" aria-label="Main navigation">
+    <a href="/" class="nav-tab" data-path="/">
+      <span class="nav-tab-icon">📊</span> Monitor
+    </a>
+    <a href="/ml-lab" class="nav-tab" data-path="/ml-lab">
+      <span class="nav-tab-icon">🧠</span> ML Lab
+    </a>
+    <a href="/compare-lab" class="nav-tab" data-path="/compare-lab">
+      <span class="nav-tab-icon">⚖️</span> Compare
+    </a>
+    <a href="/strategy-lab" class="nav-tab" data-path="/strategy-lab">
+      <span class="nav-tab-icon">🎯</span> Strategy
+    </a>
+  </nav>
+
+  <main class="container">
+    <header class="header">
+      <div class="header-top">
+        <h1>Strategy Lab</h1>
+      </div>
+      <p>将来のバックテストやシグナル評価を収容する拡張ページ</p>
+    </header>
+
+    <section class="page-grid">
+      <article class="card page-card">
+        <h2>Signal Rules</h2>
+        <p class="hint">エントリー/イグジット条件やフィルタを定義する領域</p>
+      </article>
+      <article class="card page-card">
+        <h2>Backtest Summary</h2>
+        <p class="hint">収益率・Sharpe・ドローダウン・勝率などのサマリー表示を想定</p>
+      </article>
+    </section>
+  </main>
+
+  <script src="/static/page_menu.js" defer></script>
+</body>
+
 </html>
