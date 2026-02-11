@@ -1,4 +1,5 @@
 const tableBody = document.getElementById("price-table");
+const tableHead = tableBody?.closest("table")?.querySelector("thead") || null;
 const symbolSearchArea = document.getElementById("symbol-search-area");
 const symbolSearchInput = document.getElementById("symbol-search");
 const symbolDropdown = document.getElementById("symbol-dropdown");
@@ -31,6 +32,7 @@ let selectedSymbols = [];
 let syncInFlight = false;
 let syncQueued = false;
 let marketClockTimer = null;
+let sortState = { key: "symbol", direction: "asc" };
 
 const JST_TIME_ZONE = "Asia/Tokyo";
 const ET_TIME_ZONE = "America/New_York";
@@ -266,6 +268,119 @@ function getRowCell(tr, name) {
   return tr.querySelector(`[data-col="${name}"]`);
 }
 
+function computeChangePct(symbol, currentPrice, insight = symbolInsightsBySymbol.get(symbol)) {
+  const priceNum = Number(currentPrice);
+  const latestClose = Number(insight?.latest_close);
+  const previousClose = Number(insight?.previous_close);
+  const marketIsOpen = openSymbolsSet.has(symbol);
+  const referenceClose = marketIsOpen
+    ? latestClose
+    : (Number.isFinite(previousClose) && previousClose > 0 ? previousClose : latestClose);
+
+  if (!Number.isFinite(priceNum) || !Number.isFinite(referenceClose) || referenceClose <= 0) {
+    return null;
+  }
+  return ((priceNum - referenceClose) / referenceClose) * 100;
+}
+
+function getSortValue(symbol, key) {
+  const latest = latestRowsBySymbol.get(symbol);
+  const insight = symbolInsightsBySymbol.get(symbol);
+  const trend = Array.isArray(insight?.trend_30d) ? insight.trend_30d : [];
+
+  if (key === "symbol") {
+    return symbol;
+  }
+
+  if (key === "price") {
+    const price = Number(latest?.price);
+    return Number.isFinite(price) ? price : null;
+  }
+
+  if (key === "change") {
+    return computeChangePct(symbol, latest?.price, insight);
+  }
+
+  if (key === "range") {
+    if (trend.length < 2) return null;
+    const high = Math.max(...trend);
+    return Number.isFinite(high) ? high : null;
+  }
+
+  if (key === "ret30d") {
+    return computeReturn30d(trend);
+  }
+
+  if (key === "vol") {
+    return computeAnnualizedVol(trend);
+  }
+
+  if (key === "updated") {
+    const ts = Date.parse(latest?.timestamp || "");
+    return Number.isFinite(ts) ? ts : null;
+  }
+
+  return null;
+}
+
+function compareSortValues(a, b, direction) {
+  const aMissing = a === null || a === undefined;
+  const bMissing = b === null || b === undefined;
+  if (aMissing && bMissing) return 0;
+  if (aMissing) return 1;
+  if (bMissing) return -1;
+
+  if (typeof a === "string" || typeof b === "string") {
+    const result = String(a).localeCompare(String(b), "en", { sensitivity: "base" });
+    return direction === "asc" ? result : -result;
+  }
+
+  const diff = Number(a) - Number(b);
+  if (diff === 0) return 0;
+  return direction === "asc" ? diff : -diff;
+}
+
+function updateSortHeaderUI() {
+  if (!tableHead) return;
+  const sortHeaders = tableHead.querySelectorAll("th[data-sort-key]");
+  sortHeaders.forEach((th) => {
+    const key = th.dataset.sortKey;
+    const isActive = key === sortState.key;
+    th.classList.toggle("sorted", isActive);
+    th.classList.toggle("sorted-asc", isActive && sortState.direction === "asc");
+    th.classList.toggle("sorted-desc", isActive && sortState.direction === "desc");
+    th.setAttribute(
+      "aria-sort",
+      isActive ? (sortState.direction === "asc" ? "ascending" : "descending") : "none",
+    );
+  });
+}
+
+function applySortToTable() {
+  const symbols = Array.from(rowsBySymbol.keys());
+  if (symbols.length <= 1) {
+    updateSortHeaderUI();
+    return;
+  }
+
+  const { key, direction } = sortState;
+  symbols.sort((left, right) => {
+    const leftValue = getSortValue(left, key);
+    const rightValue = getSortValue(right, key);
+    const primary = compareSortValues(leftValue, rightValue, direction);
+    if (primary !== 0) return primary;
+    return left.localeCompare(right, "en", { sensitivity: "base" });
+  });
+
+  const fragment = document.createDocumentFragment();
+  symbols.forEach((symbol) => {
+    const tr = rowsBySymbol.get(symbol);
+    if (tr) fragment.appendChild(tr);
+  });
+  tableBody.appendChild(fragment);
+  updateSortHeaderUI();
+}
+
 function applyInsightToRow(tr, symbol, priceValue) {
   const changeEl = getRowCell(tr, "change");
   const sparklineEl = getRowCell(tr, "sparkline");
@@ -278,15 +393,8 @@ function applyInsightToRow(tr, symbol, priceValue) {
   changeEl.classList.remove("up", "down");
 
   const currentPrice = Number(priceValue);
-  const latestClose = Number(insight?.latest_close);
-  const previousClose = Number(insight?.previous_close);
-  const marketIsOpen = openSymbolsSet.has(symbol);
-  const referenceClose = marketIsOpen
-    ? latestClose
-    : (Number.isFinite(previousClose) && previousClose > 0 ? previousClose : latestClose);
-
-  if (Number.isFinite(currentPrice) && Number.isFinite(referenceClose) && referenceClose > 0) {
-    const pct = ((currentPrice - referenceClose) / referenceClose) * 100;
+  const pct = computeChangePct(symbol, currentPrice, insight);
+  if (Number.isFinite(pct)) {
     if (pct > 0) {
       changeEl.classList.add("up");
       changeEl.textContent = `▲ ${formatChangePercent(pct)}`;
@@ -497,6 +605,7 @@ function renderRow(update, options = {}) {
   }
 
   refreshRowActionState();
+  applySortToTable();
 }
 
 function refreshRowsForInsights(symbols) {
@@ -571,6 +680,7 @@ function resetRows(symbols) {
     applyInsightToRow(tr, symbol, null);
   });
   refreshRowActionState();
+  applySortToTable();
 }
 
 function renderRows(rows, fallbackSymbols = []) {
@@ -806,6 +916,25 @@ function connectEventStream() {
   };
 }
 
+if (tableHead) {
+  tableHead.addEventListener("click", (event) => {
+    const header = event.target.closest("th[data-sort-key]");
+    if (!header) return;
+    const key = header.dataset.sortKey;
+    if (!key) return;
+
+    if (sortState.key === key) {
+      sortState = {
+        key,
+        direction: sortState.direction === "asc" ? "desc" : "asc",
+      };
+    } else {
+      sortState = { key, direction: key === "updated" ? "desc" : "asc" };
+    }
+    applySortToTable();
+  });
+}
+
 symbolSearchInput.addEventListener("focus", () => {
   renderDropdown();
 });
@@ -883,6 +1012,8 @@ refreshCreditsBtn.addEventListener("click", async () => {
     refreshCreditsBtn.disabled = false;
   }
 });
+
+updateSortHeaderUI();
 
 loadSymbolCatalog().catch(() => {
   setCatalogMeta("Failed to load symbol catalog");

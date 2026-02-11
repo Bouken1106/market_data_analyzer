@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import (
     DATA_PROVIDER,
     FMP_API_KEY,
+    FMP_REFERENCE_CACHE_DIR,
     LAST_PRICE_CACHE_PATH,
     FULL_DAILY_HISTORY_CACHE_DIR,
     MAX_BASIC_SYMBOLS,
@@ -27,7 +28,7 @@ from .hub import MarketDataHub
 from .ml.job_store import MlJobStore
 from .ml.pipelines import set_hub, set_ml_job_store
 from .routes import init_routes, router
-from .stores import FullDailyHistoryStore, LastPriceStore, SymbolCatalogStore
+from .stores import FmpReferenceStore, FullDailyHistoryStore, LastPriceStore, SymbolCatalogStore
 from .utils import normalize_symbols
 
 # ---------------------------------------------------------------------------
@@ -60,6 +61,7 @@ if DATA_PROVIDER == "both":
 
 last_price_store = LastPriceStore(cache_path=LAST_PRICE_CACHE_PATH)
 full_daily_history_store = FullDailyHistoryStore(cache_dir=FULL_DAILY_HISTORY_CACHE_DIR)
+fmp_reference_store = FmpReferenceStore(cache_dir=FMP_REFERENCE_CACHE_DIR)
 symbol_catalog_store = SymbolCatalogStore(
     provider=DATA_PROVIDER,
     twelvedata_api_key=TWELVE_DATA_API_KEY,
@@ -76,6 +78,7 @@ hub = MarketDataHub(
     symbols=DEFAULT_SYMBOLS,
     last_price_store=last_price_store,
     full_daily_history_store=full_daily_history_store,
+    fmp_reference_store=fmp_reference_store,
 )
 
 # Inject singletons where needed

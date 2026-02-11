@@ -517,6 +517,7 @@ details[open]>.technical-toggle::before {
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 4px;
   padding: 4px 0;
+  min-width: 0;
 }
 
 .status-row>div {
@@ -527,12 +528,20 @@ details[open]>.technical-toggle::before {
   background: var(--bg-panel-alt);
   border-radius: var(--radius);
   border-left: 2px solid var(--border-accent);
+  min-width: 0;
+  overflow: visible;
+  position: relative;
 }
 
 .status-row span:not(.label) {
   font-family: var(--font-mono);
   font-size: 0.8rem;
   color: var(--text-bright);
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.35;
 }
 
 /* ---------- Tables ---------- */
@@ -561,6 +570,29 @@ thead th {
   text-align: left;
   border-bottom: 2px solid var(--border-accent);
   white-space: nowrap;
+}
+
+thead th[data-sort-key] {
+  cursor: pointer;
+  user-select: none;
+}
+
+thead th[data-sort-key]::after {
+  content: " ⇅";
+  color: var(--text-dim);
+  font-size: 0.72rem;
+}
+
+thead th.sorted::after {
+  color: var(--cyan);
+}
+
+thead th.sorted-asc::after {
+  content: " ▲";
+}
+
+thead th.sorted-desc::after {
+  content: " ▼";
 }
 
 tbody td {
@@ -977,6 +1009,14 @@ tbody tr:hover {
   color: var(--text-bright);
 }
 
+.metric-good {
+  color: var(--green) !important;
+}
+
+.metric-bad {
+  color: var(--red) !important;
+}
+
 /* Canvas */
 .ml-canvas-shell {
   position: relative;
@@ -1174,13 +1214,64 @@ tbody tr:hover {
   display: flex;
   align-items: center;
   gap: 3px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 /* Detail grid */
 .overview-detail-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--gap);
+}
+
+.overview-detail-grid > .card,
+.overview-metrics,
+.overview-tech {
+  min-width: 0;
+}
+
+.overview-tech .status-row {
+  display: block !important;
+  min-width: 0;
+}
+
+.overview-tech .status-row > div {
+  min-width: 0;
+  margin-bottom: 6px;
+}
+
+.overview-tech .status-row span:not(.label) {
+  display: block;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.overview-tech {
+  z-index: 40;
+}
+
+.overview-tech .param-help {
+  position: relative;
+  z-index: 300;
+}
+
+.overview-tech .param-help[open] {
+  z-index: 320;
+}
+
+.param-help {
+  z-index: 200;
+}
+
+.param-help[open] {
+  z-index: 220;
+}
+
+.param-help p {
+  z-index: 500;
 }
 
 /* ============================================================

@@ -69,6 +69,22 @@ const supportBoardEl = document.getElementById("support-board");
 const supportEventsEl = document.getElementById("support-events");
 const supportCorporateEl = document.getElementById("support-corporate");
 const supportNewsEl = document.getElementById("support-news");
+const loadFmpReferenceBtn = document.getElementById("load-fmp-reference");
+const refreshFmpReferenceBtn = document.getElementById("refresh-fmp-reference");
+const clearFmpReferenceCacheBtn = document.getElementById("clear-fmp-reference-cache");
+const fmpReferenceMetaEl = document.getElementById("fmp-reference-meta");
+const fmpAdjCloseEl = document.getElementById("fmp-adj-close");
+const fmpAdjFactorEl = document.getElementById("fmp-adj-factor");
+const fmpLastUpdatedEl = document.getElementById("fmp-last-updated");
+const fmpSectorIndustryEl = document.getElementById("fmp-sector-industry");
+const fmpMarketCapEl = document.getElementById("fmp-market-cap");
+const fmpKeyRatiosEl = document.getElementById("fmp-key-ratios");
+const fmpIsSnapshotEl = document.getElementById("fmp-is-snapshot");
+const fmpBsSnapshotEl = document.getElementById("fmp-bs-snapshot");
+const fmpCfSnapshotEl = document.getElementById("fmp-cf-snapshot");
+const fmpDividendsEl = document.getElementById("fmp-dividends");
+const fmpSplitsEl = document.getElementById("fmp-splits");
+const fmpCompanyProfileEl = document.getElementById("fmp-company-profile");
 
 let currentSymbol = "";
 let currentPayload = null;
@@ -116,6 +132,15 @@ function formatSignedPrice(value) {
   return `${sign}${formatPrice(value)}`;
 }
 
+function formatMaybeCompactCurrency(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  if (Math.abs(num) >= 1_000_000) {
+    return `$${formatCompact(num)}`;
+  }
+  return `$${formatPrice(num)}`;
+}
+
 function formatIsoTime(value) {
   if (!value) return "-";
   const dt = new Date(value);
@@ -134,6 +159,12 @@ function formatIsoTime(value) {
 function setHistoryMeta(message, isError = false) {
   historyMetaEl.textContent = message || "";
   historyMetaEl.classList.toggle("error", Boolean(isError));
+}
+
+function setFmpMeta(message, isError = false) {
+  if (!fmpReferenceMetaEl) return;
+  fmpReferenceMetaEl.textContent = message || "";
+  fmpReferenceMetaEl.classList.toggle("error", Boolean(isError));
 }
 
 function closeParamHelpPopovers(exceptDetail = null) {
@@ -158,6 +189,87 @@ function quantile(sortedValues, q) {
   if (low === high) return sortedValues[low];
   const weight = pos - low;
   return sortedValues[low] * (1 - weight) + (sortedValues[high] * weight);
+}
+
+function setMetricTrendClass(el, trend) {
+  if (!el) return;
+  el.classList.remove("metric-good", "metric-bad");
+  if (trend === "good") {
+    el.classList.add("metric-good");
+  } else if (trend === "bad") {
+    el.classList.add("metric-bad");
+  }
+}
+
+function computeRollingRiskFromCloses(closes, window = 30) {
+  const safeCloses = (Array.isArray(closes) ? closes : [])
+    .map((item) => Number(item))
+    .filter((num) => Number.isFinite(num) && num > 0);
+  if (safeCloses.length < window + 1) {
+    return { vol: null, dd: null, var95: null };
+  }
+
+  const selected = safeCloses.slice(-(window + 1));
+  const returns = [];
+  for (let i = 1; i < selected.length; i += 1) {
+    returns.push((selected[i] / selected[i - 1]) - 1);
+  }
+  if (returns.length < 2) {
+    return { vol: null, dd: null, var95: null };
+  }
+
+  const mean = returns.reduce((acc, value) => acc + value, 0) / returns.length;
+  const variance = returns.reduce((acc, value) => acc + ((value - mean) ** 2), 0) / (returns.length - 1);
+  const vol = Math.sqrt(Math.max(0, variance)) * Math.sqrt(252) * 100;
+  const sortedReturns = [...returns].sort((a, b) => a - b);
+  const p05 = quantile(sortedReturns, 0.05);
+  const var95 = Number.isFinite(p05) ? Math.max(0, -p05 * 100) : null;
+
+  let peak = selected[0];
+  let maxDrawdown = 0;
+  for (const close of selected) {
+    peak = Math.max(peak, close);
+    const drawdown = peak > 0 ? ((peak - close) / peak) * 100 : 0;
+    maxDrawdown = Math.max(maxDrawdown, drawdown);
+  }
+
+  return { vol, dd: maxDrawdown, var95 };
+}
+
+function computeAtr(points, window = 14) {
+  const rows = Array.isArray(points) ? points : [];
+  if (rows.length < window + 1) return null;
+  let prevClose = Number(rows[0]?.c);
+  if (!Number.isFinite(prevClose)) return null;
+  const trs = [];
+  for (let i = 1; i < rows.length; i += 1) {
+    const high = Number(rows[i]?.h);
+    const low = Number(rows[i]?.l);
+    const close = Number(rows[i]?.c);
+    if (!Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close)) {
+      prevClose = Number.isFinite(close) ? close : prevClose;
+      continue;
+    }
+    const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+    if (Number.isFinite(tr) && tr >= 0) {
+      trs.push(tr);
+    }
+    prevClose = close;
+  }
+  if (trs.length < window) return null;
+  const sample = trs.slice(-window);
+  return sample.reduce((acc, value) => acc + value, 0) / window;
+}
+
+function computeGapPctFromPoints(points) {
+  const rows = Array.isArray(points) ? points : [];
+  if (rows.length < 2) return null;
+  const last = rows[rows.length - 1];
+  const prev = rows[rows.length - 2];
+  const open = Number(last?.o);
+  const prevClose = Number(prev?.c);
+  if (!Number.isFinite(open) || !Number.isFinite(prevClose) || prevClose <= 0) return null;
+  return ((open - prevClose) / prevClose) * 100;
 }
 
 function setRiskMetrics(dayPoints, overview) {
@@ -218,6 +330,41 @@ function setRiskMetrics(dayPoints, overview) {
   priceGapEl.textContent = Number.isFinite(gapAbs) && Number.isFinite(gapPct)
     ? `${formatSignedPrice(gapAbs)} (${formatPercent(gapPct)})`
     : "-";
+
+  // Day-over-day coloring for safety-oriented daily metrics.
+  const latestRisk = computeRollingRiskFromCloses(closes, 30);
+  const prevRisk = computeRollingRiskFromCloses(closes.slice(0, -1), 30);
+  if (Number.isFinite(latestRisk.vol) && Number.isFinite(prevRisk.vol)) {
+    setMetricTrendClass(riskVol30El, latestRisk.vol <= prevRisk.vol ? "good" : "bad");
+  } else {
+    setMetricTrendClass(riskVol30El, "neutral");
+  }
+  if (Number.isFinite(latestRisk.dd) && Number.isFinite(prevRisk.dd)) {
+    setMetricTrendClass(riskDd30El, latestRisk.dd <= prevRisk.dd ? "good" : "bad");
+  } else {
+    setMetricTrendClass(riskDd30El, "neutral");
+  }
+  if (Number.isFinite(latestRisk.var95) && Number.isFinite(prevRisk.var95)) {
+    setMetricTrendClass(riskVar95El, latestRisk.var95 <= prevRisk.var95 ? "good" : "bad");
+  } else {
+    setMetricTrendClass(riskVar95El, "neutral");
+  }
+
+  const latestAtr = computeAtr(dayPoints, 14);
+  const prevAtr = computeAtr((Array.isArray(dayPoints) ? dayPoints : []).slice(0, -1), 14);
+  if (Number.isFinite(latestAtr) && Number.isFinite(prevAtr)) {
+    setMetricTrendClass(techAtrEl, latestAtr <= prevAtr ? "good" : "bad");
+  } else {
+    setMetricTrendClass(techAtrEl, "neutral");
+  }
+
+  const latestGapPct = computeGapPctFromPoints(dayPoints);
+  const prevGapPct = computeGapPctFromPoints((Array.isArray(dayPoints) ? dayPoints : []).slice(0, -1));
+  if (Number.isFinite(latestGapPct) && Number.isFinite(prevGapPct)) {
+    setMetricTrendClass(priceGapEl, Math.abs(latestGapPct) <= Math.abs(prevGapPct) ? "good" : "bad");
+  } else {
+    setMetricTrendClass(priceGapEl, "neutral");
+  }
 }
 
 function fitCanvas(canvas, cssHeight = CHART_HEIGHT) {
@@ -880,6 +1027,167 @@ function formatMarketProxy(item) {
   return `${symbol} $${formatPrice(price)} (${formatPercent(pct)})`;
 }
 
+function setFmpPlaceholder() {
+  const targets = [
+    fmpAdjCloseEl,
+    fmpAdjFactorEl,
+    fmpLastUpdatedEl,
+    fmpSectorIndustryEl,
+    fmpMarketCapEl,
+    fmpKeyRatiosEl,
+    fmpIsSnapshotEl,
+    fmpBsSnapshotEl,
+    fmpCfSnapshotEl,
+    fmpDividendsEl,
+    fmpSplitsEl,
+    fmpCompanyProfileEl,
+  ];
+  targets.forEach((el) => {
+    if (el) el.textContent = "-";
+  });
+}
+
+function renderFmpReference(payload) {
+  const adjusted = payload?.adjusted_prices || {};
+  const profile = payload?.profile || {};
+  const financials = payload?.financials || {};
+  const ratios = financials?.ratios_ttm || {};
+  const income = financials?.income_statement_latest || {};
+  const bs = financials?.balance_sheet_latest || {};
+  const cf = financials?.cash_flow_latest || {};
+  const actions = payload?.corporate_actions || {};
+  const dividends = Array.isArray(actions?.dividends) ? actions.dividends : [];
+  const splits = Array.isArray(actions?.splits) ? actions.splits : [];
+
+  if (fmpAdjCloseEl) {
+    const adjClose = Number(adjusted.latest_adj_close);
+    const close = Number(adjusted.latest_close);
+    const dateText = adjusted.latest_date ? ` (${adjusted.latest_date})` : "";
+    fmpAdjCloseEl.textContent = Number.isFinite(adjClose)
+      ? `$${formatPrice(adjClose)} vs close $${formatPrice(close)}${dateText}`
+      : "-";
+  }
+  if (fmpAdjFactorEl) {
+    const factor = Number(adjusted.latest_adjustment_factor);
+    fmpAdjFactorEl.textContent = Number.isFinite(factor) ? factor.toFixed(6) : "-";
+  }
+  if (fmpLastUpdatedEl) {
+    const updated = payload?.updated_at || payload?.cached_at;
+    fmpLastUpdatedEl.textContent = updated ? formatIsoTime(updated) : "-";
+  }
+  if (fmpSectorIndustryEl) {
+    const sector = String(profile.sector || "").trim();
+    const industry = String(profile.industry || "").trim();
+    fmpSectorIndustryEl.textContent = sector || industry ? `${sector || "-"} / ${industry || "-"}` : "-";
+  }
+  if (fmpMarketCapEl) {
+    fmpMarketCapEl.textContent = formatMaybeCompactCurrency(profile.market_cap);
+  }
+  if (fmpKeyRatiosEl) {
+    const pe = Number(ratios.pe_ratio_ttm);
+    const pb = Number(ratios.pb_ratio_ttm);
+    const roe = Number(ratios.roe_ttm);
+    fmpKeyRatiosEl.textContent = `${Number.isFinite(pe) ? pe.toFixed(2) : "-"} / ${Number.isFinite(pb) ? pb.toFixed(2) : "-"} / ${Number.isFinite(roe) ? `${(roe * 100).toFixed(2)}%` : "-"}`;
+  }
+  if (fmpIsSnapshotEl) {
+    fmpIsSnapshotEl.textContent = `${formatMaybeCompactCurrency(income.revenue)} / ${formatMaybeCompactCurrency(income.net_income)}`;
+  }
+  if (fmpBsSnapshotEl) {
+    fmpBsSnapshotEl.textContent = `${formatMaybeCompactCurrency(bs.total_assets)} / ${formatMaybeCompactCurrency(bs.total_debt)} / ${formatMaybeCompactCurrency(bs.total_equity)}`;
+  }
+  if (fmpCfSnapshotEl) {
+    fmpCfSnapshotEl.textContent = `${formatMaybeCompactCurrency(cf.operating_cash_flow)} / ${formatMaybeCompactCurrency(cf.free_cash_flow)}`;
+  }
+  if (fmpDividendsEl) {
+    fmpDividendsEl.textContent = dividends.length > 0
+      ? dividends.slice(0, 4).map((item) => `${item.date || "-"}: ${Number.isFinite(Number(item.dividend)) ? Number(item.dividend).toFixed(4) : "-"}`).join(" | ")
+      : "none";
+  }
+  if (fmpSplitsEl) {
+    fmpSplitsEl.textContent = splits.length > 0
+      ? splits.slice(0, 4).map((item) => `${item.date || "-"}: ${Number.isFinite(Number(item.numerator)) && Number.isFinite(Number(item.denominator)) ? `${item.numerator}:${item.denominator}` : "-"}`).join(" | ")
+      : "none";
+  }
+  if (fmpCompanyProfileEl) {
+    const profileText = {
+      company_name: profile.company_name || null,
+      exchange: profile.exchange || null,
+      website: profile.website || null,
+      country: profile.country || null,
+      ceo: profile.ceo || null,
+      employees: profile.employees || null,
+      ipo_date: profile.ipo_date || null,
+      beta: profile.beta ?? null,
+      description: profile.description || null,
+    };
+    fmpCompanyProfileEl.textContent = JSON.stringify(profileText, null, 2);
+  }
+}
+
+async function loadFmpReference(refresh = false, cacheOnly = false) {
+  if (!currentSymbol || !loadFmpReferenceBtn || !refreshFmpReferenceBtn) return;
+  loadFmpReferenceBtn.disabled = true;
+  refreshFmpReferenceBtn.disabled = true;
+  if (clearFmpReferenceCacheBtn) clearFmpReferenceCacheBtn.disabled = true;
+  if (refresh) {
+    setFmpMeta("Refreshing FMP data...");
+  } else if (cacheOnly) {
+    setFmpMeta("Loading cached FMP data...");
+  } else {
+    setFmpMeta("Loading FMP data...");
+  }
+
+  try {
+    const params = new URLSearchParams();
+    if (refresh) params.set("refresh", "true");
+    if (cacheOnly) params.set("cache_only", "true");
+    const query = params.toString();
+    const url = `/api/fmp-reference/${encodeURIComponent(currentSymbol)}${query ? `?${query}` : ""}`;
+    const response = await fetch(url);
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.ok) {
+      if (cacheOnly) {
+        setFmpPlaceholder();
+        setFmpMeta("No cached FMP data. Press Refresh FMP Data to fetch.", false);
+      } else {
+        setFmpMeta(result.detail || "Failed to load FMP data", true);
+      }
+      return;
+    }
+    renderFmpReference(result);
+    const updated = result.updated_at || result.cached_at;
+    const updatedText = updated ? formatIsoTime(updated) : "-";
+    const staleNote = result.cache_stale ? " (stale cache)" : "";
+    setFmpMeta(`Loaded FMP data (${result.source || "unknown"}${staleNote}, updated ${updatedText}, est ${result.estimated_api_calls_on_refresh || "-"} calls/refresh).`);
+  } finally {
+    loadFmpReferenceBtn.disabled = false;
+    refreshFmpReferenceBtn.disabled = false;
+    if (clearFmpReferenceCacheBtn) clearFmpReferenceCacheBtn.disabled = false;
+  }
+}
+
+async function clearFmpReferenceCache() {
+  if (!currentSymbol || !clearFmpReferenceCacheBtn) return;
+  clearFmpReferenceCacheBtn.disabled = true;
+  try {
+    const response = await fetch(`/api/fmp-reference/${encodeURIComponent(currentSymbol)}/clear-cache`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.ok) {
+      setFmpMeta(result.detail || "Failed to clear FMP cache", true);
+      return;
+    }
+    setFmpPlaceholder();
+    setFmpMeta("FMP cache cleared.");
+  } finally {
+    clearFmpReferenceCacheBtn.disabled = false;
+  }
+}
+
 async function loadOverview(refresh = false) {
   if (!currentSymbol) return;
 
@@ -1015,6 +1323,11 @@ async function loadDailyFallback(refresh = false) {
     supportNewsEl.textContent = "not_supported_on_fallback";
     techAtrEl.textContent = "-";
     priceGapEl.textContent = "-";
+    setMetricTrendClass(riskVol30El, "neutral");
+    setMetricTrendClass(riskDd30El, "neutral");
+    setMetricTrendClass(riskVar95El, "neutral");
+    setMetricTrendClass(techAtrEl, "neutral");
+    setMetricTrendClass(priceGapEl, "neutral");
 
     const lastClose = Number(result.points[result.points.length - 1]?.c);
     setCurrentPrice(lastClose);
@@ -1064,6 +1377,21 @@ clearHistoryCacheBtn.addEventListener("click", async () => {
 if (loadQqqBtn) {
   loadQqqBtn.addEventListener("click", async () => {
     await loadQqqOnDemand();
+  });
+}
+if (loadFmpReferenceBtn) {
+  loadFmpReferenceBtn.addEventListener("click", async () => {
+    await loadFmpReference(false, true);
+  });
+}
+if (refreshFmpReferenceBtn) {
+  refreshFmpReferenceBtn.addEventListener("click", async () => {
+    await loadFmpReference(true, false);
+  });
+}
+if (clearFmpReferenceCacheBtn) {
+  clearFmpReferenceCacheBtn.addEventListener("click", async () => {
+    await clearFmpReferenceCache();
   });
 }
 
@@ -1146,11 +1474,14 @@ async function init() {
   document.title = `${currentSymbol} Stock Overview`;
   symbolTitleEl.textContent = `${currentSymbol} Market Overview`;
   symbolSubtitleEl.textContent = "Loading...";
+  setFmpPlaceholder();
+  setFmpMeta("Loading cached FMP reference data...");
   setIntervalButtonAvailability();
   setIntervalButtonState();
   drawPlaceholder("Loading...");
 
   await loadOverview(false);
+  await loadFmpReference(false, true);
 }
 
 void init();

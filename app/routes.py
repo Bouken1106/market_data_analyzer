@@ -175,6 +175,18 @@ async def clear_security_overview_cache(symbol: str) -> JSONResponse:
     return ok_json_response(**payload)
 
 
+@router.get("/api/fmp-reference/{symbol}")
+async def fmp_reference(symbol: str, refresh: bool = False, cache_only: bool = False) -> JSONResponse:
+    payload = await _hub.fmp_reference_payload(symbol=symbol, refresh=refresh, cache_only=cache_only)
+    return ok_json_response(**payload)
+
+
+@router.post("/api/fmp-reference/{symbol}/clear-cache")
+async def clear_fmp_reference_cache(symbol: str) -> JSONResponse:
+    payload = await _hub.clear_fmp_reference_cache(symbol=symbol)
+    return ok_json_response(**payload)
+
+
 @router.get("/api/ml/models")
 async def ml_models() -> JSONResponse:
     return ok_json_response(models=ML_MODEL_CATALOG)

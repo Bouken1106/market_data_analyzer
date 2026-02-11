@@ -116,6 +116,7 @@ _APP_DIR = Path(__file__).resolve().parent
 SYMBOL_CATALOG_CACHE_PATH = _APP_DIR / "cache" / "us_stock_symbol_catalog.json"
 LAST_PRICE_CACHE_PATH = _APP_DIR / "cache" / "last_prices.json"
 FULL_DAILY_HISTORY_CACHE_DIR = _APP_DIR / "cache" / "daily_history"
+FMP_REFERENCE_CACHE_DIR = _APP_DIR / "cache" / "fmp_reference"
 
 # ---------------------------------------------------------------------------
 # Historical data
@@ -131,6 +132,21 @@ FULL_HISTORY_CHUNK_YEARS = _int_env("FULL_HISTORY_CHUNK_YEARS", default=15, mini
 FULL_HISTORY_MAX_CHUNKS = _int_env("FULL_HISTORY_MAX_CHUNKS", default=20, minimum=1)
 DAILY_DIFF_MIN_RECHECK_SEC = _int_env("DAILY_DIFF_MIN_RECHECK_SEC", default=21600, minimum=60)
 BETA_MARKET_RECHECK_SEC = _int_env("BETA_MARKET_RECHECK_SEC", default=86400, minimum=300)
+FMP_REFERENCE_CACHE_TTL_SEC = _int_env("FMP_REFERENCE_CACHE_TTL_SEC", default=43200, minimum=300)
+
+# ---------------------------------------------------------------------------
+# FMP fundamental/reference endpoints
+# ---------------------------------------------------------------------------
+
+FMP_PROFILE_URL = "https://financialmodelingprep.com/stable/profile"
+FMP_KEY_METRICS_TTM_URL = "https://financialmodelingprep.com/stable/key-metrics-ttm"
+FMP_RATIOS_TTM_URL = "https://financialmodelingprep.com/stable/ratios-ttm"
+FMP_INCOME_STATEMENT_URL = "https://financialmodelingprep.com/stable/income-statement"
+FMP_BALANCE_SHEET_URL = "https://financialmodelingprep.com/stable/balance-sheet-statement"
+FMP_CASH_FLOW_URL = "https://financialmodelingprep.com/stable/cash-flow-statement"
+FMP_DIVIDEND_ADJUSTED_PRICE_URL = "https://financialmodelingprep.com/stable/historical-price-eod/dividend-adjusted"
+FMP_DIVIDENDS_URL = "https://financialmodelingprep.com/stable/dividends"
+FMP_SPLITS_URL = "https://financialmodelingprep.com/stable/splits"
 
 # ---------------------------------------------------------------------------
 # Overview / Sparkline

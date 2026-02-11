@@ -67,6 +67,7 @@ HISTORICAL_MAX_YEARS=10
 HISTORICAL_CACHE_TTL_SEC=43200
 HISTORICAL_INTERVAL=1day
 HISTORICAL_MAX_POINTS=2000
+FMP_REFERENCE_CACHE_TTL_SEC=43200
 OVERVIEW_CACHE_TTL_SEC=120
 TIME_SERIES_MAX_OUTPUTSIZE=5000
 FULL_HISTORY_CHUNK_YEARS=15
@@ -112,6 +113,11 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
    - SPY/QQQ（指数プロキシ）と 60日 β/相関（対SPY）
    - Basicプラン/現データソースで未対応の項目（板情報、企業イベント、ニュース等）は `not_supported` 表示
    - `Clear Cache` ボタンで当該銘柄の詳細キャッシュ（日足永続キャッシュ含む）を削除し、再取得できる
+   - FMP Fundamentals + Corporate Actions セクションでは、以下を手動ロードで表示可能（APIクレジット節約のため自動取得しない）
+     - 配当込み調整済み価格（Adj Close/調整係数）
+     - 配当・分割履歴（最近分）
+     - 会社プロフィール
+     - 財務諸表（IS/BS/CF）と主要財務指標（ratios/metrics）
 5. 下のテーブルの `Symbol` 欄にある `x` を押すと監視対象から除外
 6. テーブルに価格・更新時刻が表示され、取得ソース（`websocket` / `rest` / `stored`）は更新時刻の下に小さく表示
    - `change(%)` は営業中は「現在値 vs 前営業日終値」、休場中は「直近営業日終値 vs その1つ前の営業日終値」で表示
@@ -172,6 +178,8 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `GET /api/security-overview/{symbol}`: 銘柄詳細（`include_intraday` / `include_market` で取得項目を制御可能）
 - `GET /api/security-overview/{symbol}/intraday`: 1分/5分足とVWAPのみを取得
 - `POST /api/security-overview/{symbol}/clear-cache`: 当該銘柄の詳細キャッシュを削除
+- `GET /api/fmp-reference/{symbol}`: FMPの企業情報・財務・コーポレートアクションを取得（`refresh=true`で再取得）
+- `POST /api/fmp-reference/{symbol}/clear-cache`: FMP reference キャッシュを削除
 - `GET /api/ml/models`: ML Forecast Lab のモデル一覧（Ready / Coming Soon）
 - `GET /api/ml/quantile-lstm?...`: Quantile LSTM を学習・推論し、分位点/評価/描画データを返却（`months=3..60`, デフォルト `60`）
 - `GET /api/ml/patchtst?...`: PatchTST Quantile を学習・推論し、分位点/評価/描画データを返却（`months=3..60`, デフォルト `60`）
@@ -194,3 +202,4 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 - この実装は「監視用途」の最小構成です。注文機能や資産管理は含みません。
 - API キーはサーバー側環境変数で管理し、クライアント側に露出させない設計です。
+- FMP reference は1回の `refresh` で複数エンドポイントを呼びます（目安: 約9 calls）。`FMP_REFERENCE_CACHE_TTL_SEC` を長めに設定し、必要時のみ更新してください。
