@@ -91,6 +91,35 @@ function formatChangePercent(value) {
   return `${Math.abs(value).toFixed(2)}%`;
 }
 
+function computeAnnualizedVol(prices) {
+  if (!Array.isArray(prices) || prices.length < 3) return null;
+  const logReturns = [];
+  for (let i = 1; i < prices.length; i++) {
+    if (prices[i - 1] > 0 && prices[i] > 0) {
+      logReturns.push(Math.log(prices[i] / prices[i - 1]));
+    }
+  }
+  if (logReturns.length < 2) return null;
+  const mean = logReturns.reduce((s, v) => s + v, 0) / logReturns.length;
+  const variance = logReturns.reduce((s, v) => s + (v - mean) ** 2, 0) / (logReturns.length - 1);
+  return Math.sqrt(variance) * Math.sqrt(252) * 100;
+}
+
+function computeReturn30d(prices) {
+  if (!Array.isArray(prices) || prices.length < 2) return null;
+  const first = prices[0];
+  const last = prices[prices.length - 1];
+  if (!Number.isFinite(first) || !Number.isFinite(last) || first <= 0) return null;
+  return ((last - first) / first) * 100;
+}
+
+function volLevel(vol) {
+  if (!Number.isFinite(vol)) return "";
+  if (vol < 20) return "vol-low";
+  if (vol < 35) return "vol-mid";
+  return "vol-high";
+}
+
 function readZoneClockParts(date, formatter) {
   const parts = formatter.formatToParts(date);
   const pick = (type) => parts.find((item) => item.type === type)?.value || "";
@@ -232,6 +261,9 @@ function getRowCell(tr, name) {
 function applyInsightToRow(tr, symbol, priceValue) {
   const changeEl = getRowCell(tr, "change");
   const sparklineEl = getRowCell(tr, "sparkline");
+  const rangeEl = getRowCell(tr, "range");
+  const retEl = getRowCell(tr, "return30d");
+  const volEl = getRowCell(tr, "vol");
   if (!changeEl || !sparklineEl) return;
   const insight = symbolInsightsBySymbol.get(symbol);
 
@@ -260,7 +292,56 @@ function applyInsightToRow(tr, symbol, priceValue) {
     changeEl.textContent = "-";
   }
 
-  sparklineEl.innerHTML = renderSparklineSvg(insight?.trend_30d ?? []);
+  const trend = insight?.trend_30d ?? [];
+  sparklineEl.innerHTML = renderSparklineSvg(trend);
+
+  // 30D High / Low
+  if (rangeEl) {
+    if (trend.length >= 2) {
+      const high = Math.max(...trend);
+      const low = Math.min(...trend);
+      rangeEl.innerHTML = `<span class="range-high">${formatPrice(high)}</span> <span class="range-sep">/</span> <span class="range-low">${formatPrice(low)}</span>`;
+    } else {
+      rangeEl.textContent = "-";
+    }
+  }
+
+  // 30D Return
+  if (retEl) {
+    retEl.classList.remove("up", "down");
+    const ret = computeReturn30d(trend);
+    if (Number.isFinite(ret)) {
+      if (ret > 0) {
+        retEl.classList.add("up");
+        retEl.textContent = `▲ ${Math.abs(ret).toFixed(2)}%`;
+      } else if (ret < 0) {
+        retEl.classList.add("down");
+        retEl.textContent = `▼ ${Math.abs(ret).toFixed(2)}%`;
+      } else {
+        retEl.textContent = "0.00%";
+      }
+    } else {
+      retEl.textContent = "-";
+    }
+  }
+
+  // Volatility
+  if (volEl) {
+    volEl.classList.remove("vol-low", "vol-mid", "vol-high");
+    const vol = computeAnnualizedVol(trend);
+    if (Number.isFinite(vol)) {
+      volEl.textContent = `${vol.toFixed(1)}%`;
+      const level = volLevel(vol);
+      if (level) volEl.classList.add(level);
+    } else {
+      volEl.textContent = "-";
+    }
+  }
+}
+
+function findCatalogName(symbol) {
+  const entry = symbolCatalog.find((item) => item.symbol === symbol);
+  return entry?.name || "";
 }
 
 function ensureRow(symbol) {
@@ -289,7 +370,11 @@ function ensureRow(symbol) {
   removeBtn.textContent = "x";
   symCell.appendChild(openBtn);
   symCell.appendChild(removeBtn);
+  const nameDiv = document.createElement("div");
+  nameDiv.className = "sym-name";
+  nameDiv.textContent = findCatalogName(symbol);
   symTd.appendChild(symCell);
+  symTd.appendChild(nameDiv);
   tr.appendChild(symTd);
 
   const priceTd = document.createElement("td");
@@ -303,6 +388,24 @@ function ensureRow(symbol) {
   changeTd.dataset.col = "change";
   changeTd.textContent = "-";
   tr.appendChild(changeTd);
+
+  const rangeTd = document.createElement("td");
+  rangeTd.className = "range-cell";
+  rangeTd.dataset.col = "range";
+  rangeTd.textContent = "-";
+  tr.appendChild(rangeTd);
+
+  const retTd = document.createElement("td");
+  retTd.className = "return-cell";
+  retTd.dataset.col = "return30d";
+  retTd.textContent = "-";
+  tr.appendChild(retTd);
+
+  const volTd = document.createElement("td");
+  volTd.className = "vol-cell";
+  volTd.dataset.col = "vol";
+  volTd.textContent = "-";
+  tr.appendChild(volTd);
 
   const sparkTd = document.createElement("td");
   sparkTd.className = "sparkline-cell";
@@ -340,6 +443,7 @@ function refreshRowActionState() {
   for (const [symbol, tr] of rowsBySymbol.entries()) {
     const openBtn = tr.querySelector(".sym-open");
     const removeBtn = tr.querySelector(".sym-remove");
+    const nameDiv = tr.querySelector(".sym-name");
     if (openBtn) {
       openBtn.dataset.symbol = symbol;
       openBtn.textContent = symbol;
@@ -348,6 +452,9 @@ function refreshRowActionState() {
       removeBtn.dataset.symbol = symbol;
       removeBtn.disabled = disableRemove;
       removeBtn.title = disableRemove ? "At least one symbol is required" : "Remove symbol";
+    }
+    if (nameDiv && !nameDiv.textContent) {
+      nameDiv.textContent = findCatalogName(symbol);
     }
   }
 }

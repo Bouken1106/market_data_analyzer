@@ -544,7 +544,7 @@ details[open]>.technical-toggle::before {
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.8rem;
+  font-size: 0.88rem;
 }
 
 thead th {
@@ -553,18 +553,18 @@ thead th {
   z-index: 2;
   background: var(--bg-surface);
   color: var(--text-muted);
-  font-size: 0.7rem;
+  font-size: 0.74rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  padding: 4px 8px;
+  padding: 6px 10px;
   text-align: left;
   border-bottom: 2px solid var(--border-accent);
   white-space: nowrap;
 }
 
 tbody td {
-  padding: 4px 8px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
   vertical-align: middle;
@@ -603,6 +603,8 @@ tbody tr:hover {
   font-weight: 600;
   color: var(--text-bright);
   text-align: right;
+  width: 110px;
+  white-space: nowrap;
 }
 
 .change {
@@ -610,16 +612,83 @@ tbody tr:hover {
   font-weight: 700;
   text-align: right;
   font-size: 0.82rem;
+  color: var(--text);
+  width: 92px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.change.up {
+.change.up,
+.return-cell.up {
   color: var(--green);
   text-shadow: 0 0 8px rgba(38, 217, 127, 0.3);
 }
 
-.change.down {
+.change.down,
+.return-cell.down {
   color: var(--red);
   text-shadow: 0 0 8px rgba(244, 112, 103, 0.3);
+}
+
+/* 30D High/Low */
+.range-cell {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  text-align: right;
+  color: var(--text);
+  white-space: nowrap;
+  width: 130px;
+  font-variant-numeric: tabular-nums;
+}
+
+.range-high {
+  color: var(--green);
+}
+
+.range-low {
+  color: var(--red);
+}
+
+.range-sep {
+  color: var(--text-dim);
+  font-size: 0.7rem;
+}
+
+/* 30D Return */
+.return-cell {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  text-align: right;
+  font-size: 0.82rem;
+  color: var(--text);
+  width: 92px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Volatility */
+.vol-cell {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  text-align: right;
+  font-size: 0.82rem;
+  color: var(--text);
+  width: 72px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.vol-low {
+  color: var(--green);
+}
+
+.vol-mid {
+  color: var(--amber);
+}
+
+.vol-high {
+  color: var(--red);
+  text-shadow: 0 0 6px rgba(244, 112, 103, 0.25);
 }
 
 /* Symbol cell */
@@ -631,6 +700,17 @@ tbody tr:hover {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.sym-name {
+  font-size: 0.65rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 140px;
+  line-height: 1.2;
 }
 
 .sym-open {
