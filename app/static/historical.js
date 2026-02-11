@@ -1475,13 +1475,12 @@ async function init() {
   symbolTitleEl.textContent = `${currentSymbol} Market Overview`;
   symbolSubtitleEl.textContent = "Loading...";
   setFmpPlaceholder();
-  setFmpMeta("Loading cached FMP reference data...");
+  setFmpMeta("FMP reference data is loaded on demand. Press Load FMP Data or Refresh FMP Data.");
   setIntervalButtonAvailability();
   setIntervalButtonState();
   drawPlaceholder("Loading...");
 
   await loadOverview(false);
-  await loadFmpReference(false, true);
 }
 
 void init();
