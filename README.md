@@ -74,6 +74,7 @@ FULL_HISTORY_CHUNK_YEARS=15
 FULL_HISTORY_MAX_CHUNKS=20
 DAILY_DIFF_MIN_RECHECK_SEC=21600
 BETA_MARKET_RECHECK_SEC=86400
+PAPER_INITIAL_CASH=1000000
 ```
 
 プロバイダー切替:
@@ -100,6 +101,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `/ml-lab`: ML Forecast Lab（モデル一覧から選択して翌営業日分布を推定）
 - `/strategy-lab`: Strategy Lab（戦略検証の準備ページ）
 - `/compare-lab`: Model Compare Lab（複数銘柄 × 複数モデルの一括比較）
+- `/` には Paper Portfolio（仮想資産）パネルを搭載し、実注文なしで売買シミュレーション可能
 
 ## 使い方
 
@@ -174,6 +176,9 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `GET /api/credits?refresh=true`: Twelve Data を利用するモード（`twelvedata` / `both`）で `/api_usage` から日次残クレジットを再取得（1クレジット消費）
 - `GET /api/symbol-catalog`: 検索候補用シンボル一覧（キャッシュ）
 - `GET /api/symbol-catalog?refresh=true`: シンボル一覧を強制再取得
+- `GET /api/portfolio`: 仮想ポートフォリオ状態（現金、保有、評価額、履歴）
+- `POST /api/portfolio/trades`: 仮想売買を記録（`{"symbol":"AAPL","side":"buy|sell","quantity":10,"price":null}`）
+- `POST /api/portfolio/reset`: 仮想ポートフォリオを初期化（`{"initial_cash":1000000}`）
 - `GET /api/historical/{symbol}?years=5`: 過去N年ヒストリカルデータ（デフォルト5年）
 - `GET /api/security-overview/{symbol}`: 銘柄詳細（`include_intraday` / `include_market` で取得項目を制御可能）
 - `GET /api/security-overview/{symbol}/intraday`: 1分/5分足とVWAPのみを取得

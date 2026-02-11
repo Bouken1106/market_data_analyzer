@@ -7,7 +7,7 @@
   <title>Market Data Analyzer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="/static/styles.css?v=20260211h" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260212a" />
 </head>
 
 <body>
@@ -81,6 +81,98 @@
           <button id="refresh-credits" type="button" class="minor-action">Refresh Credits (TD)</button>
         </div>
       </details>
+    </section>
+
+    <section class="card paper-portfolio-card">
+      <div class="portfolio-badge">Simulation Zone</div>
+      <div class="portfolio-head">
+        <h2>Paper Portfolio</h2>
+        <p class="hint portfolio-warning">仮想資産で売買を検証（実注文は行いません）</p>
+      </div>
+
+      <div class="portfolio-metrics">
+        <div class="status-box">
+          <span class="label">Initial Cash</span>
+          <span id="pf-initial-cash">-</span>
+        </div>
+        <div class="status-box">
+          <span class="label">Cash</span>
+          <span id="pf-cash">-</span>
+        </div>
+        <div class="status-box">
+          <span class="label">Market Value</span>
+          <span id="pf-market-value">-</span>
+        </div>
+        <div class="status-box">
+          <span class="label">Equity</span>
+          <span id="pf-equity">-</span>
+        </div>
+        <div class="status-box">
+          <span class="label">Unrealized PnL</span>
+          <span id="pf-unrealized-pnl">-</span>
+        </div>
+        <div class="status-box">
+          <span class="label">Return</span>
+          <span id="pf-return">-</span>
+        </div>
+      </div>
+
+      <form id="pf-trade-form" class="portfolio-trade-form">
+        <label for="pf-symbol">Symbol</label>
+        <input id="pf-symbol" name="symbol" type="text" placeholder="AAPL" maxlength="15" required />
+        <label for="pf-side">Side</label>
+        <select id="pf-side" name="side">
+          <option value="buy">Buy</option>
+          <option value="sell">Sell</option>
+        </select>
+        <label for="pf-quantity">Quantity</label>
+        <input id="pf-quantity" name="quantity" type="number" min="0.0001" step="0.0001" placeholder="10" required />
+        <label for="pf-price">Price (optional)</label>
+        <input id="pf-price" name="price" type="number" min="0.0001" step="0.0001" placeholder="blank = market" />
+        <button id="pf-submit" type="submit">Submit Trade</button>
+        <button id="pf-reset" type="button" class="danger-action">Reset Portfolio</button>
+      </form>
+      <p id="pf-message" class="hint"></p>
+
+      <div class="portfolio-tables">
+        <div class="portfolio-table">
+          <h3>Positions</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Qty</th>
+                  <th>Avg Cost</th>
+                  <th>Last</th>
+                  <th>Value</th>
+                  <th>Unrealized</th>
+                  <th>Weight</th>
+                </tr>
+              </thead>
+              <tbody id="pf-positions-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="portfolio-table">
+          <h3>Recent Trades</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Symbol</th>
+                  <th>Side</th>
+                  <th>Qty</th>
+                  <th>Price</th>
+                  <th>Realized</th>
+                </tr>
+              </thead>
+              <tbody id="pf-trades-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </section>
 
     <section class="card">

@@ -62,6 +62,17 @@ class MlComparisonJobRequest(BaseModel):
     refresh: bool = False
 
 
+class PaperTradeRequest(BaseModel):
+    symbol: str
+    side: str
+    quantity: float
+    price: float | None = None
+
+
+class PaperPortfolioResetRequest(BaseModel):
+    initial_cash: float | None = None
+
+
 # ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------

@@ -117,6 +117,8 @@ SYMBOL_CATALOG_CACHE_PATH = _APP_DIR / "cache" / "us_stock_symbol_catalog.json"
 LAST_PRICE_CACHE_PATH = _APP_DIR / "cache" / "last_prices.json"
 FULL_DAILY_HISTORY_CACHE_DIR = _APP_DIR / "cache" / "daily_history"
 FMP_REFERENCE_CACHE_DIR = _APP_DIR / "cache" / "fmp_reference"
+PAPER_PORTFOLIO_CACHE_PATH = _APP_DIR / "cache" / "paper_portfolio.json"
+PAPER_INITIAL_CASH = _float_env("PAPER_INITIAL_CASH", default=1_000_000, minimum=1)
 
 # ---------------------------------------------------------------------------
 # Historical data

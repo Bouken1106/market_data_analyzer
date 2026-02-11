@@ -16,6 +16,22 @@ const clockJstEl = document.getElementById("clock-jst");
 const clockEtEl = document.getElementById("clock-et");
 const marketHoursEtEl = document.getElementById("market-hours-et");
 const marketOpenStateEl = document.getElementById("market-open-state");
+const pfInitialCashEl = document.getElementById("pf-initial-cash");
+const pfCashEl = document.getElementById("pf-cash");
+const pfMarketValueEl = document.getElementById("pf-market-value");
+const pfEquityEl = document.getElementById("pf-equity");
+const pfUnrealizedPnlEl = document.getElementById("pf-unrealized-pnl");
+const pfReturnEl = document.getElementById("pf-return");
+const pfTradeForm = document.getElementById("pf-trade-form");
+const pfSymbolInput = document.getElementById("pf-symbol");
+const pfSideInput = document.getElementById("pf-side");
+const pfQuantityInput = document.getElementById("pf-quantity");
+const pfPriceInput = document.getElementById("pf-price");
+const pfSubmitBtn = document.getElementById("pf-submit");
+const pfResetBtn = document.getElementById("pf-reset");
+const pfMessageEl = document.getElementById("pf-message");
+const pfPositionsBody = document.getElementById("pf-positions-body");
+const pfTradesBody = document.getElementById("pf-trades-body");
 
 const MAX_SYMBOLS = 8;
 const MAX_DROPDOWN_ITEMS = 120;
@@ -33,6 +49,7 @@ let syncInFlight = false;
 let syncQueued = false;
 let marketClockTimer = null;
 let sortState = { key: "symbol", direction: "asc" };
+let portfolioBaseState = null;
 
 const JST_TIME_ZONE = "Asia/Tokyo";
 const ET_TIME_ZONE = "America/New_York";
@@ -91,6 +108,26 @@ function formatTime(value) {
 function formatChangePercent(value) {
   if (!Number.isFinite(value)) return "-";
   return `${Math.abs(value).toFixed(2)}%`;
+}
+
+function formatMoney(value) {
+  if (!Number.isFinite(value)) return "-";
+  return value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatSignedMoney(value) {
+  if (!Number.isFinite(value)) return "-";
+  const abs = Math.abs(value);
+  const prefix = value > 0 ? "+" : value < 0 ? "-" : "";
+  return `${prefix}${formatMoney(abs)}`;
+}
+
+function formatSignedPercent(value) {
+  if (!Number.isFinite(value)) return "-";
+  const abs = Math.abs(value).toFixed(2);
+  if (value > 0) return `+${abs}%`;
+  if (value < 0) return `-${abs}%`;
+  return "0.00%";
 }
 
 function computeAnnualizedVol(prices) {
@@ -225,6 +262,191 @@ function setStatus(status) {
       : "Unavailable for current provider";
   }
   refreshRowsForInsights(Array.from(rowsBySymbol.keys()));
+}
+
+function setPortfolioMessage(message, isError = false) {
+  if (!pfMessageEl) return;
+  pfMessageEl.textContent = message || "";
+  pfMessageEl.classList.toggle("error", Boolean(isError));
+}
+
+function buildPortfolioView(baseState) {
+  if (!baseState || typeof baseState !== "object") return null;
+  const initialCash = Number(baseState.initial_cash);
+  const cash = Number(baseState.cash);
+  const rawPositions = Array.isArray(baseState.positions) ? baseState.positions : [];
+  const positions = [];
+  let marketValue = 0;
+  let costBasis = 0;
+
+  rawPositions.forEach((item) => {
+    const symbol = normalizeSymbol(item?.symbol);
+    const quantity = Number(item?.quantity);
+    const avgCost = Number(item?.avg_cost);
+    if (!symbol || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(avgCost) || avgCost <= 0) {
+      return;
+    }
+    const latestPrice = Number(latestRowsBySymbol.get(symbol)?.price);
+    const fallbackPrice = Number(item?.last_price);
+    const lastPrice = Number.isFinite(latestPrice) && latestPrice > 0
+      ? latestPrice
+      : (Number.isFinite(fallbackPrice) && fallbackPrice > 0 ? fallbackPrice : null);
+    const rowCostBasis = quantity * avgCost;
+    const rowMarketValue = Number.isFinite(lastPrice) ? quantity * lastPrice : null;
+    const rowPnl = Number.isFinite(rowMarketValue) ? rowMarketValue - rowCostBasis : null;
+    const rowPnlPct = Number.isFinite(rowPnl) && rowCostBasis > 0 ? (rowPnl / rowCostBasis) * 100 : null;
+    if (Number.isFinite(rowMarketValue)) {
+      marketValue += rowMarketValue;
+    }
+    costBasis += rowCostBasis;
+    positions.push({
+      symbol,
+      quantity,
+      avg_cost: avgCost,
+      cost_basis: rowCostBasis,
+      last_price: lastPrice,
+      market_value: rowMarketValue,
+      unrealized_pnl: rowPnl,
+      unrealized_pnl_pct: rowPnlPct,
+      weight: null,
+    });
+  });
+
+  if (marketValue > 0) {
+    positions.forEach((item) => {
+      if (Number.isFinite(item.market_value)) {
+        item.weight = (item.market_value / marketValue) * 100;
+      }
+    });
+  }
+
+  const safeCash = Number.isFinite(cash) ? cash : 0;
+  const safeInitialCash = Number.isFinite(initialCash) && initialCash > 0 ? initialCash : safeCash;
+  const equity = safeCash + marketValue;
+  const unrealizedPnl = marketValue - costBasis;
+  const totalReturnPct = safeInitialCash > 0 ? ((equity - safeInitialCash) / safeInitialCash) * 100 : null;
+  const recentTrades = Array.isArray(baseState.recent_trades) ? baseState.recent_trades : [];
+
+  return {
+    initial_cash: safeInitialCash,
+    cash: safeCash,
+    market_value: marketValue,
+    equity,
+    unrealized_pnl: unrealizedPnl,
+    total_return_pct: totalReturnPct,
+    positions,
+    recent_trades: recentTrades,
+  };
+}
+
+function renderPortfolio() {
+  if (!pfInitialCashEl || !portfolioBaseState) return;
+  const view = buildPortfolioView(portfolioBaseState);
+  if (!view) return;
+
+  pfInitialCashEl.textContent = `$ ${formatMoney(view.initial_cash)}`;
+  pfCashEl.textContent = `$ ${formatMoney(view.cash)}`;
+  pfMarketValueEl.textContent = `$ ${formatMoney(view.market_value)}`;
+  pfEquityEl.textContent = `$ ${formatMoney(view.equity)}`;
+  pfUnrealizedPnlEl.textContent = formatSignedMoney(view.unrealized_pnl);
+  pfUnrealizedPnlEl.classList.toggle("pf-positive", Number(view.unrealized_pnl) > 0);
+  pfUnrealizedPnlEl.classList.toggle("pf-negative", Number(view.unrealized_pnl) < 0);
+  pfReturnEl.textContent = formatSignedPercent(view.total_return_pct);
+  pfReturnEl.classList.toggle("pf-positive", Number(view.total_return_pct) > 0);
+  pfReturnEl.classList.toggle("pf-negative", Number(view.total_return_pct) < 0);
+
+  if (pfPositionsBody) {
+    pfPositionsBody.innerHTML = "";
+    if (view.positions.length === 0) {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 7;
+      td.className = "pf-empty";
+      td.textContent = "No positions";
+      tr.appendChild(td);
+      pfPositionsBody.appendChild(tr);
+    } else {
+      view.positions.forEach((item) => {
+        const tr = document.createElement("tr");
+        const cells = [
+          item.symbol,
+          Number.isFinite(item.quantity) ? item.quantity.toFixed(4).replace(/\.?0+$/, "") : "-",
+          Number.isFinite(item.avg_cost) ? `$ ${formatMoney(item.avg_cost)}` : "-",
+          Number.isFinite(item.last_price) ? `$ ${formatMoney(item.last_price)}` : "-",
+          Number.isFinite(item.market_value) ? `$ ${formatMoney(item.market_value)}` : "-",
+          Number.isFinite(item.unrealized_pnl)
+            ? `${formatSignedMoney(item.unrealized_pnl)} (${formatSignedPercent(item.unrealized_pnl_pct)})`
+            : "-",
+          Number.isFinite(item.weight) ? `${item.weight.toFixed(1)}%` : "-",
+        ];
+        cells.forEach((text, idx) => {
+          const td = document.createElement("td");
+          td.textContent = text;
+          if (idx === 5) {
+            td.classList.toggle("pf-positive", Number(item.unrealized_pnl) > 0);
+            td.classList.toggle("pf-negative", Number(item.unrealized_pnl) < 0);
+          }
+          tr.appendChild(td);
+        });
+        pfPositionsBody.appendChild(tr);
+      });
+    }
+  }
+
+  if (pfTradesBody) {
+    pfTradesBody.innerHTML = "";
+    const trades = view.recent_trades.slice(0, 20);
+    if (trades.length === 0) {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 6;
+      td.className = "pf-empty";
+      td.textContent = "No trades";
+      tr.appendChild(td);
+      pfTradesBody.appendChild(tr);
+    } else {
+      trades.forEach((item) => {
+        const tr = document.createElement("tr");
+        const realized = Number(item?.realized_pnl);
+        const side = String(item?.side || "").toLowerCase();
+        const cells = [
+          formatTime(item?.timestamp),
+          normalizeSymbol(item?.symbol),
+          side || "-",
+          Number.isFinite(Number(item?.quantity)) ? Number(item.quantity).toFixed(4).replace(/\.?0+$/, "") : "-",
+          Number.isFinite(Number(item?.price)) ? `$ ${formatMoney(Number(item.price))}` : "-",
+          Number.isFinite(realized) ? formatSignedMoney(realized) : "-",
+        ];
+        cells.forEach((text, idx) => {
+          const td = document.createElement("td");
+          td.textContent = text;
+          if (idx === 2) {
+            td.classList.add(side === "buy" ? "pf-side-buy" : "pf-side-sell");
+          }
+          if (idx === 5) {
+            td.classList.toggle("pf-positive", realized > 0);
+            td.classList.toggle("pf-negative", realized < 0);
+          }
+          tr.appendChild(td);
+        });
+        pfTradesBody.appendChild(tr);
+      });
+    }
+  }
+}
+
+async function loadPortfolio() {
+  try {
+    const { response, result } = await fetchJson("/api/portfolio");
+    if (!response.ok) {
+      setPortfolioMessage(result.detail || "Failed to load portfolio.", true);
+      return;
+    }
+    portfolioBaseState = result;
+    renderPortfolio();
+  } catch (_error) {
+    setPortfolioMessage("Failed to load portfolio.", true);
+  }
 }
 
 function goHistorical(symbol) {
@@ -606,6 +828,7 @@ function renderRow(update, options = {}) {
 
   refreshRowActionState();
   applySortToTable();
+  renderPortfolio();
 }
 
 function refreshRowsForInsights(symbols) {
@@ -681,6 +904,7 @@ function resetRows(symbols) {
   });
   refreshRowActionState();
   applySortToTable();
+  renderPortfolio();
 }
 
 function renderRows(rows, fallbackSymbols = []) {
@@ -1013,6 +1237,106 @@ refreshCreditsBtn.addEventListener("click", async () => {
   }
 });
 
+if (pfTradeForm) {
+  pfTradeForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const symbol = normalizeSymbol(pfSymbolInput?.value);
+    const side = String(pfSideInput?.value || "buy").toLowerCase();
+    const quantity = Number(pfQuantityInput?.value);
+    const rawPrice = String(pfPriceInput?.value || "").trim();
+    const price = rawPrice ? Number(rawPrice) : null;
+
+    if (!symbol) {
+      setPortfolioMessage("Symbol is required.", true);
+      return;
+    }
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setPortfolioMessage("Quantity must be greater than 0.", true);
+      return;
+    }
+    if (rawPrice && (!Number.isFinite(price) || price <= 0)) {
+      setPortfolioMessage("Price must be greater than 0.", true);
+      return;
+    }
+
+    setPortfolioMessage("");
+    if (pfSubmitBtn) pfSubmitBtn.disabled = true;
+    try {
+      const { response, result } = await fetchJson("/api/portfolio/trades", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          symbol,
+          side,
+          quantity,
+          price: rawPrice ? price : null,
+        }),
+      });
+
+      if (!response.ok) {
+        setPortfolioMessage(result.detail || "Failed to submit trade.", true);
+        return;
+      }
+
+      portfolioBaseState = result;
+      renderPortfolio();
+      const executionSource = result.trade?.execution_source || "market";
+      setPortfolioMessage(`Trade accepted: ${side.toUpperCase()} ${symbol} (${executionSource} price).`);
+      if (pfPriceInput) pfPriceInput.value = "";
+      if (pfQuantityInput) pfQuantityInput.value = "";
+
+      if (!selectedSymbols.includes(symbol) && selectedSymbols.length < MAX_SYMBOLS) {
+        selectedSymbols = [...selectedSymbols, symbol];
+        await updateSymbolsOnServer();
+      }
+    } catch (_error) {
+      setPortfolioMessage("Failed to submit trade.", true);
+    } finally {
+      if (pfSubmitBtn) pfSubmitBtn.disabled = false;
+    }
+  });
+}
+
+if (pfResetBtn) {
+  pfResetBtn.addEventListener("click", async () => {
+    const defaultValue = Number(portfolioBaseState?.initial_cash);
+    const promptValue = Number.isFinite(defaultValue) && defaultValue > 0 ? String(defaultValue) : "1000000";
+    const input = window.prompt("Reset initial cash (blank keeps default).", promptValue);
+    if (input === null) return;
+    const normalized = String(input).trim();
+    const payload = {};
+    if (normalized) {
+      const parsed = Number(normalized);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        setPortfolioMessage("Initial cash must be greater than 0.", true);
+        return;
+      }
+      payload.initial_cash = parsed;
+    }
+
+    setPortfolioMessage("");
+    pfResetBtn.disabled = true;
+    try {
+      const { response, result } = await fetchJson("/api/portfolio/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        setPortfolioMessage(result.detail || "Failed to reset portfolio.", true);
+        return;
+      }
+      portfolioBaseState = result;
+      renderPortfolio();
+      setPortfolioMessage("Portfolio reset completed.");
+    } catch (_error) {
+      setPortfolioMessage("Failed to reset portfolio.", true);
+    } finally {
+      pfResetBtn.disabled = false;
+    }
+  });
+}
+
 updateSortHeaderUI();
 
 loadSymbolCatalog().catch(() => {
@@ -1020,3 +1344,4 @@ loadSymbolCatalog().catch(() => {
 });
 connectEventStream();
 startMarketClock();
+loadPortfolio();

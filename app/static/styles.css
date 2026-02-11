@@ -3,25 +3,25 @@
    Dense · Polished · Information-Rich
    ============================================================ */
 
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap");
 
 /* ---------- Design Tokens ---------- */
 :root {
-  --bg: #0a0e13;
-  --bg-panel: #111820;
-  --bg-panel-alt: #151d28;
-  --bg-surface: #1a2332;
-  --bg-hover: #1f2b3a;
-  --bg-active: #253345;
+  --bg: #0b1016;
+  --bg-panel: #131c26;
+  --bg-panel-alt: #192430;
+  --bg-surface: #202e3d;
+  --bg-hover: #273748;
+  --bg-active: #304459;
 
-  --border: #1e2a3a;
-  --border-accent: #2a3f5f;
+  --border: #34465a;
+  --border-accent: #446382;
   --border-focus: #58a6ff;
 
-  --text: #c9d1d9;
-  --text-bright: #ecf2f8;
-  --text-muted: #768390;
-  --text-dim: #424d58;
+  --text: #e0e9f1;
+  --text-bright: #f8fbff;
+  --text-muted: #bac8d6;
+  --text-dim: #8797a7;
 
   --green: #26d97f;
   --green-soft: rgba(38, 217, 127, 0.12);
@@ -35,15 +35,15 @@
   --cyan-soft: rgba(57, 210, 192, 0.10);
   --purple: #bc8cff;
 
-  --radius: 3px;
-  --radius-lg: 5px;
-  --gap: 6px;
+  --radius: 6px;
+  --radius-lg: 10px;
+  --gap: 10px;
 
-  --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-ui: "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", "Fira Code", monospace;
 
   --shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
-  --transition: 100ms ease;
+  --transition: 140ms ease;
 }
 
 /* ---------- Reset ---------- */
@@ -56,15 +56,19 @@
 }
 
 html {
-  font-size: 14px;
+  font-size: 16px;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 body {
   font-family: var(--font-ui);
-  background: var(--bg);
+  background:
+    radial-gradient(circle at 10% -10%, rgba(88, 166, 255, 0.07), transparent 45%),
+    radial-gradient(circle at 95% 0%, rgba(57, 210, 192, 0.05), transparent 35%),
+    var(--bg);
   color: var(--text);
-  line-height: 1.4;
+  line-height: 1.6;
   min-height: 100dvh;
   overflow-x: hidden;
 }
@@ -97,6 +101,11 @@ a:hover {
   text-decoration: underline;
 }
 
+:focus-visible {
+  outline: 2px solid rgba(88, 166, 255, 0.75);
+  outline-offset: 2px;
+}
+
 /* ---------- Top Navigation Tab Bar ---------- */
 .nav-tabs {
   position: sticky;
@@ -106,7 +115,7 @@ a:hover {
   align-items: stretch;
   background: linear-gradient(180deg, #131b26 0%, #0f1620 100%);
   border-bottom: 1px solid var(--border);
-  padding: 0 8px;
+  padding: 2px 12px 0;
   gap: 0;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
@@ -115,11 +124,11 @@ a:hover {
 .nav-tab {
   display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 7px 16px;
+  gap: 6px;
+  padding: 10px 16px;
   font-family: var(--font-ui);
-  font-size: 0.82rem;
-  font-weight: 600;
+  font-size: 0.9rem;
+  font-weight: 700;
   color: var(--text-muted);
   text-decoration: none;
   border-bottom: 2px solid transparent;
@@ -149,7 +158,7 @@ a:hover {
   width: 100%;
   max-width: 1440px;
   margin: 0 auto;
-  padding: 8px 10px 20px;
+  padding: 14px 14px 26px;
   display: flex;
   flex-direction: column;
   gap: var(--gap);
@@ -157,7 +166,7 @@ a:hover {
 
 /* ---------- Header ---------- */
 .header {
-  padding: 6px 0 4px 0;
+  padding: 8px 0 6px 0;
 }
 
 .header-top {
@@ -168,25 +177,25 @@ a:hover {
 }
 
 .header h1 {
-  font-size: 1.05rem;
-  font-weight: 700;
+  font-size: 1.35rem;
+  font-weight: 800;
   color: var(--text-bright);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.015em;
 }
 
 .header p {
-  font-size: 0.76rem;
+  font-size: 0.92rem;
   color: var(--text-muted);
-  margin-top: 1px;
+  margin-top: 3px;
 }
 
 /* ---------- Pill / Chip ---------- */
 .pill {
   display: inline-flex;
   align-items: center;
-  padding: 1px 6px;
+  padding: 3px 9px;
   border-radius: 2px;
-  font-size: 0.68rem;
+  font-size: 0.74rem;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -225,7 +234,7 @@ a:hover {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 8px 10px;
+  padding: 14px;
   position: relative;
 }
 
@@ -243,8 +252,8 @@ a:hover {
 }
 
 .card h2 {
-  font-size: 0.82rem;
-  font-weight: 600;
+  font-size: 1rem;
+  font-weight: 700;
   color: var(--text-bright);
   margin-bottom: var(--gap);
   padding-bottom: 4px;
@@ -253,7 +262,7 @@ a:hover {
 
 /* ---------- Market Time ---------- */
 .market-time-card {
-  padding: 6px 10px;
+  padding: 10px 12px;
 }
 
 .market-time-grid {
@@ -265,18 +274,18 @@ a:hover {
 .market-time-item {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 3px;
 }
 
 .market-time-value {
   font-family: var(--font-mono);
-  font-size: 0.88rem;
+  font-size: 0.94rem;
   font-weight: 600;
   color: var(--cyan);
 }
 
 .market-state {
-  font-size: 0.7rem;
+  font-size: 0.76rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -292,7 +301,7 @@ a:hover {
 
 /* ---------- Labels ---------- */
 .label {
-  font-size: 0.7rem;
+  font-size: 0.78rem;
   font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
@@ -300,7 +309,7 @@ a:hover {
 }
 
 .hint {
-  font-size: 0.75rem;
+  font-size: 0.84rem;
   color: var(--text-muted);
 }
 
@@ -314,12 +323,12 @@ input[type="number"],
 select,
 textarea {
   font-family: var(--font-mono);
-  font-size: 0.82rem;
+  font-size: 0.92rem;
   color: var(--text-bright);
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 4px 6px;
+  padding: 8px 10px;
   width: 100%;
   outline: none;
   transition: border-color var(--transition), box-shadow var(--transition);
@@ -339,19 +348,19 @@ input[type="checkbox"] {
 label {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  font-size: 0.78rem;
+  gap: 6px;
+  font-size: 0.86rem;
   color: var(--text);
 }
 
 /* ---------- Buttons ---------- */
 button {
   font-family: var(--font-ui);
-  font-size: 0.78rem;
+  font-size: 0.85rem;
   font-weight: 600;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 4px 12px;
+  padding: 8px 12px;
   cursor: pointer;
   transition: background var(--transition), border-color var(--transition), color var(--transition);
   color: var(--text);
@@ -395,9 +404,9 @@ button[type="submit"]:hover,
 .secondary {
   background: var(--bg-panel-alt);
   border-color: var(--border);
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  padding: 3px 8px;
+  color: var(--text);
+  font-size: 0.78rem;
+  padding: 6px 10px;
 }
 
 .secondary:hover {
@@ -409,8 +418,8 @@ button[type="submit"]:hover,
   background: transparent;
   border-color: transparent;
   color: var(--text-muted);
-  font-size: 0.72rem;
-  padding: 2px 6px;
+  font-size: 0.78rem;
+  padding: 4px 8px;
 }
 
 .minor-action:hover {
@@ -423,6 +432,151 @@ button[type="submit"]:hover,
   display: flex;
   flex-direction: column;
   gap: var(--gap);
+}
+
+/* ---------- Paper Portfolio ---------- */
+.paper-portfolio-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  border-color: rgba(240, 136, 62, 0.45);
+  background:
+    linear-gradient(180deg, rgba(240, 136, 62, 0.08) 0%, rgba(240, 136, 62, 0.03) 28%, rgba(17, 24, 32, 1) 100%),
+    var(--bg-panel);
+  box-shadow: 0 0 0 1px rgba(240, 136, 62, 0.12), 0 8px 20px rgba(0, 0, 0, 0.35);
+  position: relative;
+  isolation: isolate;
+}
+
+.paper-portfolio-card::before {
+  opacity: 0.85;
+  width: 3px;
+  background: linear-gradient(180deg, var(--amber) 0%, rgba(240, 136, 62, 0.15) 100%);
+}
+
+.paper-portfolio-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    linear-gradient(135deg, rgba(240, 136, 62, 0.06) 0%, rgba(240, 136, 62, 0.0) 45%),
+    repeating-linear-gradient(
+      -45deg,
+      rgba(240, 136, 62, 0.025) 0px,
+      rgba(240, 136, 62, 0.025) 8px,
+      transparent 8px,
+      transparent 18px
+    );
+  z-index: -1;
+}
+
+.portfolio-badge {
+  align-self: flex-start;
+  padding: 2px 7px;
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--amber);
+  background: rgba(240, 136, 62, 0.12);
+  border: 1px solid rgba(240, 136, 62, 0.45);
+  border-radius: 2px;
+}
+
+.portfolio-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--gap);
+  flex-wrap: wrap;
+  padding-bottom: 5px;
+  border-bottom: 1px dashed rgba(240, 136, 62, 0.35);
+}
+
+.portfolio-head h2 {
+  margin: 0;
+  border: none;
+  padding: 0;
+  color: #ffd8b0;
+}
+
+.portfolio-warning {
+  color: #ffc084;
+  font-weight: 600;
+}
+
+.portfolio-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 8px;
+}
+
+.status-box {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  background: var(--bg-panel-alt);
+  border-radius: var(--radius);
+  border-left: 2px solid rgba(240, 136, 62, 0.55);
+}
+
+.status-box span:not(.label) {
+  font-family: var(--font-mono);
+  font-size: 0.88rem;
+  color: var(--text-bright);
+}
+
+.portfolio-trade-form {
+  display: grid;
+  grid-template-columns: 80px minmax(110px, 1fr) 70px minmax(100px, 1fr) 70px minmax(120px, 1fr);
+  gap: 8px 8px;
+  align-items: end;
+}
+
+.portfolio-trade-form button {
+  min-height: 30px;
+}
+
+.portfolio-tables {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--gap);
+}
+
+.portfolio-table {
+  min-width: 0;
+}
+
+.portfolio-table h3 {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pf-empty {
+  color: var(--text-dim);
+}
+
+.pf-side-buy {
+  color: var(--green);
+}
+
+.pf-side-sell {
+  color: var(--red);
+}
+
+.pf-positive {
+  color: var(--green);
+}
+
+.pf-negative {
+  color: var(--red);
 }
 
 /* ---------- Symbol Search ---------- */
@@ -453,9 +607,9 @@ button[type="submit"]:hover,
   display: block;
   width: 100%;
   text-align: left;
-  padding: 4px 8px;
+  padding: 8px 10px;
   font-family: var(--font-mono);
-  font-size: 0.75rem;
+  font-size: 0.82rem;
   color: var(--text);
   background: transparent;
   border: none;
@@ -485,7 +639,7 @@ button[type="submit"]:hover,
 }
 
 .technical-toggle {
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   color: var(--text-muted);
   cursor: pointer;
   list-style: none;
@@ -515,16 +669,16 @@ details[open]>.technical-toggle::before {
 .status-row {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 4px;
-  padding: 4px 0;
+  gap: 8px;
+  padding: 8px 0;
   min-width: 0;
 }
 
 .status-row>div {
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  padding: 4px 6px;
+  gap: 4px;
+  padding: 8px 10px;
   background: var(--bg-panel-alt);
   border-radius: var(--radius);
   border-left: 2px solid var(--border-accent);
@@ -535,13 +689,13 @@ details[open]>.technical-toggle::before {
 
 .status-row span:not(.label) {
   font-family: var(--font-mono);
-  font-size: 0.8rem;
+  font-size: 0.88rem;
   color: var(--text-bright);
   min-width: 0;
   white-space: normal;
   overflow-wrap: anywhere;
   word-break: break-word;
-  line-height: 1.35;
+  line-height: 1.45;
 }
 
 /* ---------- Tables ---------- */
@@ -553,7 +707,7 @@ details[open]>.technical-toggle::before {
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.88rem;
+  font-size: 0.95rem;
 }
 
 thead th {
@@ -561,12 +715,12 @@ thead th {
   top: 0;
   z-index: 2;
   background: var(--bg-surface);
-  color: var(--text-muted);
-  font-size: 0.74rem;
+  color: #b8c8d8;
+  font-size: 0.8rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  padding: 6px 10px;
+  padding: 10px 12px;
   text-align: left;
   border-bottom: 2px solid var(--border-accent);
   white-space: nowrap;
@@ -596,7 +750,7 @@ thead th.sorted-desc::after {
 }
 
 tbody td {
-  padding: 8px 10px;
+  padding: 11px 12px;
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
   vertical-align: middle;
@@ -607,11 +761,11 @@ tbody tr {
 }
 
 tbody tr:nth-child(even) {
-  background: rgba(255, 255, 255, 0.01);
+  background: rgba(255, 255, 255, 0.025);
 }
 
 tbody tr:hover {
-  background: var(--bg-active);
+  background: color-mix(in srgb, var(--bg-active) 75%, #2d4157 25%);
 }
 
 /* Flash */
@@ -632,7 +786,7 @@ tbody tr:hover {
 /* Price & Change cells */
 .price {
   font-family: var(--font-mono);
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text-bright);
   text-align: right;
   width: 110px;
@@ -643,7 +797,7 @@ tbody tr:hover {
   font-family: var(--font-mono);
   font-weight: 700;
   text-align: right;
-  font-size: 0.82rem;
+  font-size: 0.86rem;
   color: var(--text);
   width: 92px;
   font-variant-numeric: tabular-nums;
@@ -665,7 +819,7 @@ tbody tr:hover {
 /* 30D High/Low */
 .range-cell {
   font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: 0.84rem;
   text-align: right;
   color: var(--text);
   white-space: nowrap;
@@ -691,7 +845,7 @@ tbody tr:hover {
   font-family: var(--font-mono);
   font-weight: 700;
   text-align: right;
-  font-size: 0.82rem;
+  font-size: 0.86rem;
   color: var(--text);
   width: 92px;
   font-variant-numeric: tabular-nums;
@@ -703,7 +857,7 @@ tbody tr:hover {
   font-family: var(--font-mono);
   font-weight: 600;
   text-align: right;
-  font-size: 0.82rem;
+  font-size: 0.86rem;
   color: var(--text);
   width: 72px;
   font-variant-numeric: tabular-nums;
@@ -735,7 +889,7 @@ tbody tr:hover {
 }
 
 .sym-name {
-  font-size: 0.65rem;
+  font-size: 0.77rem;
   font-weight: 400;
   color: var(--text-muted);
   white-space: nowrap;
@@ -785,12 +939,12 @@ tbody tr:hover {
 
 .time {
   font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   color: var(--text);
 }
 
 .source-meta {
-  font-size: 0.65rem;
+  font-size: 0.74rem;
   color: var(--text-dim);
 }
 
@@ -802,12 +956,12 @@ tbody tr:hover {
 .sparkline {
   display: flex;
   align-items: center;
-  height: 18px;
+  height: 22px;
 }
 
 .sparkline-svg {
-  width: 90px;
-  height: 16px;
+  width: 92px;
+  height: 18px;
   color: var(--cyan);
 }
 
@@ -845,8 +999,8 @@ tbody tr:hover {
 .ml-model-card {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 6px 8px;
+  gap: 4px;
+  padding: 10px;
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -866,12 +1020,12 @@ tbody tr:hover {
 
 .ml-model-card .model-name {
   font-weight: 700;
-  font-size: 0.82rem;
+  font-size: 0.88rem;
   color: var(--text-bright);
 }
 
 .ml-model-card .model-desc {
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   color: var(--text-muted);
 }
 
@@ -898,7 +1052,7 @@ tbody tr:hover {
   display: flex;
   align-items: center;
   gap: 3px;
-  font-size: 0.75rem;
+  font-size: 0.82rem;
   font-weight: 500;
   color: var(--text);
 }
@@ -907,20 +1061,20 @@ tbody tr:hover {
   flex-direction: row;
   align-items: center;
   gap: 5px;
-  font-size: 0.75rem;
+  font-size: 0.82rem;
 }
 
 .ml-inline-select {
   flex-direction: row;
   align-items: center;
   gap: 4px;
-  font-size: 0.75rem;
+  font-size: 0.82rem;
 }
 
 .ml-inline-select select {
   width: auto;
-  padding: 2px 5px;
-  font-size: 0.75rem;
+  padding: 4px 8px;
+  font-size: 0.8rem;
 }
 
 /* Param help */
@@ -933,9 +1087,9 @@ tbody tr:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
-  height: 14px;
-  font-size: 0.6rem;
+  width: 17px;
+  height: 17px;
+  font-size: 0.68rem;
   font-weight: 700;
   color: var(--text-dim);
   border: 1px solid var(--border);
@@ -954,8 +1108,8 @@ tbody tr:hover {
   top: 100%;
   z-index: 60;
   width: 240px;
-  padding: 6px 8px;
-  font-size: 0.72rem;
+  padding: 8px 10px;
+  font-size: 0.8rem;
   color: var(--text);
   background: var(--bg-panel);
   border: 1px solid var(--border-accent);
@@ -970,13 +1124,13 @@ tbody tr:hover {
 }
 
 .param-guide summary {
-  font-size: 0.75rem;
+  font-size: 0.82rem;
   color: var(--text-muted);
   cursor: pointer;
 }
 
 .param-guide p {
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   color: var(--text-muted);
   margin: 2px 0;
   padding-left: 10px;
@@ -994,8 +1148,8 @@ tbody tr:hover {
 .risk-item {
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  padding: 5px 7px;
+  gap: 4px;
+  padding: 8px 10px;
   background: var(--bg-panel-alt);
   border: 1px solid var(--border);
   border-left: 2px solid var(--cyan);
@@ -1004,7 +1158,7 @@ tbody tr:hover {
 
 .risk-item span:not(.label) {
   font-family: var(--font-mono);
-  font-size: 0.82rem;
+  font-size: 0.88rem;
   font-weight: 600;
   color: var(--text-bright);
 }
@@ -1109,7 +1263,7 @@ tbody tr:hover {
 }
 
 .overview-back-btn {
-  font-size: 0.78rem;
+  font-size: 0.84rem;
 }
 
 .overview-header-chips {
@@ -1133,8 +1287,8 @@ tbody tr:hover {
 .chart-actions {
   display: flex;
   align-items: center;
-  gap: 3px;
-  padding: 4px 0;
+  gap: 6px;
+  padding: 8px 0;
   flex-wrap: wrap;
 }
 
@@ -1156,7 +1310,7 @@ tbody tr:hover {
   position: absolute;
   top: 6px;
   z-index: 5;
-  font-size: 0.68rem;
+  font-size: 0.74rem;
 }
 
 .chart-refresh-btn {
@@ -1176,7 +1330,7 @@ tbody tr:hover {
   border-radius: var(--radius);
   padding: 4px 8px;
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 0.8rem;
   color: var(--text-bright);
   box-shadow: var(--shadow);
   white-space: nowrap;
@@ -1196,7 +1350,7 @@ tbody tr:hover {
 .overview-side-panel .section-title,
 .overview-metrics .section-title,
 .overview-tech .section-title {
-  font-size: 0.8rem;
+  font-size: 0.88rem;
   font-weight: 700;
   color: var(--text-bright);
   margin-bottom: 4px;
@@ -1328,15 +1482,23 @@ tbody tr:hover {
   .ml-chart-duo {
     grid-template-columns: 1fr;
   }
+
+  .portfolio-tables {
+    grid-template-columns: 1fr;
+  }
+
+  .portfolio-trade-form {
+    grid-template-columns: 90px minmax(110px, 1fr);
+  }
 }
 
 @media (max-width: 640px) {
   html {
-    font-size: 13px;
+    font-size: 15px;
   }
 
   .container {
-    padding: 6px;
+    padding: 10px;
   }
 
   .market-time-grid {
@@ -1352,7 +1514,16 @@ tbody tr:hover {
   }
 
   .nav-tab {
-    padding: 5px 10px;
-    font-size: 0.76rem;
+    padding: 7px 12px;
+    font-size: 0.86rem;
+  }
+
+  .portfolio-metrics {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .portfolio-head {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

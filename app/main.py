@@ -18,6 +18,8 @@ from .config import (
     FMP_API_KEY,
     FMP_REFERENCE_CACHE_DIR,
     LAST_PRICE_CACHE_PATH,
+    PAPER_INITIAL_CASH,
+    PAPER_PORTFOLIO_CACHE_PATH,
     FULL_DAILY_HISTORY_CACHE_DIR,
     MAX_BASIC_SYMBOLS,
     SYMBOL_CATALOG_CACHE_PATH,
@@ -28,7 +30,13 @@ from .hub import MarketDataHub
 from .ml.job_store import MlJobStore
 from .ml.pipelines import set_hub, set_ml_job_store
 from .routes import init_routes, router
-from .stores import FmpReferenceStore, FullDailyHistoryStore, LastPriceStore, SymbolCatalogStore
+from .stores import (
+    FmpReferenceStore,
+    FullDailyHistoryStore,
+    LastPriceStore,
+    PaperPortfolioStore,
+    SymbolCatalogStore,
+)
 from .utils import normalize_symbols
 
 # ---------------------------------------------------------------------------
@@ -62,6 +70,10 @@ if DATA_PROVIDER == "both":
 last_price_store = LastPriceStore(cache_path=LAST_PRICE_CACHE_PATH)
 full_daily_history_store = FullDailyHistoryStore(cache_dir=FULL_DAILY_HISTORY_CACHE_DIR)
 fmp_reference_store = FmpReferenceStore(cache_dir=FMP_REFERENCE_CACHE_DIR)
+paper_portfolio_store = PaperPortfolioStore(
+    cache_path=PAPER_PORTFOLIO_CACHE_PATH,
+    default_initial_cash=PAPER_INITIAL_CASH,
+)
 symbol_catalog_store = SymbolCatalogStore(
     provider=DATA_PROVIDER,
     twelvedata_api_key=TWELVE_DATA_API_KEY,
@@ -84,7 +96,12 @@ hub = MarketDataHub(
 # Inject singletons where needed
 set_hub(hub)
 set_ml_job_store(ml_job_store)
-init_routes(hub=hub, symbol_catalog_store=symbol_catalog_store, ml_job_store=ml_job_store)
+init_routes(
+    hub=hub,
+    symbol_catalog_store=symbol_catalog_store,
+    ml_job_store=ml_job_store,
+    paper_portfolio_store=paper_portfolio_store,
+)
 
 
 # ---------------------------------------------------------------------------
