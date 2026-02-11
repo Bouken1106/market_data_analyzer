@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="/static/styles.css?v=20260212a" />
 </head>
 
-<body>
+<body class="ml-page">
   <!-- Top Navigation Tab Bar -->
   <nav class="nav-tabs" aria-label="Main navigation">
     <a href="/" class="nav-tab" data-path="/">
@@ -27,21 +27,26 @@
     </a>
   </nav>
 
-  <main class="container">
-    <header class="header">
+  <main class="container ml-layout">
+    <header class="header ml-header">
       <div class="header-top">
         <h1>ML Forecast Lab</h1>
       </div>
       <p>モデルを選択して、翌営業日の分布予測とバックテストを実行します。</p>
+      <div class="live-monitor-chips">
+        <span class="pill chip-cyan">Model Catalog</span>
+        <span class="pill chip-amber">Forecast Config</span>
+        <span class="pill chip-green">Backtest + Distribution</span>
+      </div>
     </header>
 
-    <section class="card">
+    <section class="card ml-panel ml-catalog-panel">
       <h2>Model Catalog</h2>
       <p class="hint">使いたいモデルを選択してください。将来的にこの一覧へ追加していけます。</p>
       <div id="ml-model-grid" class="ml-model-grid"></div>
     </section>
 
-    <section class="card">
+    <section class="card ml-panel ml-config-panel">
       <span id="ml-active-model-pill" class="pill">-</span>
       <h2 id="ml-config-title">Forecast Config</h2>
       <p id="ml-model-description" class="hint">-</p>
@@ -174,7 +179,7 @@
       </div>
     </section>
 
-    <section class="card">
+    <section class="card ml-panel ml-metrics-panel">
       <h2>Distribution Metrics (Test)</h2>
       <div class="ml-metric-grid">
         <div class="risk-item">
@@ -198,7 +203,7 @@
 
     <!-- Chart Duo: Next Day Distribution + Backtest -->
     <div class="ml-chart-duo">
-      <section class="card">
+      <section class="card ml-panel ml-chart-panel ml-nextday-panel">
         <div class="ml-section-head">
           <h2>Next Day Distribution</h2>
           <div class="ml-section-tools">
@@ -224,7 +229,7 @@
         <p id="next-day-meta" class="hint">翌営業日の上昇/下落確率を表示</p>
       </section>
 
-      <section class="card">
+      <section class="card ml-panel ml-chart-panel ml-backtest-panel">
         <h2>60-Day Backtest</h2>
         <div class="ml-metric-grid">
           <div class="risk-item">
@@ -266,7 +271,7 @@
 
     <!-- Chart Duo: Quantile Function + Fan Chart -->
     <div class="ml-chart-duo">
-      <section class="card">
+      <section class="card ml-panel ml-chart-panel ml-quantile-panel">
         <div class="ml-section-head">
           <h2>Quantile Function</h2>
           <div class="ml-section-tools">
@@ -290,7 +295,7 @@
         <p id="quantile-legend" class="hint">テスト期間の代表日を表示</p>
       </section>
 
-      <section class="card">
+      <section class="card ml-panel ml-chart-panel ml-fan-panel">
         <div class="ml-section-head">
           <h2>Fan Chart</h2>
           <div class="ml-section-tools">

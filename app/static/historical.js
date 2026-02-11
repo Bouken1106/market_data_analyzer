@@ -435,7 +435,7 @@ function drawPlaceholder(message) {
   ctx.clearRect(0, 0, width, height);
   paintHistoricalBackdrop(ctx, width, height);
   ctx.fillStyle = CHART_COLORS.placeholderText;
-  ctx.font = "14px sans-serif";
+  ctx.font = '14px "Plus Jakarta Sans", sans-serif';
   ctx.textAlign = "center";
   ctx.shadowBlur = 10;
   ctx.shadowColor = "rgba(45, 181, 255, 0.35)";
@@ -649,7 +649,7 @@ function drawChartFromState() {
   }
 
   ctx.fillStyle = CHART_COLORS.label;
-  ctx.font = "12px sans-serif";
+  ctx.font = '12px "Plus Jakarta Sans", sans-serif';
   ctx.textAlign = "left";
   ctx.fillText(formatPrice(max), 8, top + 6);
   ctx.fillText(formatPrice(min), 8, priceBottom);

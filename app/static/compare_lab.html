@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="/static/styles.css?v=20260212a" />
 </head>
 
-<body>
+<body class="cmp-page">
   <!-- Top Navigation Tab Bar -->
   <nav class="nav-tabs" aria-label="Main navigation">
     <a href="/" class="nav-tab" data-path="/">
@@ -27,15 +27,20 @@
     </a>
   </nav>
 
-  <main class="container">
-    <header class="header">
+  <main class="container cmp-layout">
+    <header class="header cmp-header">
       <div class="header-top">
         <h1>Model Compare Lab</h1>
       </div>
       <p>複数銘柄に同一条件を適用し、モデルと損失関数を横断比較します。</p>
+      <div class="live-monitor-chips">
+        <span class="pill chip-cyan">Shared Hyperparams</span>
+        <span class="pill chip-amber">Model Benchmark</span>
+        <span class="pill chip-green">Symbol x Model Matrix</span>
+      </div>
     </header>
 
-    <section class="card">
+    <section class="card cmp-panel cmp-settings-panel">
       <h2>Compare Settings</h2>
       <form id="compare-form" class="ml-form">
         <label>
@@ -176,7 +181,7 @@
       </div>
     </section>
 
-    <section class="card">
+    <section class="card cmp-panel cmp-summary-panel">
       <h2>Summary By Model</h2>
       <div class="table-wrap">
         <table>
@@ -196,7 +201,7 @@
       </div>
     </section>
 
-    <section class="card">
+    <section class="card cmp-panel cmp-detail-panel">
       <h2>Detail By Symbol x Model</h2>
       <div class="table-wrap">
         <table>

@@ -576,7 +576,7 @@ function drawPlaceholder(canvas, text) {
   paintCanvasBackdrop(ctx, width, height);
   ctx.fillStyle = COLORS.label;
   ctx.textAlign = "center";
-  ctx.font = "14px sans-serif";
+  ctx.font = '14px "Plus Jakarta Sans", sans-serif';
   ctx.shadowBlur = 10;
   ctx.shadowColor = "rgba(29, 181, 255, 0.35)";
   ctx.fillText(text, width / 2, height / 2);
@@ -973,7 +973,7 @@ function drawBaseAxes(ctx, width, height, yBounds, yFormatter, xTicks) {
   ctx.setLineDash([]);
 
   ctx.fillStyle = COLORS.label;
-  ctx.font = "11px sans-serif";
+  ctx.font = '11px "Plus Jakarta Sans", sans-serif';
   ctx.textAlign = "right";
   for (let step = 0; step <= 4; step += 1) {
     const value = yBounds.min + (((yBounds.max - yBounds.min) / 4) * step);
@@ -1349,7 +1349,7 @@ function renderBacktest60d(payload) {
     ctx.stroke();
 
     ctx.fillStyle = color;
-    ctx.font = "11px sans-serif";
+    ctx.font = '11px "Plus Jakarta Sans", sans-serif';
     ctx.textAlign = "left";
     ctx.fillText(label, x + 18, y);
   };
@@ -1415,7 +1415,7 @@ function renderNextDayDistribution(payload) {
   ctx.fillRect(left + 1, barY + 1, Math.max(0, plotWidth - 2), Math.max(1, Math.floor(barH * 0.35)));
 
   ctx.fillStyle = "#e8eef8";
-  ctx.font = "12px sans-serif";
+  ctx.font = '12px "Plus Jakarta Sans", sans-serif';
   ctx.textAlign = "left";
   ctx.fillText(`Down ${((downProb || 0) * 100).toFixed(1)}%`, left, barY - 6);
   ctx.textAlign = "right";
@@ -1511,7 +1511,7 @@ function renderNextDayDistribution(payload) {
     const yAtDensity = (density) => bottom - ((density / Math.max(1e-9, yMaxDensity)) * plotHeight);
 
     ctx.fillStyle = COLORS.label;
-    ctx.font = "11px sans-serif";
+    ctx.font = '11px "Plus Jakarta Sans", sans-serif';
     ctx.textAlign = "right";
     ctx.fillText("0", left - 8, bottom + 3);
     ctx.fillText(yMaxDensity.toFixed(1), left - 8, chartTop + 3);
@@ -1572,7 +1572,7 @@ function renderNextDayDistribution(payload) {
       ctx.lineTo(x, bottom);
       ctx.stroke();
       ctx.fillStyle = "rgba(255, 220, 136, 0.95)";
-      ctx.font = "11px sans-serif";
+      ctx.font = '11px "Plus Jakarta Sans", sans-serif';
       const currentLabelY = resolveCurrentLabelY(x);
       const currentLabelWidth = ctx.measureText(currentLineLabel).width;
       let labelX = x + 4;
@@ -1621,7 +1621,7 @@ function renderNextDayDistribution(payload) {
 
     const yAtCdf = (prob) => bottom - (Math.max(0, Math.min(1, prob)) * plotHeight);
     ctx.fillStyle = COLORS.label;
-    ctx.font = "11px sans-serif";
+    ctx.font = '11px "Plus Jakarta Sans", sans-serif';
     ctx.textAlign = "right";
     ctx.fillText("0", left - 8, bottom + 3);
     ctx.fillText("1.0", left - 8, chartTop + 3);
@@ -1666,7 +1666,7 @@ function renderNextDayDistribution(payload) {
       ctx.lineTo(x, bottom);
       ctx.stroke();
       ctx.fillStyle = "rgba(255, 220, 136, 0.95)";
-      ctx.font = "11px sans-serif";
+      ctx.font = '11px "Plus Jakarta Sans", sans-serif';
       const currentLabelY = resolveCurrentLabelY(x);
       const currentLabelWidth = ctx.measureText(currentLineLabel).width;
       let labelX = x + 4;
@@ -1683,7 +1683,7 @@ function renderNextDayDistribution(payload) {
       ctx.fillText(currentLineLabel, labelX, currentLabelY);
     }
 
-    ctx.font = "11px sans-serif";
+    ctx.font = '11px "Plus Jakarta Sans", sans-serif';
     ctx.textAlign = "center";
     ctx.setLineDash([4, 3]);
     quantileMarkers.forEach((marker) => {

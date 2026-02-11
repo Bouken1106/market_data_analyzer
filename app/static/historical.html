@@ -137,301 +137,340 @@
     <section class="overview-detail-grid">
       <section class="card overview-metrics">
         <h2 class="section-title">Market Overview</h2>
-        <div class="status-row">
-          <div>
-            <div class="overview-help-row">
-              <span class="label">Ticker / Name</span>
-              <details class="param-help">
-                <summary>?</summary>
-                <p>現在表示中の銘柄コードと会社名です。</p>
-              </details>
+        <div class="overview-group">
+          <h3 class="overview-subtitle">Price + Session</h3>
+          <div class="status-row">
+            <div>
+              <div class="overview-help-row">
+                <span class="label">Ticker / Name</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>現在表示中の銘柄コードと会社名です。</p>
+                </details>
+              </div>
+              <span id="ov-symbol-name">-</span>
             </div>
-            <span id="ov-symbol-name">-</span>
+            <div>
+              <div class="overview-help-row">
+                <span class="label">Current</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>最新価格です（通常は直近約定値）。</p>
+                </details>
+              </div>
+              <span id="ov-current">-</span>
+            </div>
+            <div>
+              <div class="overview-help-row">
+                <span class="label">Prev Change</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>前日終値からの変化額と変化率です。</p>
+                </details>
+              </div>
+              <span id="ov-change">-</span>
+            </div>
+            <div>
+              <div class="overview-help-row">
+                <span class="label">Day High / Low</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>当日セッションの高値と安値です。</p>
+                </details>
+              </div>
+              <span id="ov-day-range">-</span>
+            </div>
           </div>
-          <div>
-            <div class="overview-help-row">
-              <span class="label">Current</span>
-              <details class="param-help">
-                <summary>?</summary>
-                <p>最新価格です（通常は直近約定値）。</p>
-              </details>
+        </div>
+
+        <div class="overview-group">
+          <h3 class="overview-subtitle">Liquidity + Feed</h3>
+          <div class="status-row">
+            <div>
+              <div class="overview-help-row">
+                <span class="label">Volume</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>当日の出来高です。avg20 は20日平均、x は平均比です。</p>
+                </details>
+              </div>
+              <span id="ov-volume">-</span>
             </div>
-            <span id="ov-current">-</span>
-          </div>
-          <div>
-            <div class="overview-help-row">
-              <span class="label">Prev Change</span>
-              <details class="param-help">
-                <summary>?</summary>
-                <p>前日終値からの変化額と変化率です。</p>
-              </details>
+            <div>
+              <div class="overview-help-row">
+                <span class="label">Turnover</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>当日の売買代金です（概算: 価格 x 出来高）。</p>
+                </details>
+              </div>
+              <span id="ov-turnover">-</span>
             </div>
-            <span id="ov-change">-</span>
-          </div>
-          <div>
-            <div class="overview-help-row">
-              <span class="label">Day High / Low</span>
-              <details class="param-help">
-                <summary>?</summary>
-                <p>当日セッションの高値と安値です。</p>
-              </details>
+            <div>
+              <div class="overview-help-row">
+                <span class="label">Bid / Ask Spread</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>最良買気配 / 売気配と、その差（絶対値・%）です。</p>
+                </details>
+              </div>
+              <span id="ov-spread">-</span>
             </div>
-            <span id="ov-day-range">-</span>
-          </div>
-          <div>
-            <div class="overview-help-row">
-              <span class="label">Volume</span>
-              <details class="param-help">
-                <summary>?</summary>
-                <p>当日の出来高です。avg20 は20日平均、x は平均比です。</p>
-              </details>
+            <div>
+              <div class="overview-help-row">
+                <span class="label">Updated At</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>価格データの更新時刻です。遅延注記がある場合は併記します。</p>
+                </details>
+              </div>
+              <span id="ov-updated">-</span>
             </div>
-            <span id="ov-volume">-</span>
-          </div>
-          <div>
-            <div class="overview-help-row">
-              <span class="label">Turnover</span>
-              <details class="param-help">
-                <summary>?</summary>
-                <p>当日の売買代金です（概算: 価格 x 出来高）。</p>
-              </details>
-            </div>
-            <span id="ov-turnover">-</span>
-          </div>
-          <div>
-            <div class="overview-help-row">
-              <span class="label">Bid / Ask Spread</span>
-              <details class="param-help">
-                <summary>?</summary>
-                <p>最良買気配 / 売気配と、その差（絶対値・%）です。</p>
-              </details>
-            </div>
-            <span id="ov-spread">-</span>
-          </div>
-          <div>
-            <div class="overview-help-row">
-              <span class="label">Updated At</span>
-              <details class="param-help">
-                <summary>?</summary>
-                <p>価格データの更新時刻です。遅延注記がある場合は併記します。</p>
-              </details>
-            </div>
-            <span id="ov-updated">-</span>
           </div>
         </div>
       </section>
 
       <section class="card overview-tech">
         <h2 class="section-title">Technical + Relative</h2>
-        <div class="status-row">
-          <div>
-            <div class="overview-help-row">
-              <span class="label">VWAP (1m / 5m)</span>
-              <details class="param-help">
-                <summary>?</summary>
-                <p>1分足 / 5分足ベースの出来高加重平均価格です。</p>
-              </details>
+        <div class="overview-group">
+          <h3 class="overview-subtitle">Core Signals</h3>
+          <div class="status-row">
+            <div>
+              <div class="overview-help-row">
+                <span class="label">VWAP (1m / 5m)</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>1分足 / 5分足ベースの出来高加重平均価格です。</p>
+                </details>
+              </div>
+              <span id="tech-vwap">-</span>
             </div>
-            <span id="tech-vwap">-</span>
+            <div>
+              <div class="overview-help-row">
+                <span class="label">MA (20 / 50)</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>20日と50日の移動平均です。</p>
+                </details>
+              </div>
+              <span id="tech-ma">-</span>
+            </div>
+            <div>
+              <div class="overview-help-row">
+                <span class="label">Beta (60d vs SPY)</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>直近60営業日でのSPYに対する感応度（β）です。</p>
+                </details>
+              </div>
+              <span id="tech-beta">-</span>
+            </div>
+            <div>
+              <div class="overview-help-row">
+                <span class="label">Correlation (60d)</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>直近60営業日のSPYとのリターン相関係数です。</p>
+                </details>
+              </div>
+              <span id="tech-corr">-</span>
+            </div>
           </div>
-          <div>
-            <div class="overview-help-row">
-              <span class="label">MA (20 / 50)</span>
-              <details class="param-help">
-                <summary>?</summary>
-                <p>20日と50日の移動平均です。</p>
-              </details>
+        </div>
+
+        <div class="overview-group">
+          <h3 class="overview-subtitle">Market Proxies</h3>
+          <div class="status-row">
+            <div>
+              <div class="overview-help-row">
+                <span class="label">S&P500 Proxy (SPY)</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>S&P500の代理指標としてSPYの価格と騰落率を表示します。</p>
+                </details>
+              </div>
+              <span id="market-spy">-</span>
             </div>
-            <span id="tech-ma">-</span>
+            <div>
+              <div class="overview-help-row">
+                <span class="label">NASDAQ Proxy (QQQ)</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>NASDAQの代理指標としてQQQを表示します。必要時に手動読込します。</p>
+                </details>
+              </div>
+              <div class="metric-actions">
+                <span id="market-qqq">-</span>
+                <button id="load-qqq" type="button" class="minor-action">Load QQQ</button>
+              </div>
+            </div>
           </div>
-          <div>
-            <div class="overview-help-row">
-              <span class="label">Beta (60d vs SPY)</span>
-              <details class="param-help">
-                <summary>?</summary>
-                <p>直近60営業日でのSPYに対する感応度（β）です。</p>
-              </details>
+        </div>
+
+        <div class="overview-group">
+          <h3 class="overview-subtitle">Data Coverage</h3>
+          <div class="status-row">
+            <div>
+              <div class="overview-help-row">
+                <span class="label">Sector ETF</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>同セクターETF連携の提供可否です。</p>
+                </details>
+              </div>
+              <span id="support-sector">Not available</span>
             </div>
-            <span id="tech-beta">-</span>
-          </div>
-          <div>
-            <div class="overview-help-row">
-              <span class="label">Correlation (60d)</span>
-              <details class="param-help">
-                <summary>?</summary>
-                <p>直近60営業日のSPYとのリターン相関係数です。</p>
-              </details>
+            <div>
+              <div class="overview-help-row">
+                <span class="label">Orderbook / L2</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>板情報（Level 2）連携の提供可否です。</p>
+                </details>
+              </div>
+              <span id="support-board">Not available</span>
             </div>
-            <span id="tech-corr">-</span>
-          </div>
-          <div>
-            <div class="overview-help-row">
-              <span class="label">S&P500 Proxy (SPY)</span>
-              <details class="param-help">
-                <summary>?</summary>
-                <p>S&P500の代理指標としてSPYの価格と騰落率を表示します。</p>
-              </details>
+            <div>
+              <div class="overview-help-row">
+                <span class="label">Corporate Events</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>企業イベント情報（例: 決算関連カレンダー）の提供可否です。</p>
+                </details>
+              </div>
+              <span id="support-events">Not available</span>
             </div>
-            <span id="market-spy">-</span>
-          </div>
-          <div>
-            <div class="overview-help-row">
-              <span class="label">NASDAQ Proxy (QQQ)</span>
-              <details class="param-help">
-                <summary>?</summary>
-                <p>NASDAQの代理指標としてQQQを表示します。必要時に手動読込します。</p>
-              </details>
+            <div>
+              <div class="overview-help-row">
+                <span class="label">Earnings / Dividend / Split</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>決算・配当・株式分割などコーポレートアクションの提供可否です。</p>
+                </details>
+              </div>
+              <span id="support-corporate">Not available</span>
             </div>
-            <span id="market-qqq">-</span>
-            <button id="load-qqq" type="button" class="minor-action">Load QQQ</button>
-          </div>
-          <div>
-            <div class="overview-help-row">
-              <span class="label">Sector ETF</span>
-              <details class="param-help">
-                <summary>?</summary>
-                <p>同セクターETF連携の提供可否です。</p>
-              </details>
+            <div>
+              <div class="overview-help-row">
+                <span class="label">News Headlines</span>
+                <details class="param-help">
+                  <summary>?</summary>
+                  <p>ニュース見出し連携の提供可否です。</p>
+                </details>
+              </div>
+              <span id="support-news">Not available</span>
             </div>
-            <span id="support-sector">Not available</span>
-          </div>
-          <div>
-            <div class="overview-help-row">
-              <span class="label">Orderbook / L2</span>
-              <details class="param-help">
-                <summary>?</summary>
-                <p>板情報（Level 2）連携の提供可否です。</p>
-              </details>
-            </div>
-            <span id="support-board">Not available</span>
-          </div>
-          <div>
-            <div class="overview-help-row">
-              <span class="label">Corporate Events</span>
-              <details class="param-help">
-                <summary>?</summary>
-                <p>企業イベント情報（例: 決算関連カレンダー）の提供可否です。</p>
-              </details>
-            </div>
-            <span id="support-events">Not available</span>
-          </div>
-          <div>
-            <div class="overview-help-row">
-              <span class="label">Earnings / Dividend / Split</span>
-              <details class="param-help">
-                <summary>?</summary>
-                <p>決算・配当・株式分割などコーポレートアクションの提供可否です。</p>
-              </details>
-            </div>
-            <span id="support-corporate">Not available</span>
-          </div>
-          <div>
-            <div class="overview-help-row">
-              <span class="label">News Headlines</span>
-              <details class="param-help">
-                <summary>?</summary>
-                <p>ニュース見出し連携の提供可否です。</p>
-              </details>
-            </div>
-            <span id="support-news">Not available</span>
           </div>
         </div>
       </section>
     </section>
 
-    <section class="card">
-      <div class="header-top">
+    <section class="card overview-fmp">
+      <div class="header-top fmp-header">
         <h2 class="section-title">FMP Fundamentals + Corporate Actions</h2>
-        <div>
+        <div class="fmp-actions">
           <button id="load-fmp-reference" type="button" class="minor-action">Load FMP Data</button>
           <button id="refresh-fmp-reference" type="button" class="minor-action">Refresh FMP Data</button>
           <button id="clear-fmp-reference-cache" type="button" class="minor-action">Clear FMP Cache</button>
         </div>
       </div>
       <p id="fmp-reference-meta" class="hint">FMP reference data is loaded on demand to save API credits.</p>
-      <div class="status-row">
-        <div>
-          <div class="overview-help-row">
-            <span class="label">Adj Close</span>
-            <details class="param-help"><summary>?</summary><p>配当・分割を反映した終値です。通常のCloseと比較して長期比較の歪みを抑えます。</p></details>
+
+      <div class="overview-group">
+        <h3 class="overview-subtitle">Pricing + Profile</h3>
+        <div class="status-row">
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Adj Close</span>
+              <details class="param-help"><summary>?</summary><p>配当・分割を反映した終値です。通常のCloseと比較して長期比較の歪みを抑えます。</p></details>
+            </div>
+            <span id="fmp-adj-close">-</span>
           </div>
-          <span id="fmp-adj-close">-</span>
-        </div>
-        <div>
-          <div class="overview-help-row">
-            <span class="label">Adj Factor</span>
-            <details class="param-help"><summary>?</summary><p>調整係数（Adj Close / Close）です。1から離れるほど過去の配当・分割影響が大きいことを示します。</p></details>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Adj Factor</span>
+              <details class="param-help"><summary>?</summary><p>調整係数（Adj Close / Close）です。1から離れるほど過去の配当・分割影響が大きいことを示します。</p></details>
+            </div>
+            <span id="fmp-adj-factor">-</span>
           </div>
-          <span id="fmp-adj-factor">-</span>
-        </div>
-        <div>
-          <div class="overview-help-row">
-            <span class="label">Last Updated</span>
-            <details class="param-help"><summary>?</summary><p>このFMPセクションを最後に取得した時刻です。キャッシュ表示時は前回取得時刻が表示されます。</p></details>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Last Updated</span>
+              <details class="param-help"><summary>?</summary><p>このFMPセクションを最後に取得した時刻です。キャッシュ表示時は前回取得時刻が表示されます。</p></details>
+            </div>
+            <span id="fmp-last-updated">-</span>
           </div>
-          <span id="fmp-last-updated">-</span>
-        </div>
-        <div>
-          <div class="overview-help-row">
-            <span class="label">Sector / Industry</span>
-            <details class="param-help"><summary>?</summary><p>企業のセクター分類と業種分類です。同業比較や分散管理の基礎情報として使います。</p></details>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Sector / Industry</span>
+              <details class="param-help"><summary>?</summary><p>企業のセクター分類と業種分類です。同業比較や分散管理の基礎情報として使います。</p></details>
+            </div>
+            <span id="fmp-sector-industry">-</span>
           </div>
-          <span id="fmp-sector-industry">-</span>
-        </div>
-        <div>
-          <div class="overview-help-row">
-            <span class="label">Market Cap</span>
-            <details class="param-help"><summary>?</summary><p>時価総額です（株価×発行済株式数）。銘柄規模の目安になります。</p></details>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Market Cap</span>
+              <details class="param-help"><summary>?</summary><p>時価総額です（株価×発行済株式数）。銘柄規模の目安になります。</p></details>
+            </div>
+            <span id="fmp-market-cap">-</span>
           </div>
-          <span id="fmp-market-cap">-</span>
-        </div>
-        <div>
-          <div class="overview-help-row">
-            <span class="label">Key Ratios (PE/PB/ROE)</span>
-            <details class="param-help"><summary>?</summary><p>代表的な評価・収益性指標です。PEは利益基準、PBは純資産基準、ROEは自己資本効率を示します。</p></details>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Key Ratios (PE/PB/ROE)</span>
+              <details class="param-help"><summary>?</summary><p>代表的な評価・収益性指標です。PEは利益基準、PBは純資産基準、ROEは自己資本効率を示します。</p></details>
+            </div>
+            <span id="fmp-key-ratios">-</span>
           </div>
-          <span id="fmp-key-ratios">-</span>
-        </div>
-      </div>
-      <div class="status-row">
-        <div>
-          <div class="overview-help-row">
-            <span class="label">Latest IS (Revenue / Net Income)</span>
-            <details class="param-help"><summary>?</summary><p>最新の損益計算書スナップショットです。売上高と最終利益を簡易表示します。</p></details>
-          </div>
-          <span id="fmp-is-snapshot">-</span>
-        </div>
-        <div>
-          <div class="overview-help-row">
-            <span class="label">Latest BS (Assets / Debt / Equity)</span>
-            <details class="param-help"><summary>?</summary><p>最新の貸借対照表スナップショットです。総資産・負債・純資産のバランスを確認できます。</p></details>
-          </div>
-          <span id="fmp-bs-snapshot">-</span>
-        </div>
-        <div>
-          <div class="overview-help-row">
-            <span class="label">Latest CF (OCF / FCF)</span>
-            <details class="param-help"><summary>?</summary><p>最新のキャッシュフロー要約です。営業CFとFCFで現金創出力を確認します。</p></details>
-          </div>
-          <span id="fmp-cf-snapshot">-</span>
         </div>
       </div>
-      <div class="status-row">
-        <div>
-          <div class="overview-help-row">
-            <span class="label">Recent Dividends</span>
-            <details class="param-help"><summary>?</summary><p>直近の配当履歴です。日付と配当額を表示し、還元実績の把握に使えます。</p></details>
+
+      <div class="overview-group">
+        <h3 class="overview-subtitle">Financial Statements Snapshot</h3>
+        <div class="status-row">
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Latest IS (Revenue / Net Income)</span>
+              <details class="param-help"><summary>?</summary><p>最新の損益計算書スナップショットです。売上高と最終利益を簡易表示します。</p></details>
+            </div>
+            <span id="fmp-is-snapshot">-</span>
           </div>
-          <span id="fmp-dividends">-</span>
-        </div>
-        <div>
-          <div class="overview-help-row">
-            <span class="label">Recent Splits</span>
-            <details class="param-help"><summary>?</summary><p>直近の株式分割履歴です。分割比率と実施日を表示します。</p></details>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Latest BS (Assets / Debt / Equity)</span>
+              <details class="param-help"><summary>?</summary><p>最新の貸借対照表スナップショットです。総資産・負債・純資産のバランスを確認できます。</p></details>
+            </div>
+            <span id="fmp-bs-snapshot">-</span>
           </div>
-          <span id="fmp-splits">-</span>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Latest CF (OCF / FCF)</span>
+              <details class="param-help"><summary>?</summary><p>最新のキャッシュフロー要約です。営業CFとFCFで現金創出力を確認します。</p></details>
+            </div>
+            <span id="fmp-cf-snapshot">-</span>
+          </div>
         </div>
       </div>
+
+      <div class="overview-group">
+        <h3 class="overview-subtitle">Corporate Actions</h3>
+        <div class="status-row">
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Recent Dividends</span>
+              <details class="param-help"><summary>?</summary><p>直近の配当履歴です。日付と配当額を表示し、還元実績の把握に使えます。</p></details>
+            </div>
+            <span id="fmp-dividends">-</span>
+          </div>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Recent Splits</span>
+              <details class="param-help"><summary>?</summary><p>直近の株式分割履歴です。分割比率と実施日を表示します。</p></details>
+            </div>
+            <span id="fmp-splits">-</span>
+          </div>
+        </div>
+      </div>
+
       <details class="technical-panel">
         <summary class="minor-action technical-toggle">Show company profile</summary>
         <pre id="fmp-company-profile" class="hint">-</pre>
