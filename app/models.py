@@ -73,6 +73,22 @@ class PaperPortfolioResetRequest(BaseModel):
     initial_cash: float | None = None
 
 
+class StrategyEvaluationRequest(BaseModel):
+    symbols: str = "AAPL,MSFT,NVDA,AMZN,GOOGL"
+    method: str = "inverse_volatility"
+    months: int = 36
+    lookback_days: int = 126
+    rebalance_frequency: str = "monthly"
+    rebalance_threshold_pct: float = 5.0
+    max_weight: float = 0.35
+    initial_capital: float = 1_000_000.0
+    commission_bps: float = 2.0
+    slippage_bps: float = 3.0
+    benchmark_symbol: str = "SPY"
+    min_trade_value: float = 100.0
+    refresh: bool = False
+
+
 # ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------

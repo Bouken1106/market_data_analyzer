@@ -7,11 +7,10 @@
   <title>Strategy Lab</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="/static/styles.css?v=20260212a" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260212b" />
 </head>
 
-<body>
-  <!-- Top Navigation Tab Bar -->
+<body class="stg-page">
   <nav class="nav-tabs" aria-label="Main navigation">
     <a href="/" class="nav-tab" data-path="/">
       <span class="nav-tab-icon">📊</span> Monitor
@@ -27,26 +26,224 @@
     </a>
   </nav>
 
-  <main class="container">
-    <header class="header">
+  <main class="container stg-layout">
+    <header class="header stg-header">
       <div class="header-top">
         <h1>Strategy Lab</h1>
       </div>
-      <p>将来のバックテストやシグナル評価を収容する拡張ページ</p>
+      <p>配分ルール・リバランス・手数料を含めて、ポートフォリオ戦略を即時評価します。</p>
+      <div class="live-monitor-chips">
+        <span class="pill chip-cyan">Allocation Engine</span>
+        <span class="pill chip-green">Rebalance Proposal</span>
+        <span class="pill chip-amber">Cost-Aware Backtest</span>
+      </div>
     </header>
 
-    <section class="page-grid">
-      <article class="card page-card">
-        <h2>Signal Rules</h2>
-        <p class="hint">エントリー/イグジット条件やフィルタを定義する領域</p>
-      </article>
-      <article class="card page-card">
+    <section class="card stg-panel stg-settings-panel">
+      <h2>Strategy Settings</h2>
+      <form id="stg-form" class="ml-form">
+        <label>
+          <span class="ml-label-row">
+            <span>Symbols</span>
+            <details class="param-help">
+              <summary>?</summary>
+              <p>対象銘柄。カンマ区切りで指定します（例: AAPL,MSFT,NVDA）。</p>
+            </details>
+          </span>
+          <input id="stg-symbols" type="text" value="AAPL,MSFT,NVDA,AMZN,GOOGL" />
+        </label>
+
+        <div class="ml-form-grid">
+          <label>
+            <span class="ml-label-row">
+              <span>Method</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>配分方式。Equal Weight は均等配分、Inverse Volatility は低ボラ銘柄を厚く、Minimum Variance は分散最小を狙います。</p>
+              </details>
+            </span>
+            <select id="stg-method">
+              <option value="inverse_volatility">Inverse Volatility</option>
+              <option value="equal_weight">Equal Weight</option>
+              <option value="min_variance">Minimum Variance</option>
+            </select>
+          </label>
+          <label>
+            <span class="ml-label-row">
+              <span>History Months</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>学習・評価に使う過去データの月数です。長いほど安定しやすい反面、直近環境とのズレが増える場合があります。</p>
+              </details>
+            </span>
+            <input id="stg-months" type="number" min="3" max="60" value="36" />
+          </label>
+          <label>
+            <span class="ml-label-row">
+              <span>Lookback Days</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>配分計算に使う直近営業日数です（例: 126 は約6か月）。</p>
+              </details>
+            </span>
+            <input id="stg-lookback" type="number" min="20" max="756" value="126" />
+          </label>
+          <label>
+            <span class="ml-label-row">
+              <span>Rebalance</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>目標配分へ戻す頻度です。頻度が高いほど追従性は上がりますが、売買回数も増えやすくなります。</p>
+              </details>
+            </span>
+            <select id="stg-rebalance-frequency">
+              <option value="monthly">Monthly</option>
+              <option value="weekly">Weekly</option>
+              <option value="quarterly">Quarterly</option>
+            </select>
+          </label>
+          <label>
+            <span class="ml-label-row">
+              <span>Drift Threshold (%)</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>現在配分と目標配分の乖離がこの値を超えると、予定日でなくてもリバランスします。</p>
+              </details>
+            </span>
+            <input id="stg-rebalance-threshold" type="number" min="0" max="30" step="0.5" value="5.0" />
+          </label>
+          <label>
+            <span class="ml-label-row">
+              <span>Max Weight</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>1銘柄に許容する最大比率（0〜1）です。例: 0.35 は35%上限。</p>
+              </details>
+            </span>
+            <input id="stg-max-weight" type="number" min="0.05" max="1.0" step="0.01" value="0.35" />
+          </label>
+          <label>
+            <span class="ml-label-row">
+              <span>Initial Capital</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>バックテスト開始時の元本です。提案売買額の計算にも使います。</p>
+              </details>
+            </span>
+            <input id="stg-initial-capital" type="number" min="1000" step="1000" value="1000000" />
+          </label>
+          <label>
+            <span class="ml-label-row">
+              <span>Commission (bps)</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>手数料の想定。1bps = 0.01% です。売買ごとにコストとして差し引きます。</p>
+              </details>
+            </span>
+            <input id="stg-commission-bps" type="number" min="0" max="200" step="0.5" value="2.0" />
+          </label>
+          <label>
+            <span class="ml-label-row">
+              <span>Slippage (bps)</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>理論価格と実際約定価格のズレの想定コストです。流動性が低い銘柄ほど大きくなりやすいです。</p>
+              </details>
+            </span>
+            <input id="stg-slippage-bps" type="number" min="0" max="200" step="0.5" value="3.0" />
+          </label>
+          <label>
+            <span class="ml-label-row">
+              <span>Benchmark</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>比較対象の基準銘柄です。通常は SPY など市場全体を代表するETFを使います。</p>
+              </details>
+            </span>
+            <input id="stg-benchmark" type="text" value="SPY" />
+          </label>
+          <label>
+            <span class="ml-label-row">
+              <span>Min Trade Value</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>この金額未満の差分売買は提案しません。小口ノイズ注文を減らすための閾値です。</p>
+              </details>
+            </span>
+            <input id="stg-min-trade-value" type="number" min="0" step="10" value="100" />
+          </label>
+        </div>
+
+        <div class="row ml-form-actions">
+          <button id="stg-run" type="submit">Run Strategy</button>
+          <label class="ml-checkbox">
+            <input id="stg-refresh" type="checkbox" />
+            Force refresh historical data
+          </label>
+        </div>
+      </form>
+      <p id="stg-status" class="hint">条件を設定して Run Strategy を実行してください。</p>
+    </section>
+
+    <section class="card stg-panel stg-summary-panel">
+      <div class="ml-section-head">
         <h2>Backtest Summary</h2>
-        <p class="hint">収益率・Sharpe・ドローダウン・勝率などのサマリー表示を想定</p>
-      </article>
+        <div class="ml-section-tools">
+          <details class="param-help">
+            <summary>?</summary>
+            <p>戦略のバックテスト結果サマリーです。設定した期間・コスト・リバランス条件に基づく実績値を表示します。</p>
+          </details>
+        </div>
+      </div>
+      <div class="ml-metric-grid">
+        <div class="risk-item"><span class="label">CAGR</span><span id="stg-cagr">-</span></div>
+        <div class="risk-item"><span class="label">Total Return</span><span id="stg-total-return">-</span></div>
+        <div class="risk-item"><span class="label">Volatility</span><span id="stg-volatility">-</span></div>
+        <div class="risk-item"><span class="label">Sharpe</span><span id="stg-sharpe">-</span></div>
+        <div class="risk-item"><span class="label">Max Drawdown</span><span id="stg-mdd">-</span></div>
+        <div class="risk-item"><span class="label">Benchmark CAGR</span><span id="stg-bench-cagr">-</span></div>
+      </div>
+      <p id="stg-data-summary" class="hint"></p>
+    </section>
+
+    <section class="card stg-panel stg-plan-panel">
+      <h2>Target Allocation Plan</h2>
+      <p id="stg-plan-stats" class="hint"></p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Target Weight(%)</th>
+            </tr>
+          </thead>
+          <tbody id="stg-allocation-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card stg-panel stg-trade-panel">
+      <h2>Rebalance Trade Proposals</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Side</th>
+              <th>Quantity</th>
+              <th>Price</th>
+              <th>Delta Value</th>
+              <th>Target Weight(%)</th>
+            </tr>
+          </thead>
+          <tbody id="stg-trades-body"></tbody>
+        </table>
+      </div>
+      <p id="stg-trades-note" class="hint"></p>
     </section>
   </main>
 
+  <script src="/static/strategy_lab.js" defer></script>
   <script src="/static/page_menu.js" defer></script>
 </body>
 

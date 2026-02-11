@@ -99,7 +99,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 - `/`: US Stock Live Monitor（リアルタイム監視）
 - `/ml-lab`: ML Forecast Lab（モデル一覧から選択して翌営業日分布を推定）
-- `/strategy-lab`: Strategy Lab（戦略検証の準備ページ）
+- `/strategy-lab`: Strategy Lab（配分ルール + リバランス提案 + コスト込みバックテスト）
 - `/compare-lab`: Model Compare Lab（複数銘柄 × 複数モデルの一括比較）
 - `/` には Paper Portfolio（仮想資産）パネルを搭載し、実注文なしで売買シミュレーション可能
 
@@ -137,6 +137,12 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
    - 比較期間（test）は「最新データから直近2カ月」
    - 学習/検証は残り期間を `4:1` で分割（train=80%, val=20%）
    - モデル別サマリーと、銘柄×モデル詳細（Pinball/MAE/RMSE/MAPE/SMAPE/Coverage）を表示
+10. `/strategy-lab` では、指定銘柄群に対してポートフォリオ戦略を即時評価
+   - 配分方式: `equal_weight` / `inverse_volatility` / `min_variance`
+   - リバランス頻度: `weekly` / `monthly` / `quarterly` + 乖離しきい値
+   - 売買コスト: 手数料bps + スリッページbps を日次バックテストに反映
+   - サマリー: CAGR, Total Return, Volatility, Sharpe, Max Drawdown, ベンチマーク比較
+   - 現在の Paper Portfolio 状態を使ったリバランス提案（売買方向・数量・金額差分）
 
 補足:
 - 起動時に `/api_usage` を1回呼び、日次残量を初期化します（1クレジット消費）。
@@ -195,7 +201,8 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `POST /api/ml/jobs/{job_id}/cancel`: 実行中ジョブの停止を要求
 - `GET /api/stream`: SSE でリアルタイム配信
 - `GET /ml-lab`: モデル選択式の分位点予測ページ
-- `GET /strategy-lab`: 戦略検証ページ（準備用）
+- `POST /api/strategy/evaluate`: ポートフォリオ戦略を評価（配分案・リバランス提案・コスト込みバックテスト結果）
+- `GET /strategy-lab`: 戦略検証ページ
 - `GET /compare-lab`: モデル一括比較ページ
 
 `MARKET_DATA_PROVIDER=both` の場合、主要レスポンスに `source_detail` が含まれます。
