@@ -14,11 +14,14 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from .config import (
+    DATA_PROVIDER,
+    FMP_API_KEY,
     LAST_PRICE_CACHE_PATH,
     FULL_DAILY_HISTORY_CACHE_DIR,
     MAX_BASIC_SYMBOLS,
     SYMBOL_CATALOG_CACHE_PATH,
     SYMBOL_CATALOG_TTL_SEC,
+    TWELVE_DATA_API_KEY,
 )
 from .hub import MarketDataHub
 from .ml.job_store import MlJobStore
@@ -31,7 +34,6 @@ from .utils import normalize_symbols
 # Resolve environment variables
 # ---------------------------------------------------------------------------
 
-API_KEY = os.getenv("TWELVE_DATA_API_KEY", "").strip()
 DEFAULT_SYMBOLS = normalize_symbols(
     os.getenv("DEFAULT_SYMBOLS", "AAPL,MSFT,GOOGL,AMZN,TSLA")
 )
@@ -39,8 +41,18 @@ if not DEFAULT_SYMBOLS:
     DEFAULT_SYMBOLS = ["AAPL"]
 DEFAULT_SYMBOLS = DEFAULT_SYMBOLS[:MAX_BASIC_SYMBOLS]
 
-if not API_KEY:
+if DATA_PROVIDER == "twelvedata" and not TWELVE_DATA_API_KEY:
     raise RuntimeError("TWELVE_DATA_API_KEY is required. Set it in your environment or .env file.")
+if DATA_PROVIDER == "fmp" and not FMP_API_KEY:
+    raise RuntimeError("FMP_API_KEY is required. Set it in your environment or .env file.")
+if DATA_PROVIDER == "both":
+    missing: list[str] = []
+    if not TWELVE_DATA_API_KEY:
+        missing.append("TWELVE_DATA_API_KEY")
+    if not FMP_API_KEY:
+        missing.append("FMP_API_KEY")
+    if missing:
+        raise RuntimeError(f"{', '.join(missing)} is required when MARKET_DATA_PROVIDER=both.")
 
 # ---------------------------------------------------------------------------
 # Instantiate stores & hub
@@ -49,14 +61,18 @@ if not API_KEY:
 last_price_store = LastPriceStore(cache_path=LAST_PRICE_CACHE_PATH)
 full_daily_history_store = FullDailyHistoryStore(cache_dir=FULL_DAILY_HISTORY_CACHE_DIR)
 symbol_catalog_store = SymbolCatalogStore(
-    api_key=API_KEY,
+    provider=DATA_PROVIDER,
+    twelvedata_api_key=TWELVE_DATA_API_KEY,
+    fmp_api_key=FMP_API_KEY,
     cache_path=SYMBOL_CATALOG_CACHE_PATH,
     ttl_sec=SYMBOL_CATALOG_TTL_SEC,
 )
 ml_job_store = MlJobStore(max_jobs=120)
 
 hub = MarketDataHub(
-    api_key=API_KEY,
+    provider=DATA_PROVIDER,
+    twelvedata_api_key=TWELVE_DATA_API_KEY,
+    fmp_api_key=FMP_API_KEY,
     symbols=DEFAULT_SYMBOLS,
     last_price_store=last_price_store,
     full_daily_history_store=full_daily_history_store,

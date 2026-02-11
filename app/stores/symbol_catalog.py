@@ -1,4 +1,4 @@
-"""Cached catalog of available stock symbols from Twelve Data."""
+"""Cached catalog of available stock symbols from configured data provider."""
 
 from __future__ import annotations
 
@@ -13,6 +13,8 @@ import httpx
 from fastapi import HTTPException
 
 from ..config import (
+    FMP_STOCK_LIST_LEGACY_URL,
+    FMP_STOCK_LIST_URL,
     LOGGER,
     STOCKS_LIST_URL,
     SYMBOL_CATALOG_COUNTRY,
@@ -22,8 +24,17 @@ from ..config import (
 
 
 class SymbolCatalogStore:
-    def __init__(self, api_key: str, cache_path: Path, ttl_sec: int) -> None:
-        self.api_key = api_key
+    def __init__(
+        self,
+        provider: str,
+        twelvedata_api_key: str,
+        fmp_api_key: str,
+        cache_path: Path,
+        ttl_sec: int,
+    ) -> None:
+        self.provider = str(provider or "twelvedata").strip().lower()
+        self.twelvedata_api_key = str(twelvedata_api_key or "").strip()
+        self.fmp_api_key = str(fmp_api_key or "").strip()
         self.cache_path = cache_path
         self.ttl_sec = ttl_sec
         self._symbols: list[dict[str, str]] = []
@@ -46,10 +57,10 @@ class SymbolCatalogStore:
             try:
                 symbols = await self._fetch_from_api()
                 updated_at = datetime.now(timezone.utc).isoformat()
-                self._apply_state(symbols, updated_at, source="twelvedata-live")
+                self._apply_state(symbols, updated_at, source=f"{self.provider}-live")
                 self._write_cache()
             except Exception as exc:
-                LOGGER.warning("Failed to fetch symbol catalog from Twelve Data: %s", exc)
+                LOGGER.warning("Failed to fetch symbol catalog from %s: %s", self.provider, exc)
                 cached = self._load_from_cache(require_fresh=False)
                 if cached:
                     self._apply_state(cached["symbols"], cached["updated_at"], source="cache-stale")
@@ -80,12 +91,37 @@ class SymbolCatalogStore:
         }
 
     async def _fetch_from_api(self) -> list[dict[str, str]]:
+        if self.provider == "both":
+            td_task = self._fetch_from_twelvedata_api()
+            fmp_task = self._fetch_from_fmp_api()
+            td_result, fmp_result = await asyncio.gather(td_task, fmp_task, return_exceptions=True)
+            if isinstance(td_result, Exception):
+                LOGGER.warning("Symbol catalog fetch failed (TD): %s", td_result)
+            if isinstance(fmp_result, Exception):
+                LOGGER.warning("Symbol catalog fetch failed (FMP): %s", fmp_result)
+            if isinstance(td_result, Exception) and isinstance(fmp_result, Exception):
+                if isinstance(td_result, HTTPException):
+                    raise td_result
+                if isinstance(fmp_result, HTTPException):
+                    raise fmp_result
+                raise HTTPException(status_code=502, detail="Failed to fetch symbol catalog from both providers.")
+            td_rows = td_result if isinstance(td_result, list) else []
+            fmp_rows = fmp_result if isinstance(fmp_result, list) else []
+            merged = self._merge_catalog_rows(td_rows, fmp_rows)
+            if merged:
+                return merged[:SYMBOL_CATALOG_MAX_ITEMS]
+            raise HTTPException(status_code=502, detail="Failed to fetch symbol catalog from both providers.")
+        if self.provider == "fmp":
+            return await self._fetch_from_fmp_api()
+        return await self._fetch_from_twelvedata_api()
+
+    async def _fetch_from_twelvedata_api(self) -> list[dict[str, str]]:
         timeout = httpx.Timeout(40.0, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.get(
                 STOCKS_LIST_URL,
                 params={
-                    "apikey": self.api_key,
+                    "apikey": self.twelvedata_api_key,
                     "country": SYMBOL_CATALOG_COUNTRY,
                 },
             )
@@ -122,6 +158,89 @@ class SymbolCatalogStore:
 
         symbols.sort(key=lambda value: value["symbol"])
         return symbols[:SYMBOL_CATALOG_MAX_ITEMS]
+
+    async def _fetch_from_fmp_api(self) -> list[dict[str, str]]:
+        timeout = httpx.Timeout(40.0, connect=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(FMP_STOCK_LIST_URL, params={"apikey": self.fmp_api_key})
+            payload = response.json()
+            if self._is_fmp_error_payload(payload):
+                legacy_response = await client.get(FMP_STOCK_LIST_LEGACY_URL, params={"apikey": self.fmp_api_key})
+                payload = legacy_response.json()
+
+        rows = payload if isinstance(payload, list) else payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            raise HTTPException(status_code=502, detail="Unexpected symbol catalog format from FMP.")
+
+        seen: set[str] = set()
+        symbols: list[dict[str, str]] = []
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+
+            symbol = str(item.get("symbol", "")).strip().upper()
+            if not symbol or symbol in seen:
+                continue
+            if not SYMBOL_PATTERN.match(symbol):
+                continue
+
+            exchange = str(item.get("exchangeShortName") or item.get("exchange") or "").strip()
+            if not self._is_us_equity_exchange(exchange):
+                continue
+
+            seen.add(symbol)
+            symbols.append(
+                {
+                    "symbol": symbol,
+                    "name": str(item.get("name", "")).strip(),
+                    "exchange": exchange,
+                    "type": str(item.get("type", "")).strip(),
+                }
+            )
+
+        symbols.sort(key=lambda value: value["symbol"])
+        return symbols[:SYMBOL_CATALOG_MAX_ITEMS]
+
+    @staticmethod
+    def _is_fmp_error_payload(payload: Any) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        if payload.get("status") == "error":
+            return True
+        message = str(payload.get("Error Message", "")).strip().lower()
+        return bool(message)
+
+    @staticmethod
+    def _is_us_equity_exchange(exchange: str) -> bool:
+        code = str(exchange or "").strip().upper()
+        if not code:
+            return False
+        return code in {"NASDAQ", "NYSE", "AMEX", "ARCA", "BATS"}
+
+    @staticmethod
+    def _merge_catalog_rows(
+        primary_rows: list[dict[str, str]],
+        secondary_rows: list[dict[str, str]],
+    ) -> list[dict[str, str]]:
+        merged: dict[str, dict[str, str]] = {}
+        for row in secondary_rows:
+            symbol = str(row.get("symbol", "")).strip().upper()
+            if not symbol:
+                continue
+            merged[symbol] = dict(row)
+        for row in primary_rows:
+            symbol = str(row.get("symbol", "")).strip().upper()
+            if not symbol:
+                continue
+            base = merged.get(symbol, {})
+            merged[symbol] = {
+                "symbol": symbol,
+                "name": str(row.get("name") or base.get("name") or "").strip(),
+                "exchange": str(row.get("exchange") or base.get("exchange") or "").strip(),
+                "type": str(row.get("type") or base.get("type") or "").strip(),
+            }
+        out = [merged[key] for key in sorted(merged.keys())]
+        return out
 
     def _load_from_cache(self, require_fresh: bool) -> dict[str, Any] | None:
         if not self.cache_path.exists():

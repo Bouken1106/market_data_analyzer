@@ -1,6 +1,6 @@
-# Market Data Analyzer (Twelve Data Basic)
+# Market Data Analyzer (Twelve Data / FMP Free)
 
-Twelve Data の **Basic プラン**を使って、米国株の現在価格をリアルタイム監視するローカルシステムです。
+Twelve Data の **Basic プラン**または Financial Modeling Prep の **Free プラン**を使って、米国株データを取得するローカルシステムです。
 
 - 通常時: WebSocket で価格更新を受信
 - 接続不安定時: REST `/price` へ自動フォールバック
@@ -9,7 +9,7 @@ Twelve Data の **Basic プラン**を使って、米国株の現在価格をリ
 ## 前提
 
 - Python 3.11 or 3.12（`torch==2.5.1` のため 3.13 は未対応）
-- Twelve Data API キー
+- Twelve Data API キー または FMP API キー
 - Basic プラン想定（WebSocket trial 枠と API クレジット制限に準拠）
 - 対応OS: Ubuntu（WSL 含む）/ macOS（Intel, Apple Silicon）
 
@@ -48,7 +48,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup_windows.ps1
 `.env` を編集して API キーを設定:
 
 ```env
-TWELVE_DATA_API_KEY=your_api_key
+MARKET_DATA_PROVIDER=twelvedata
+TWELVE_DATA_API_KEY=your_twelve_data_api_key
+FMP_API_KEY=your_financial_modeling_prep_api_key
 DEFAULT_SYMBOLS=AAPL,MSFT,NVDA,AMZN,GOOGL
 API_LIMIT_PER_MIN=8
 API_LIMIT_PER_DAY=800
@@ -73,6 +75,14 @@ DAILY_DIFF_MIN_RECHECK_SEC=21600
 BETA_MARKET_RECHECK_SEC=86400
 ```
 
+プロバイダー切替:
+
+- `MARKET_DATA_PROVIDER=twelvedata` のとき `TWELVE_DATA_API_KEY` が必須
+- `MARKET_DATA_PROVIDER=fmp` のとき `FMP_API_KEY` が必須
+- `MARKET_DATA_PROVIDER=both` のとき `TWELVE_DATA_API_KEY` と `FMP_API_KEY` が両方必須
+- FMP選択時は WebSocket を使わず REST 取得（`mode=rest-only` / `rest-fallback`）で動作
+- `both` 選択時は Twelve Data と FMP を並列取得し、用途に応じて統合（WebSocket は Twelve Data を利用）
+
 ## 起動
 
 ```bash
@@ -92,7 +102,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ## 使い方
 
-1. 検索欄をクリックすると、Twelve Data から取得した米国株シンボル候補が表示される（入力時はシンボルの頭文字一致で絞り込み）
+1. 検索欄をクリックすると、選択中データプロバイダーから取得した米国株シンボル候補が表示される（入力時はシンボルの頭文字一致で絞り込み）
 2. 候補をクリックすると監視銘柄に追加され、即時反映される（上限8）
 3. 画面上部に日本時間（JST）・米国時間（ET）・米国市場の通常取引時間（09:30-16:00 ET）と開場状態を表示
 4. 下のテーブルの `Symbol` 欄の銘柄名をクリックすると、`/historical/{symbol}` に遷移して詳細ビューを表示
@@ -155,7 +165,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `GET /api/snapshot`: 現在の状態と価格スナップショット
 - `POST /api/symbols`: 監視銘柄更新 (`{"symbols":"AAPL,MSFT"}`)
 - `GET /api/credits`: 現在把握している日次クレジット情報
-- `GET /api/credits?refresh=true`: Twelve Data `/api_usage` から日次残クレジットを再取得（1クレジット消費）
+- `GET /api/credits?refresh=true`: Twelve Data を利用するモード（`twelvedata` / `both`）で `/api_usage` から日次残クレジットを再取得（1クレジット消費）
 - `GET /api/symbol-catalog`: 検索候補用シンボル一覧（キャッシュ）
 - `GET /api/symbol-catalog?refresh=true`: シンボル一覧を強制再取得
 - `GET /api/historical/{symbol}?years=5`: 過去N年ヒストリカルデータ（デフォルト5年）
@@ -174,6 +184,11 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `GET /ml-lab`: モデル選択式の分位点予測ページ
 - `GET /strategy-lab`: 戦略検証ページ（準備用）
 - `GET /compare-lab`: モデル一括比較ページ
+
+`MARKET_DATA_PROVIDER=both` の場合、主要レスポンスに `source_detail` が含まれます。
+- `/api/snapshot` の各 row: 現在価格の取得元（例: `twelvedata` / `fmp`）
+- `/api/historical/{symbol}`: 履歴データの統合内訳（取得件数とマージ方針）
+- `/api/security-overview/{symbol}`: 項目単位（例: `price.current`, `volume.today`）の由来
 
 ## 注意
 

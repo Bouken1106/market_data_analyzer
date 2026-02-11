@@ -168,7 +168,9 @@ function setCatalogMeta(message) {
 
 function setStatus(status) {
   modeEl.textContent = status?.mode ?? "-";
-  wsStateEl.textContent = status?.ws_connected ? "connected" : "disconnected";
+  const provider = String(status?.provider || "").toLowerCase();
+  const wsAvailable = provider !== "fmp";
+  wsStateEl.textContent = wsAvailable ? (status?.ws_connected ? "connected" : "disconnected") : "n/a";
   fallbackEl.textContent = `${status?.fallback_poll_interval_sec ?? "-"} sec`;
   const openSymbols = Array.isArray(status?.open_symbols)
     ? status.open_symbols.map((item) => normalizeSymbol(item)).filter((item) => item)
@@ -185,6 +187,12 @@ function setStatus(status) {
     creditsLeftEl.textContent = `${dailyLeft} / ${dailyLimit}${isEstimated ? " (est)" : ""}`;
   }
   creditsUpdatedEl.textContent = formatTime(status?.daily_credits_updated_at);
+  if (refreshCreditsBtn) {
+    refreshCreditsBtn.disabled = provider === "fmp";
+    refreshCreditsBtn.title = provider !== "fmp"
+      ? "Refresh via Twelve Data /api_usage"
+      : "Unavailable for current provider";
+  }
   refreshRowsForInsights(Array.from(rowsBySymbol.keys()));
 }
 

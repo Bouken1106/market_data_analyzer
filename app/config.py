@@ -40,10 +40,26 @@ def _float_env(name: str, default: float, minimum: float) -> float:
 LOGGER = logging.getLogger("market-data-analyzer")
 
 # ---------------------------------------------------------------------------
-# API key
+# Data provider / API key
 # ---------------------------------------------------------------------------
 
-API_KEY = os.getenv("TWELVE_DATA_API_KEY", "").strip()
+SUPPORTED_DATA_PROVIDERS = {"twelvedata", "fmp", "both"}
+DATA_PROVIDER = os.getenv("MARKET_DATA_PROVIDER", "twelvedata").strip().lower()
+if DATA_PROVIDER not in SUPPORTED_DATA_PROVIDERS:
+    LOGGER.warning(
+        "Unsupported MARKET_DATA_PROVIDER=%s. Falling back to twelvedata.",
+        DATA_PROVIDER,
+    )
+    DATA_PROVIDER = "twelvedata"
+
+TWELVE_DATA_API_KEY = os.getenv("TWELVE_DATA_API_KEY", "").strip()
+FMP_API_KEY = os.getenv("FMP_API_KEY", "").strip()
+if DATA_PROVIDER == "twelvedata":
+    API_KEY = TWELVE_DATA_API_KEY
+elif DATA_PROVIDER == "fmp":
+    API_KEY = FMP_API_KEY
+else:
+    API_KEY = TWELVE_DATA_API_KEY or FMP_API_KEY
 
 # ---------------------------------------------------------------------------
 # Symbol constraints
@@ -63,6 +79,15 @@ API_USAGE_URL = "https://api.twelvedata.com/api_usage"
 STOCKS_LIST_URL = "https://api.twelvedata.com/stocks"
 TIME_SERIES_URL = "https://api.twelvedata.com/time_series"
 EARLIEST_TIMESTAMP_URL = "https://api.twelvedata.com/earliest_timestamp"
+
+# ---------------------------------------------------------------------------
+# Financial Modeling Prep API URLs
+# ---------------------------------------------------------------------------
+
+FMP_QUOTE_URL = "https://financialmodelingprep.com/stable/quote"
+FMP_STOCK_LIST_URL = "https://financialmodelingprep.com/stable/stock-list"
+FMP_STOCK_LIST_LEGACY_URL = "https://financialmodelingprep.com/api/v3/stock/list"
+FMP_HISTORICAL_EOD_URL = "https://financialmodelingprep.com/stable/historical-price-eod/full"
 
 # ---------------------------------------------------------------------------
 # Rate-limiting / budget

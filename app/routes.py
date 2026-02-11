@@ -105,9 +105,14 @@ async def credits(refresh: bool = False) -> JSONResponse:
         status = await _hub.refresh_api_credits()
     else:
         status = await _hub.status_payload()
+    note = (
+        "refresh=true fetches exact daily remaining credits via /api_usage and consumes 1 API credit."
+        if getattr(_hub, "provider", "") in {"twelvedata", "both"}
+        else "Current provider does not expose Twelve Data /api_usage credits."
+    )
     return ok_json_response(
         status=status,
-        note="refresh=true fetches exact daily remaining credits via /api_usage and consumes 1 API credit.",
+        note=note,
     )
 
 

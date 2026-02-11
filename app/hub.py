@@ -17,8 +17,11 @@ from .config import (
     API_LIMIT_PER_DAY,
     API_USAGE_URL,
     BETA_MARKET_RECHECK_SEC,
+    DATA_PROVIDER,
     DAILY_DIFF_MIN_RECHECK_SEC,
     EARLIEST_TIMESTAMP_URL,
+    FMP_HISTORICAL_EOD_URL,
+    FMP_QUOTE_URL,
     FULL_HISTORY_CHUNK_YEARS,
     FULL_HISTORY_MAX_CHUNKS,
     HISTORICAL_CACHE_TTL_SEC,
@@ -60,12 +63,16 @@ from .utils import (
 class MarketDataHub:
     def __init__(
         self,
-        api_key: str,
+        provider: str,
+        twelvedata_api_key: str,
+        fmp_api_key: str,
         symbols: list[str],
         last_price_store: LastPriceStore,
         full_daily_history_store: FullDailyHistoryStore,
     ) -> None:
-        self.api_key = api_key
+        self.provider = str(provider or DATA_PROVIDER).strip().lower()
+        self.twelvedata_api_key = str(twelvedata_api_key or "").strip()
+        self.fmp_api_key = str(fmp_api_key or "").strip()
         self.symbols: list[str] = symbols
         self.default_country_key = _normalize_country_key(SYMBOL_CATALOG_COUNTRY)
         self.symbol_country_map = parse_symbol_country_map(SYMBOL_COUNTRY_MAP_RAW)
@@ -98,6 +105,12 @@ class MarketDataHub:
         self._overview_cache: dict[tuple[str, bool, bool, bool], dict[str, Any]] = {}
         self._overview_lock = asyncio.Lock()
 
+    def _uses_twelvedata(self) -> bool:
+        return self.provider in {"twelvedata", "both"}
+
+    def _uses_fmp(self) -> bool:
+        return self.provider in {"fmp", "both"}
+
     @staticmethod
     def _is_cache_fresh(cached_epoch: Any, ttl_sec: int) -> bool:
         try:
@@ -106,13 +119,22 @@ class MarketDataHub:
             return False
 
     @staticmethod
-    def _build_price_record(symbol: str, price: Any, source: str, timestamp: Any = None) -> dict[str, Any]:
-        return {
+    def _build_price_record(
+        symbol: str,
+        price: Any,
+        source: str,
+        timestamp: Any = None,
+        source_detail: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        record = {
             "symbol": symbol.upper().strip(),
             "price": str(price),
             "timestamp": to_iso8601(timestamp),
             "source": source,
         }
+        if isinstance(source_detail, dict) and source_detail:
+            record["source_detail"] = dict(source_detail)
+        return record
 
     async def _store_and_publish_price(self, record: dict[str, Any]) -> None:
         symbol = str(record.get("symbol", "")).upper().strip()
@@ -131,10 +153,11 @@ class MarketDataHub:
             asyncio.create_task(self._websocket_worker(), name="ws-worker"),
             asyncio.create_task(self._fallback_rest_worker(), name="rest-fallback-worker"),
         ]
-        try:
-            await self.refresh_api_credits()
-        except Exception as exc:
-            LOGGER.warning("Failed to initialize daily credits from /api_usage: %s", exc)
+        if self._uses_twelvedata():
+            try:
+                await self.refresh_api_credits()
+            except Exception as exc:
+                LOGGER.warning("Failed to initialize daily credits from /api_usage: %s", exc)
 
     async def stop(self) -> None:
         self._stop_event.set()
@@ -196,6 +219,7 @@ class MarketDataHub:
             last_seen = datetime.fromtimestamp(self.last_ws_message_at, tz=timezone.utc).isoformat()
         open_symbols = self._open_symbols(self.symbols)
         return {
+            "provider": self.provider,
             "mode": self.mode,
             "ws_connected": self.ws_connected,
             "last_ws_message_at": last_seen,
@@ -266,6 +290,12 @@ class MarketDataHub:
             await self.publish({"type": "status", "data": await self.status_payload()})
 
     async def _websocket_worker(self) -> None:
+        if not self._uses_twelvedata():
+            while not self._stop_event.is_set():
+                await self._set_mode("rest-only", False)
+                await asyncio.sleep(1)
+            return
+
         backoff = 1
         while not self._stop_event.is_set():
             symbols = self.symbols
@@ -279,7 +309,7 @@ class MarketDataHub:
                 await asyncio.sleep(MARKET_CLOSED_SLEEP_SEC)
                 continue
 
-            ws_url = WS_URL_TEMPLATE.format(api_key=self.api_key)
+            ws_url = WS_URL_TEMPLATE.format(api_key=self.twelvedata_api_key)
             try:
                 async with websockets.connect(
                     ws_url,
@@ -344,6 +374,10 @@ class MarketDataHub:
             price=price,
             source="websocket",
             timestamp=payload.get("timestamp"),
+            source_detail={
+                "provider": "twelvedata",
+                "endpoint": "websocket_quotes_price",
+            },
         )
         if not self._is_symbol_market_open(record["symbol"]):
             return
@@ -387,11 +421,33 @@ class MarketDataHub:
                 await asyncio.sleep(rest_request_spacing_seconds())
 
     async def _poll_one_symbol(self, client: httpx.AsyncClient, symbol: str) -> None:
+        if self.provider == "both":
+            td_task = self._poll_one_symbol_twelvedata(client, symbol)
+            fmp_task = self._poll_one_symbol_fmp(client, symbol)
+            td_result, fmp_result = await asyncio.gather(td_task, fmp_task, return_exceptions=True)
+            if isinstance(td_result, Exception):
+                LOGGER.warning("REST fallback failed (TD) for %s: %s", symbol, td_result)
+            if isinstance(fmp_result, Exception):
+                LOGGER.warning("REST fallback failed (FMP) for %s: %s", symbol, fmp_result)
+            if td_result is True:
+                return
+            if fmp_result is True:
+                return
+            return
+        if self.provider == "fmp":
+            await self._poll_one_symbol_fmp(client, symbol)
+            return
+        await self._poll_one_symbol_twelvedata(client, symbol)
+
+    async def _poll_one_symbol_twelvedata(self, client: httpx.AsyncClient, symbol: str) -> bool:
+        if not self._uses_twelvedata():
+            return False
+
         try:
             response = await client.get(
                 REST_PRICE_URL,
                 params={
-                    "apikey": self.api_key,
+                    "apikey": self.twelvedata_api_key,
                     "symbol": symbol,
                 },
             )
@@ -401,23 +457,51 @@ class MarketDataHub:
             payload = response.json()
         except Exception as exc:
             LOGGER.warning("REST fallback failed for %s: %s", symbol, exc)
-            return
+            return False
 
         if isinstance(payload, dict) and payload.get("status") == "error":
             LOGGER.warning("REST API error for %s: %s", symbol, payload.get("message"))
-            return
+            return False
 
         price = payload.get("price") if isinstance(payload, dict) else None
         if price is None:
-            return
+            return False
 
         record = self._build_price_record(symbol=symbol, price=price, source="rest")
+        record["source_detail"] = {
+            "provider": "twelvedata",
+            "endpoint": "price",
+        }
         await self._store_and_publish_price(record)
+        return True
+
+    async def _poll_one_symbol_fmp(self, client: httpx.AsyncClient, symbol: str) -> bool:
+        if not self._uses_fmp():
+            return False
+        quote = await self._fetch_quote_fmp(client, symbol)
+        price = self._pick_float(quote, "price", "close")
+        if price is None:
+            return False
+        record = self._build_price_record(
+            symbol=symbol,
+            price=price,
+            source="rest",
+            timestamp=quote.get("timestamp") or quote.get("datetime"),
+            source_detail={
+                "provider": "fmp",
+                "endpoint": "quote",
+            },
+        )
+        await self._store_and_publish_price(record)
+        return True
 
     async def refresh_api_credits(self) -> dict[str, Any]:
+        if not self._uses_twelvedata():
+            return await self.status_payload()
+
         timeout = httpx.Timeout(10.0, connect=5.0)
         async with self._credits_lock, httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(API_USAGE_URL, params={"apikey": self.api_key})
+            response = await client.get(API_USAGE_URL, params={"apikey": self.twelvedata_api_key})
             await self._update_minute_credits_from_response(response)
             payload = response.json()
             if isinstance(payload, dict) and payload.get("status") == "error":
@@ -455,72 +539,13 @@ class MarketDataHub:
 
         timeout = httpx.Timeout(40.0, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(
-                TIME_SERIES_URL,
-                params={
-                    "apikey": self.api_key,
-                    "symbol": normalized,
-                    "interval": HISTORICAL_INTERVAL,
-                    "start_date": start_date.isoformat(),
-                    "end_date": end_date.isoformat(),
-                    "order": "ASC",
-                    "outputsize": HISTORICAL_MAX_POINTS,
-                },
-            )
-
-        async with self._credits_lock:
-            await self._update_minute_credits_from_response(response)
-            await self._consume_daily_credit_estimate(1, source=f"historical:{normalized}")
-
-        payload = response.json()
-        if isinstance(payload, dict) and payload.get("status") == "error":
-            message = payload.get("message", "Failed to fetch historical data.")
-            raise HTTPException(status_code=400, detail=message)
-
-        values = payload.get("values") if isinstance(payload, dict) else None
-        if not isinstance(values, list):
-            raise HTTPException(status_code=502, detail="Unexpected historical data format.")
-
-        points: list[dict[str, Any]] = []
-        for item in values:
-            if not isinstance(item, dict):
-                continue
-            dt = str(item.get("datetime", "")).strip()
-            close_raw = item.get("close")
-            if not dt or close_raw is None:
-                continue
-            close_value = self._try_parse_float(close_raw)
-            if close_value is None or close_value <= 0:
-                continue
-
-            open_value = self._try_parse_float(item.get("open"))
-            high_value = self._try_parse_float(item.get("high"))
-            low_value = self._try_parse_float(item.get("low"))
-            volume_value = self._try_parse_float(item.get("volume"))
-
-            if open_value is None or open_value <= 0:
-                open_value = close_value
-            if high_value is None or high_value <= 0:
-                high_value = max(open_value, close_value)
-            if low_value is None or low_value <= 0:
-                low_value = min(open_value, close_value)
-
-            high_value = max(high_value, open_value, close_value)
-            low_value = min(low_value, open_value, close_value)
-            if low_value <= 0:
-                low_value = min(open_value, close_value)
-                if low_value <= 0:
-                    low_value = close_value
-
-            points.append(
-                {
-                    "t": dt,
-                    "o": open_value,
-                    "h": high_value,
-                    "l": low_value,
-                    "c": close_value,
-                    "v": volume_value,
-                }
+            points, source_detail = await self._fetch_historical_points_with_detail(
+                client,
+                symbol=normalized,
+                interval=HISTORICAL_INTERVAL,
+                outputsize=HISTORICAL_MAX_POINTS,
+                start_date=start_date.isoformat(),
+                end_date=end_date.isoformat(),
             )
 
         if not points:
@@ -535,7 +560,8 @@ class MarketDataHub:
             "to": points[-1]["t"],
             "count": len(points),
             "points": points,
-            "source": "twelvedata-live",
+            "source": f"{self.provider}-live",
+            "source_detail": source_detail,
         }
 
         async with self._historical_lock:
@@ -545,6 +571,63 @@ class MarketDataHub:
             }
 
         return historical_payload
+
+    async def _fetch_historical_points_with_detail(
+        self,
+        client: httpx.AsyncClient,
+        symbol: str,
+        interval: str,
+        outputsize: int,
+        start_date: str,
+        end_date: str,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        if self.provider == "both":
+            td_task = self._fetch_series_twelvedata(
+                client=client,
+                symbol=symbol,
+                interval=interval,
+                outputsize=outputsize,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            fmp_task = self._fetch_series_fmp(
+                client=client,
+                symbol=symbol,
+                interval=interval,
+                outputsize=outputsize,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            td_points, fmp_points = await asyncio.gather(td_task, fmp_task)
+            merged = self._merge_points_by_timestamp(fmp_points, td_points)
+            detail = {
+                "mode": "both",
+                "dataset": "historical_daily",
+                "merge_policy": "twelvedata_overrides_fmp_on_same_timestamp",
+                "providers": {
+                    "twelvedata_points": len(td_points),
+                    "fmp_points": len(fmp_points),
+                    "merged_points": len(merged),
+                },
+            }
+            return merged, detail
+
+        points = await self._fetch_series(
+            client=client,
+            symbol=symbol,
+            interval=interval,
+            outputsize=outputsize,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        provider_name = "fmp" if self.provider == "fmp" else "twelvedata"
+        detail = {
+            "mode": self.provider,
+            "dataset": "historical_daily",
+            "provider": provider_name,
+            "points": len(points),
+        }
+        return points, detail
 
     async def security_overview_payload(
         self,
@@ -593,8 +676,12 @@ class MarketDataHub:
 
         latest_day = day_points[-1]
         previous_day = day_points[-2] if len(day_points) >= 2 else None
+        day_series_source = self._series_source_descriptor(day_points)
 
         quote_price = self._pick_float(quote, "close", "price")
+        quote_source_detail = quote.get("_source_detail") if isinstance(quote, dict) else {}
+        if not isinstance(quote_source_detail, dict):
+            quote_source_detail = {}
         current_price = quote_price if quote_price is not None else latest_day["c"]
         previous_close = (
             self._pick_float(quote, "previous_close", "prev_close")
@@ -619,14 +706,41 @@ class MarketDataHub:
                 if day_volume is None:
                     day_volume = sum((item["v"] or 0.0) for item in latest_session)
 
+        day_open_source = quote_source_detail.get("open")
+        day_high_source = quote_source_detail.get("high")
+        day_low_source = quote_source_detail.get("low")
+        day_volume_source = quote_source_detail.get("volume")
         if day_open is None:
             day_open = latest_day["o"]
+            day_open_source = f"daily_series({day_series_source})"
         if day_high is None:
             day_high = latest_day["h"]
+            day_high_source = f"daily_series({day_series_source})"
         if day_low is None:
             day_low = latest_day["l"]
+            day_low_source = f"daily_series({day_series_source})"
         if day_volume is None:
             day_volume = latest_day["v"]
+            day_volume_source = f"daily_series({day_series_source})"
+
+        if m1_points:
+            latest_session = self._extract_latest_session_points(m1_points)
+            if latest_session:
+                if not day_open_source:
+                    day_open_source = "intraday_1min"
+                if not day_high_source:
+                    day_high_source = "intraday_1min"
+                if not day_low_source:
+                    day_low_source = "intraday_1min"
+                if not day_volume_source and day_volume is not None:
+                    day_volume_source = "intraday_1min"
+
+        current_price_source = quote_source_detail.get("close") or quote_source_detail.get("price")
+        if not current_price_source:
+            current_price_source = f"daily_series({day_series_source})"
+        previous_close_source = quote_source_detail.get("previous_close") or quote_source_detail.get("prev_close")
+        if not previous_close_source and previous_close is not None:
+            previous_close_source = f"daily_series({day_series_source})"
 
         change_abs = None
         change_pct = None
@@ -699,7 +813,7 @@ class MarketDataHub:
                 "gap_abs": gap_abs,
                 "gap_pct": gap_pct,
                 "updated_at": self._best_updated_at(quote, m1_points, day_points),
-                "delay_note": "Twelve Data Basic plan (delayed feed may apply).",
+                "delay_note": self._delay_note(),
             },
             "volume": {
                 "today": day_volume,
@@ -738,7 +852,28 @@ class MarketDataHub:
                 "news_headlines": "not_supported_on_current_data_source",
                 "sector_etf": "not_supported_on_current_data_source",
             },
-            "source": "twelvedata-live",
+            "source": f"{self.provider}-live",
+            "source_detail": {
+                "mode": self.provider,
+                "components": {
+                    "quote": quote.get("_source_provider", self.provider) if isinstance(quote, dict) else self.provider,
+                    "daily_series": self._series_source_descriptor(day_points),
+                    "intraday_1min": self._series_source_descriptor(m1_points),
+                    "intraday_5min": self._series_source_descriptor(m5_points),
+                    "market_spy_daily": self._series_source_descriptor(spy_points),
+                    "market_qqq_daily": self._series_source_descriptor(qqq_points),
+                },
+                "fields": {
+                    "price.current": current_price_source,
+                    "price.previous_close": previous_close_source,
+                    "price.day_open": day_open_source or "unknown",
+                    "price.day_high": day_high_source or "unknown",
+                    "price.day_low": day_low_source or "unknown",
+                    "volume.today": day_volume_source or "unknown",
+                    "spread.bid": quote_source_detail.get("bid") or "unknown",
+                    "spread.ask": quote_source_detail.get("ask") or "unknown",
+                },
+            },
         }
 
         async with self._overview_lock:
@@ -802,11 +937,18 @@ class MarketDataHub:
         }
 
     async def _fetch_quote(self, client: httpx.AsyncClient, symbol: str) -> dict[str, Any]:
+        if self.provider == "both":
+            return await self._fetch_quote_both(client, symbol)
+        if self.provider == "fmp":
+            return await self._fetch_quote_fmp(client, symbol)
+        return await self._fetch_quote_twelvedata(client, symbol)
+
+    async def _fetch_quote_twelvedata(self, client: httpx.AsyncClient, symbol: str) -> dict[str, Any]:
         try:
             response = await client.get(
                 QUOTE_URL,
                 params={
-                    "apikey": self.api_key,
+                    "apikey": self.twelvedata_api_key,
                     "symbol": symbol,
                 },
             )
@@ -820,7 +962,116 @@ class MarketDataHub:
         if isinstance(payload, dict) and payload.get("status") == "error":
             LOGGER.warning("Quote API error for %s: %s", symbol, payload.get("message"))
             return {}
-        return payload if isinstance(payload, dict) else {}
+        if not isinstance(payload, dict):
+            return {}
+        normalized = dict(payload)
+        normalized["_source_provider"] = "twelvedata"
+        normalized["_source_detail"] = {
+            "symbol": "twelvedata",
+            "name": "twelvedata",
+            "instrument_name": "twelvedata",
+            "exchange": "twelvedata",
+            "price": "twelvedata",
+            "close": "twelvedata",
+            "previous_close": "twelvedata",
+            "prev_close": "twelvedata",
+            "open": "twelvedata",
+            "high": "twelvedata",
+            "low": "twelvedata",
+            "volume": "twelvedata",
+            "bid": "twelvedata",
+            "ask": "twelvedata",
+            "timestamp": "twelvedata",
+            "datetime": "twelvedata",
+        }
+        return normalized
+
+    async def _fetch_quote_both(self, client: httpx.AsyncClient, symbol: str) -> dict[str, Any]:
+        td_task = self._fetch_quote_twelvedata(client, symbol)
+        fmp_task = self._fetch_quote_fmp(client, symbol)
+        td_result, fmp_result = await asyncio.gather(td_task, fmp_task, return_exceptions=True)
+        td_quote = td_result if isinstance(td_result, dict) else {}
+        fmp_quote = fmp_result if isinstance(fmp_result, dict) else {}
+
+        if isinstance(td_result, Exception):
+            LOGGER.warning("Quote fetch failed (TD) for %s: %s", symbol, td_result)
+        if isinstance(fmp_result, Exception):
+            LOGGER.warning("Quote fetch failed (FMP) for %s: %s", symbol, fmp_result)
+
+        merged, merged_detail = self._merge_quote_payloads_with_source(
+            primary=td_quote,
+            primary_name="twelvedata",
+            secondary=fmp_quote,
+            secondary_name="fmp",
+        )
+        if merged:
+            merged["_source_provider"] = "both"
+            merged["_source_detail"] = merged_detail
+            return merged
+        return td_quote if td_quote else fmp_quote
+
+    async def _fetch_quote_fmp(self, client: httpx.AsyncClient, symbol: str) -> dict[str, Any]:
+        try:
+            response = await client.get(
+                FMP_QUOTE_URL,
+                params={
+                    "apikey": self.fmp_api_key,
+                    "symbol": symbol,
+                },
+            )
+            payload = response.json()
+        except Exception as exc:
+            LOGGER.warning("FMP quote fetch failed for %s: %s", symbol, exc)
+            return {}
+
+        row: dict[str, Any] | None = None
+        if isinstance(payload, list) and payload:
+            first = payload[0]
+            row = first if isinstance(first, dict) else None
+        elif isinstance(payload, dict):
+            if self._is_fmp_error(payload):
+                LOGGER.warning("FMP quote API error for %s: %s", symbol, payload.get("Error Message"))
+                return {}
+            row = payload
+
+        if not isinstance(row, dict):
+            return {}
+
+        return {
+            "symbol": row.get("symbol") or symbol,
+            "name": row.get("name"),
+            "exchange": row.get("exchange") or row.get("exchangeShortName"),
+            "price": row.get("price"),
+            "close": row.get("price") or row.get("close"),
+            "previous_close": row.get("previousClose"),
+            "open": row.get("open"),
+            "high": row.get("dayHigh") or row.get("high"),
+            "low": row.get("dayLow") or row.get("low"),
+            "volume": row.get("volume"),
+            "bid": row.get("bid"),
+            "ask": row.get("ask"),
+            "timestamp": row.get("timestamp"),
+            "datetime": row.get("timestamp"),
+            "_source_provider": "fmp",
+            "_source_detail": {
+                "symbol": "fmp",
+                "name": "fmp",
+                "instrument_name": "fmp",
+                "exchange": "fmp",
+                "price": "fmp",
+                "close": "fmp",
+                "previous_close": "fmp",
+                "prev_close": "fmp",
+                "open": "fmp",
+                "high": "fmp",
+                "low": "fmp",
+                "volume": "fmp",
+                "bid": "fmp",
+                "ask": "fmp",
+                "timestamp": "fmp",
+                "datetime": "fmp",
+            },
+        }
 
     async def _fetch_series(
         self,
@@ -831,9 +1082,45 @@ class MarketDataHub:
         start_date: str | None = None,
         end_date: str | None = None,
     ) -> list[dict[str, Any]]:
+        if self.provider == "both":
+            return await self._fetch_series_both(
+                client=client,
+                symbol=symbol,
+                interval=interval,
+                outputsize=outputsize,
+                start_date=start_date,
+                end_date=end_date,
+            )
+        if self.provider == "fmp":
+            return await self._fetch_series_fmp(
+                client=client,
+                symbol=symbol,
+                interval=interval,
+                outputsize=outputsize,
+                start_date=start_date,
+                end_date=end_date,
+            )
+        return await self._fetch_series_twelvedata(
+            client=client,
+            symbol=symbol,
+            interval=interval,
+            outputsize=outputsize,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+    async def _fetch_series_twelvedata(
+        self,
+        client: httpx.AsyncClient,
+        symbol: str,
+        interval: str,
+        outputsize: int,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> list[dict[str, Any]]:
         try:
             params: dict[str, Any] = {
-                "apikey": self.api_key,
+                "apikey": self.twelvedata_api_key,
                 "symbol": symbol,
                 "interval": interval,
                 "order": "ASC",
@@ -892,9 +1179,136 @@ class MarketDataHub:
                     "l": min(low_value, open_value, close_value),
                     "c": close_value,
                     "v": volume_value,
+                    "_src": "twelvedata",
                 }
             )
 
+        return points
+
+    async def _fetch_series_both(
+        self,
+        client: httpx.AsyncClient,
+        symbol: str,
+        interval: str,
+        outputsize: int,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        normalized_interval = str(interval or "").strip().lower()
+        if normalized_interval not in {"1day", "1d", "day"}:
+            return await self._fetch_series_twelvedata(
+                client=client,
+                symbol=symbol,
+                interval=interval,
+                outputsize=outputsize,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+        td_task = self._fetch_series_twelvedata(
+            client=client,
+            symbol=symbol,
+            interval=interval,
+            outputsize=outputsize,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        fmp_task = self._fetch_series_fmp(
+            client=client,
+            symbol=symbol,
+            interval=interval,
+            outputsize=outputsize,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        td_result, fmp_result = await asyncio.gather(td_task, fmp_task, return_exceptions=True)
+        td_points = td_result if isinstance(td_result, list) else []
+        fmp_points = fmp_result if isinstance(fmp_result, list) else []
+
+        if isinstance(td_result, Exception):
+            LOGGER.warning("Time series fetch failed (TD) for %s %s: %s", symbol, interval, td_result)
+        if isinstance(fmp_result, Exception):
+            LOGGER.warning("Time series fetch failed (FMP) for %s %s: %s", symbol, interval, fmp_result)
+
+        return self._merge_points_by_timestamp(fmp_points, td_points)
+
+    async def _fetch_series_fmp(
+        self,
+        client: httpx.AsyncClient,
+        symbol: str,
+        interval: str,
+        outputsize: int,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        if str(interval or "").strip().lower() not in {"1day", "1d", "day"}:
+            return []
+
+        params: dict[str, Any] = {
+            "apikey": self.fmp_api_key,
+            "symbol": symbol,
+        }
+        if start_date:
+            params["from"] = start_date
+        if end_date:
+            params["to"] = end_date
+
+        try:
+            response = await client.get(FMP_HISTORICAL_EOD_URL, params=params)
+            payload = response.json()
+        except Exception as exc:
+            LOGGER.warning("FMP time series fetch failed for %s %s: %s", symbol, interval, exc)
+            return []
+
+        if self._is_fmp_error(payload):
+            LOGGER.warning("FMP time series API error for %s %s: %s", symbol, interval, payload.get("Error Message"))
+            return []
+
+        if isinstance(payload, dict):
+            values = payload.get("historical") if isinstance(payload.get("historical"), list) else payload.get("data")
+        elif isinstance(payload, list):
+            values = payload
+        else:
+            values = None
+        if not isinstance(values, list):
+            return []
+
+        points: list[dict[str, Any]] = []
+        for item in values:
+            if not isinstance(item, dict):
+                continue
+            dt = str(item.get("date") or item.get("datetime") or "").strip()
+            close_value = self._try_parse_float(item.get("close"))
+            if not dt or close_value is None or close_value <= 0:
+                continue
+
+            open_value = self._try_parse_float(item.get("open"))
+            high_value = self._try_parse_float(item.get("high"))
+            low_value = self._try_parse_float(item.get("low"))
+            volume_value = self._try_parse_float(item.get("volume"))
+
+            if open_value is None or open_value <= 0:
+                open_value = close_value
+            if high_value is None or high_value <= 0:
+                high_value = max(open_value, close_value)
+            if low_value is None or low_value <= 0:
+                low_value = min(open_value, close_value)
+
+            points.append(
+                {
+                    "t": dt,
+                    "o": open_value,
+                    "h": max(high_value, open_value, close_value),
+                    "l": min(low_value, open_value, close_value),
+                    "c": close_value,
+                    "v": volume_value,
+                    "_src": "fmp",
+                }
+            )
+
+        points.sort(key=lambda item: str(item.get("t", "")))
+        if outputsize > 0 and len(points) > outputsize:
+            points = points[-outputsize:]
         return points
 
     async def _fetch_full_daily_series(
@@ -1009,11 +1423,13 @@ class MarketDataHub:
         return deduped
 
     async def _fetch_earliest_date(self, client: httpx.AsyncClient, symbol: str, interval: str) -> date | None:
+        if not self._uses_twelvedata():
+            return None
         try:
             response = await client.get(
                 EARLIEST_TIMESTAMP_URL,
                 params={
-                    "apikey": self.api_key,
+                    "apikey": self.twelvedata_api_key,
                     "symbol": symbol,
                     "interval": interval,
                 },
@@ -1074,6 +1490,61 @@ class MarketDataHub:
             if value:
                 return value
         return None
+
+    @staticmethod
+    def _merge_quote_payloads_with_source(
+        primary: dict[str, Any],
+        primary_name: str,
+        secondary: dict[str, Any],
+        secondary_name: str,
+    ) -> tuple[dict[str, Any], dict[str, str]]:
+        if not isinstance(primary, dict) and not isinstance(secondary, dict):
+            return {}, {}
+        out: dict[str, Any] = {}
+        detail: dict[str, str] = {}
+        keys = {
+            "symbol",
+            "name",
+            "instrument_name",
+            "exchange",
+            "price",
+            "close",
+            "previous_close",
+            "prev_close",
+            "open",
+            "high",
+            "low",
+            "volume",
+            "bid",
+            "ask",
+            "timestamp",
+            "datetime",
+        }
+        for key in keys:
+            first = primary.get(key) if isinstance(primary, dict) else None
+            second = secondary.get(key) if isinstance(secondary, dict) else None
+            if first not in (None, ""):
+                out[key] = first
+                detail[key] = primary_name
+            elif second not in (None, ""):
+                out[key] = second
+                detail[key] = secondary_name
+        return out, detail
+
+    @staticmethod
+    def _series_source_descriptor(points: list[dict[str, Any]]) -> str:
+        if not points:
+            return "none"
+        providers: set[str] = set()
+        for item in points:
+            src = str(item.get("_src", "")).strip().lower()
+            if src:
+                providers.add(src)
+        if not providers:
+            return "unknown"
+        if len(providers) == 1:
+            return next(iter(providers))
+        return "mixed"
 
     @staticmethod
     def _extract_latest_session_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1292,40 +1763,19 @@ class MarketDataHub:
         return [items_by_symbol[symbol] for symbol in target_symbols if symbol in items_by_symbol]
 
     async def _fetch_sparkline_item(self, client: httpx.AsyncClient, symbol: str) -> dict[str, Any] | None:
-        try:
-            response = await client.get(
-                TIME_SERIES_URL,
-                params={
-                    "apikey": self.api_key,
-                    "symbol": symbol,
-                    "interval": "1day",
-                    "order": "DESC",
-                    "outputsize": max(SPARKLINE_POINTS + 2, 32),
-                },
-            )
-            payload = response.json()
-        except Exception as exc:
-            LOGGER.warning("Sparkline fetch failed for %s: %s", symbol, exc)
-            return None
-
-        async with self._credits_lock:
-            await self._update_minute_credits_from_response(response)
-            await self._consume_daily_credit_estimate(1, source=f"sparkline:{symbol}")
-
-        if isinstance(payload, dict) and payload.get("status") == "error":
-            LOGGER.warning("Sparkline API error for %s: %s", symbol, payload.get("message"))
-            return None
-
-        raw_values = payload.get("values") if isinstance(payload, dict) else None
-        if not isinstance(raw_values, list):
+        points = await self._fetch_series(
+            client=client,
+            symbol=symbol,
+            interval="1day",
+            outputsize=max(SPARKLINE_POINTS + 2, 32),
+        )
+        if not points:
             return None
 
         values: list[tuple[str, float]] = []
-        for item in raw_values:
-            if not isinstance(item, dict):
-                continue
-            dt = str(item.get("datetime", "")).strip()
-            close_value = self._try_parse_float(item.get("close"))
+        for item in points:
+            dt = str(item.get("t", "")).strip()
+            close_value = self._try_parse_float(item.get("c"))
             if not dt or close_value is None:
                 continue
             values.append((dt, close_value))
@@ -1333,6 +1783,7 @@ class MarketDataHub:
         if len(values) < 2:
             return None
 
+        values.sort(key=lambda item: item[0], reverse=True)
         today_iso = date.today().isoformat()
         start_index = 1 if values[0][0].startswith(today_iso) and len(values) >= 2 else 0
         completed = values[start_index:]
@@ -1345,6 +1796,7 @@ class MarketDataHub:
         recent_asc = list(reversed(recent_desc))
 
         trend_values = [point[1] for point in recent_asc]
+        trend_source = self._series_source_descriptor(points)
         return {
             "symbol": symbol,
             "latest_close": latest_completed_close,
@@ -1355,10 +1807,17 @@ class MarketDataHub:
             "trend_from": recent_asc[0][0],
             "trend_to": recent_asc[-1][0],
             "points": len(trend_values),
-            "source": "twelvedata-live",
+            "source": f"{self.provider}-live",
+            "source_detail": {
+                "mode": self.provider,
+                "dataset": "sparkline_1day",
+                "provider": trend_source,
+            },
         }
 
     async def _update_minute_credits_from_response(self, response: httpx.Response) -> None:
+        if not self._uses_twelvedata():
+            return
         used_value = self._try_parse_int(response.headers.get("api-credits-used"))
         left_value = self._try_parse_int(response.headers.get("api-credits-left"))
         if used_value is None and left_value is None:
@@ -1370,6 +1829,8 @@ class MarketDataHub:
             self.minute_credits_left = left_value
 
     async def _update_daily_credits_from_api_usage(self, payload: dict[str, Any]) -> None:
+        if not self._uses_twelvedata():
+            return
         if not isinstance(payload, dict):
             return
         daily_usage = self._try_parse_int(payload.get("daily_usage"))
@@ -1390,6 +1851,8 @@ class MarketDataHub:
         await self.publish({"type": "status", "data": await self.status_payload()})
 
     async def _consume_daily_credit_estimate(self, amount: int, source: str) -> None:
+        if not self._uses_twelvedata():
+            return
         if amount <= 0:
             return
         if self.daily_credits_limit is None or self.daily_credits_used is None:
@@ -1451,3 +1914,19 @@ class MarketDataHub:
             return float(value)
         except (TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _is_fmp_error(payload: Any) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        if payload.get("status") == "error":
+            return True
+        message = str(payload.get("Error Message", "")).strip()
+        return bool(message)
+
+    def _delay_note(self) -> str:
+        if self.provider == "both":
+            return "Combined feed: Twelve Data + Financial Modeling Prep."
+        if self.provider == "fmp":
+            return "Financial Modeling Prep free plan feed."
+        return "Twelve Data Basic plan (delayed feed may apply)."
