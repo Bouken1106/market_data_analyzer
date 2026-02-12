@@ -16,18 +16,8 @@ from ..config import (
     ML_SPLIT_TRAIN_VAL_RATIO,
 )
 from ..models import MlComparisonJobRequest, MlJobCancelledError, QuantileLstmJobRequest
-from ..utils import normalize_symbols
+from ..utils import normalize_ml_history_months, normalize_symbols
 from .catalog import ML_COMPARE_ALLOWED_MODELS, ML_COMPARE_DEFAULT_SYMBOLS
-
-
-def _normalize_ml_history_months(months: int | Any) -> int:
-    """Clamp months into a valid range for ML history fetching."""
-    from ..config import ML_HISTORY_MAX_MONTHS, ML_HISTORY_MIN_MONTHS
-    try:
-        value = int(months)
-    except (TypeError, ValueError):
-        return ML_HISTORY_DEFAULT_MONTHS
-    return max(ML_HISTORY_MIN_MONTHS, min(value, ML_HISTORY_MAX_MONTHS))
 
 
 async def _run_quantile_lstm_pipeline(
@@ -113,7 +103,7 @@ async def _run_ml_pipeline(
     if progress_callback is not None:
         progress_callback(2, "ヒストリカルデータを取得しています。")
 
-    effective_months = _normalize_ml_history_months(months)
+    effective_months = normalize_ml_history_months(months)
 
     historical_data = await hub.historical_payload(symbol=symbol, months=effective_months, refresh=refresh)
     points = historical_data.get("points")
