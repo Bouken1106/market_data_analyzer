@@ -410,7 +410,7 @@ function renderPortfolio() {
 
   if (pfTradesBody) {
     pfTradesBody.innerHTML = "";
-    const trades = view.recent_trades.slice(0, 20);
+    const trades = view.recent_trades;
     if (trades.length === 0) {
       const tr = document.createElement("tr");
       const td = document.createElement("td");

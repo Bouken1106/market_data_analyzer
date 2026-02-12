@@ -3015,8 +3015,9 @@ body.chart-panning {
 }
 
 .monitor-page .trade-pane {
-  overflow-y: auto;
+  overflow-y: scroll;
   overflow-x: hidden;
+  scrollbar-gutter: stable;
 }
 
 .monitor-page .terminal-portfolio-metrics {
@@ -3053,6 +3054,14 @@ body.chart-panning {
   min-height: 0;
 }
 
+.monitor-page .trade-pane .compact-table {
+  flex: 0 0 auto;
+}
+
+.monitor-page .compact-table + .compact-table {
+  margin-top: 10px;
+}
+
 .monitor-page .compact-table h3 {
   font-size: 0.82rem;
   margin-bottom: 3px;
@@ -3065,8 +3074,13 @@ body.chart-panning {
 }
 
 .monitor-page .trade-pane .table-wrap {
-  max-height: 140px;
-  overflow: auto;
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+.monitor-page .trade-pane .compact-table thead th {
+  position: static;
 }
 
 @media (max-width: 1280px) {
@@ -3095,5 +3109,10 @@ body.chart-panning {
 
   .monitor-page .terminal-pane {
     min-height: 420px;
+  }
+
+  .monitor-page .trade-pane {
+    overflow-y: visible;
+    scrollbar-gutter: auto;
   }
 }
