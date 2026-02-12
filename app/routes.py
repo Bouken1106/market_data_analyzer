@@ -81,6 +81,16 @@ def _to_valid_price(value: Any) -> float | None:
     return parsed
 
 
+def _to_finite_number(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed):
+        return None
+    return parsed
+
+
 async def _resolve_trade_price(symbol: str, explicit_price: float | None) -> tuple[float, str]:
     if explicit_price is not None:
         parsed = _to_valid_price(explicit_price)
@@ -128,11 +138,11 @@ async def _paper_portfolio_payload() -> dict[str, Any]:
 
     for symbol in symbols:
         item = positions_raw.get(symbol, {})
-        quantity = _to_valid_price(item.get("quantity")) or 0.0
+        quantity = _to_finite_number(item.get("quantity")) or 0.0
         avg_cost = _to_valid_price(item.get("avg_cost")) or 0.0
-        if quantity <= 0:
+        if abs(quantity) <= 1e-12:
             continue
-        cost_basis = quantity * avg_cost
+        cost_basis = abs(quantity) * avg_cost
         total_cost_basis += cost_basis
         last_price = price_map.get(symbol)
         market_value = None
@@ -141,8 +151,11 @@ async def _paper_portfolio_payload() -> dict[str, Any]:
         if last_price is not None:
             has_market_value = True
             market_value = quantity * last_price
-            total_market_value += market_value
-            unrealized_pnl = market_value - cost_basis
+            total_market_value += market_value if isinstance(market_value, (int, float)) else 0.0
+            if quantity > 0:
+                unrealized_pnl = (last_price - avg_cost) * quantity
+            else:
+                unrealized_pnl = (avg_cost - last_price) * abs(quantity)
             if cost_basis > 0:
                 unrealized_pnl_pct = (unrealized_pnl / cost_basis) * 100
 

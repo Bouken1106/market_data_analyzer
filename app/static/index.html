@@ -7,11 +7,10 @@
   <title>Market Data Analyzer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="/static/styles.css?v=20260212f" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260212g" />
 </head>
 
-<body class="monitor-page">
-  <!-- Top Navigation Tab Bar -->
+<body class="monitor-page terminal-page">
   <nav class="nav-tabs" aria-label="Main navigation">
     <a href="/" class="nav-tab" data-path="/">
       <span class="nav-tab-icon">📊</span> Monitor
@@ -27,103 +26,120 @@
     </a>
   </nav>
 
-  <main class="container">
-    <header class="header">
-      <div class="header-top">
-        <h1>US Stock Live Monitor</h1>
-      </div>
-      <p>Twelve Data Basic / FMP Free プラン対応 (provider別に自動切替)</p>
-      <div class="live-monitor-chips" aria-label="Monitor highlights">
-        <span class="pill chip-cyan">Realtime Feed</span>
-        <span class="pill chip-green">US Equities</span>
-        <span class="pill chip-amber">Sparkline Trends</span>
-      </div>
-    </header>
+  <main class="terminal-layout">
+    <section class="terminal-pane watch-pane" aria-label="ウィックリスト">
+      <header class="pane-head">
+        <h1>ウィックリスト</h1>
+        <span class="pane-sub">最大8銘柄</span>
+      </header>
 
-    <nav class="flow-strip" aria-label="Primary actions">
-      <a class="flow-card flow-start" href="#symbol-search-panel">
-        <span class="flow-icon" aria-hidden="true">🔎</span>
-        <span class="flow-label">銘柄追加</span>
-      </a>
-      <a class="flow-card" href="#monitor-table-panel">
-        <span class="flow-icon" aria-hidden="true">📈</span>
-        <span class="flow-label">価格監視</span>
-      </a>
-      <a class="flow-card" href="#paper-portfolio-panel">
-        <span class="flow-icon" aria-hidden="true">🧪</span>
-        <span class="flow-label">売買検証</span>
-      </a>
-    </nav>
-
-    <section class="card market-time-card">
-      <div class="market-time-grid">
-        <div class="market-time-item">
-          <span class="label">Japan Time (JST)</span>
-          <span id="clock-jst" class="market-time-value">-</span>
-        </div>
-        <div class="market-time-item">
-          <span class="label">US Time (ET)</span>
-          <span id="clock-et" class="market-time-value">-</span>
-        </div>
-        <div class="market-time-item">
-          <span class="label">US Market Hours</span>
-          <span id="market-hours-et" class="market-time-value">09:30-16:00 ET (Mon-Fri)</span>
-          <span id="market-open-state" class="market-state">-</span>
-        </div>
-      </div>
-    </section>
-
-    <section id="symbol-search-panel" class="card controls">
-      <label for="symbol-search">銘柄を検索して追加（最大8件）</label>
-      <div id="symbol-search-area" class="symbol-search-area">
-        <input id="symbol-search" name="symbol-search" type="text" autocomplete="off"
-          placeholder="例: AAPL, MSFT, NVDA" />
+      <div id="symbol-search-area" class="terminal-search">
+        <input id="symbol-search" name="symbol-search" type="text" autocomplete="off" placeholder="銘柄検索 (AAPL, MSFT...)" />
         <div id="symbol-dropdown" class="symbol-dropdown hidden"></div>
       </div>
       <p id="catalog-meta" class="hint">Loading symbol catalog...</p>
       <p id="selection-error" class="hint error"></p>
-      <details id="technical-panel" class="technical-panel">
-        <summary class="minor-action technical-toggle">詳細診断（上級者向け）</summary>
-        <div class="status-row">
+
+      <div id="watchlist-head" class="watchlist-head" aria-label="ウィックリスト列ヘッダー">
+        <button type="button" class="watch-sort-btn watch-sort-symbol" data-sort-key="symbol">銘柄</button>
+        <button type="button" class="watch-sort-btn" data-sort-key="price">現在値</button>
+        <button type="button" class="watch-sort-btn" data-sort-key="changePct">前日比%</button>
+        <span class="watch-col-label watch-col-action" aria-hidden="true"></span>
+      </div>
+
+      <div id="watchlist" class="watchlist" role="list"></div>
+
+      <details class="technical-panel">
+        <summary class="minor-action technical-toggle">接続状態</summary>
+        <div class="status-row terminal-status-row">
           <div><span class="label">Mode</span> <span id="mode">-</span></div>
           <div><span class="label">WS</span> <span id="ws-state">-</span></div>
-          <div><span class="label">Fallback interval</span> <span id="fallback-interval">-</span></div>
-          <div><span class="label">Daily credits left</span> <span id="credits-left">-</span></div>
-          <div><span class="label">Credits updated</span> <span id="credits-updated">-</span></div>
+          <div><span class="label">Fallback</span> <span id="fallback-interval">-</span></div>
+          <div><span class="label">Credits</span> <span id="credits-left">-</span></div>
+          <div><span class="label">Updated</span> <span id="credits-updated">-</span></div>
         </div>
         <div class="minor-tools-body technical-actions">
-          <button id="refresh-catalog" type="button" class="minor-action">Refresh Symbol List</button>
-          <button id="refresh-credits" type="button" class="minor-action">Refresh Credits (TD)</button>
+          <button id="refresh-catalog" type="button" class="minor-action">Refresh Symbols</button>
+          <button id="refresh-credits" type="button" class="minor-action">Refresh Credits</button>
         </div>
       </details>
     </section>
 
-    <section id="paper-portfolio-panel" class="card paper-portfolio-card">
-      <div class="portfolio-badge">Simulation Zone</div>
-      <div class="portfolio-head">
-        <h2>Paper Portfolio</h2>
-        <p class="hint portfolio-warning">仮想資産で売買を検証（実注文は行いません）</p>
-      </div>
-
-      <div class="portfolio-metrics">
-        <div class="status-box">
-          <span class="label">Initial Cash</span>
-          <span id="pf-initial-cash">-</span>
+    <section class="terminal-pane center-pane" aria-label="銘柄データ">
+      <header class="pane-head center-head">
+        <h2>銘柄データ</h2>
+        <div class="market-time-inline">
+          <span id="clock-jst">-</span>
+          <span> / </span>
+          <span id="clock-et">-</span>
+          <span id="market-open-state" class="market-state">-</span>
+          <span id="market-hours-et" class="market-hours-inline">09:30-16:00 ET</span>
         </div>
+      </header>
+
+      <div id="symbol-tabs" class="symbol-tabs" role="tablist" aria-label="Opened symbols"></div>
+
+      <article id="tab-empty" class="tab-empty">
+        左のウォッチリストから銘柄をクリックすると、ここにタブでチャートとデータを表示します。
+      </article>
+
+      <article id="symbol-panel" class="symbol-panel hidden">
+        <div class="symbol-panel-head">
+          <div>
+            <h3 id="panel-symbol">-</h3>
+            <p id="panel-updated" class="hint">-</p>
+          </div>
+          <button id="panel-refresh" type="button" class="minor-action">更新</button>
+        </div>
+
+        <div id="chart-wrap" class="chart-wrap"></div>
+
+        <div class="symbol-kpi-grid">
+          <div class="kpi-item">
+            <span class="label">現在値</span>
+            <span id="kpi-price">-</span>
+          </div>
+          <div class="kpi-item">
+            <span class="label">前日比</span>
+            <span id="kpi-change">-</span>
+          </div>
+          <div class="kpi-item">
+            <span class="label">当日高値/安値</span>
+            <span id="kpi-range">-</span>
+          </div>
+          <div class="kpi-item">
+            <span class="label">出来高</span>
+            <span id="kpi-volume">-</span>
+          </div>
+          <div class="kpi-item">
+            <span class="label">MA(20/50)</span>
+            <span id="kpi-ma">-</span>
+          </div>
+          <div class="kpi-item">
+            <span class="label">ATR(14)</span>
+            <span id="kpi-atr">-</span>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="terminal-pane trade-pane" aria-label="仮想トレード">
+      <header class="pane-head">
+        <h2>仮想トレード</h2>
+        <p class="pane-sub">Paper Portfolio</p>
+      </header>
+
+      <div class="portfolio-metrics terminal-portfolio-metrics">
         <div class="status-box">
           <span class="label">Cash</span>
           <span id="pf-cash">-</span>
-        </div>
-        <div class="status-box">
-          <span class="label">Market Value</span>
-          <span id="pf-market-value">-</span>
         </div>
         <div class="status-box">
           <span class="label">Equity</span>
           <span id="pf-equity">-</span>
         </div>
         <div class="status-box">
-          <span class="label">Unrealized PnL</span>
+          <span class="label">Unrealized</span>
           <span id="pf-unrealized-pnl">-</span>
         </div>
         <div class="status-box">
@@ -132,86 +148,62 @@
         </div>
       </div>
 
-      <form id="pf-trade-form" class="portfolio-trade-form">
+      <form id="pf-trade-form" class="portfolio-trade-form terminal-trade-form">
         <label for="pf-symbol">Symbol</label>
         <input id="pf-symbol" name="symbol" type="text" placeholder="AAPL" maxlength="15" required />
         <label for="pf-side">Side</label>
         <select id="pf-side" name="side">
           <option value="buy">Buy</option>
           <option value="sell">Sell</option>
+          <option value="short">Short</option>
+          <option value="cover">Cover</option>
         </select>
         <label for="pf-quantity">Quantity</label>
         <input id="pf-quantity" name="quantity" type="number" min="0.0001" step="0.0001" placeholder="10" required />
         <label for="pf-price">Price (optional)</label>
         <input id="pf-price" name="price" type="number" min="0.0001" step="0.0001" placeholder="blank = market" />
-        <button id="pf-submit" type="submit">Submit Trade</button>
-        <button id="pf-reset" type="button" class="danger-action">Reset Portfolio</button>
+        <button id="pf-submit" type="submit">Submit</button>
+        <button id="pf-reset" type="button" class="danger-action">Reset</button>
       </form>
       <p id="pf-message" class="hint"></p>
 
-      <div class="portfolio-tables">
-        <div class="portfolio-table">
-          <h3>Positions</h3>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Symbol</th>
-                  <th>Qty</th>
-                  <th>Avg Cost</th>
-                  <th>Last</th>
-                  <th>Value</th>
-                  <th>Unrealized</th>
-                  <th>Weight</th>
-                </tr>
-              </thead>
-              <tbody id="pf-positions-body"></tbody>
-            </table>
-          </div>
-        </div>
-        <div class="portfolio-table">
-          <h3>Recent Trades</h3>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Symbol</th>
-                  <th>Side</th>
-                  <th>Qty</th>
-                  <th>Price</th>
-                  <th>Realized</th>
-                </tr>
-              </thead>
-              <tbody id="pf-trades-body"></tbody>
-            </table>
-          </div>
+      <div class="portfolio-table compact-table">
+        <h3>Positions</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Qty</th>
+                <th>Last</th>
+                <th>Unrealized</th>
+              </tr>
+            </thead>
+            <tbody id="pf-positions-body"></tbody>
+          </table>
         </div>
       </div>
-    </section>
 
-    <section id="monitor-table-panel" class="card">
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th data-sort-key="symbol" aria-sort="ascending">Symbol</th>
-              <th data-sort-key="price">Price (USD)</th>
-              <th data-sort-key="change">Change (%)</th>
-              <th data-sort-key="range">30D High / Low</th>
-              <th data-sort-key="ret30d">30D Ret (%)</th>
-              <th data-sort-key="vol">Vol (σ)</th>
-              <th>30D Trend</th>
-              <th data-sort-key="updated">Updated</th>
-            </tr>
-          </thead>
-          <tbody id="price-table"></tbody>
-        </table>
+      <div class="portfolio-table compact-table">
+        <h3>Recent Trades</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date/Time</th>
+                <th>Symbol</th>
+                <th>Side</th>
+                <th>Price</th>
+              </tr>
+            </thead>
+            <tbody id="pf-trades-body"></tbody>
+          </table>
+        </div>
       </div>
     </section>
   </main>
 
-  <script src="/static/app.monitor.20260211b.js" defer></script>
+  <script src="/static/app.terminal.js?v=20260212g" defer></script>
   <script src="/static/page_menu.20260211b.js" defer></script>
 </body>
 

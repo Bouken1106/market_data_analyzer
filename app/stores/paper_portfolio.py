@@ -81,9 +81,11 @@ class PaperPortfolioStore:
                 continue
             if not isinstance(item, dict):
                 continue
-            quantity = self._to_non_negative_float(item.get("quantity"), fallback=0.0)
-            avg_cost = self._to_non_negative_float(item.get("avg_cost"), fallback=0.0)
-            if quantity <= 0:
+            quantity = self._to_non_negative_or_negative_float(item.get("quantity"))
+            avg_cost = self._to_positive_float(item.get("avg_cost"), fallback=0.0)
+            if quantity is None or abs(quantity) <= 1e-12:
+                continue
+            if avg_cost <= 0:
                 continue
             out[symbol] = {
                 "quantity": quantity,
@@ -102,7 +104,7 @@ class PaperPortfolioStore:
             side = str(item.get("side") or "").lower().strip()
             if not symbol or not SYMBOL_PATTERN.match(symbol):
                 continue
-            if side not in {"buy", "sell"}:
+            if side not in {"buy", "sell", "short", "cover"}:
                 continue
             qty = self._to_positive_float(item.get("quantity"), fallback=-1)
             price = self._to_positive_float(item.get("price"), fallback=-1)
@@ -169,8 +171,8 @@ class PaperPortfolioStore:
 
         if not normalized_symbol or not SYMBOL_PATTERN.match(normalized_symbol):
             raise ValueError("Invalid symbol format.")
-        if normalized_side not in {"buy", "sell"}:
-            raise ValueError("side must be buy or sell.")
+        if normalized_side not in {"buy", "sell", "short", "cover"}:
+            raise ValueError("side must be buy, sell, short, or cover.")
         if qty <= 0:
             raise ValueError("quantity must be greater than 0.")
         if px <= 0:
@@ -185,6 +187,8 @@ class PaperPortfolioStore:
 
             realized_pnl: float | None = None
             if normalized_side == "buy":
+                if current_qty < -1e-9:
+                    raise ValueError("Cannot buy while short position exists. Use cover.")
                 total_cost = qty * px
                 if cash + 1e-9 < total_cost:
                     raise ValueError("Insufficient cash balance.")
@@ -197,7 +201,9 @@ class PaperPortfolioStore:
                     "quantity": new_qty,
                     "avg_cost": new_avg_cost,
                 }
-            else:
+            elif normalized_side == "sell":
+                if current_qty < -1e-9:
+                    raise ValueError("Cannot sell while short position exists. Use cover or short.")
                 if current_qty + 1e-9 < qty:
                     raise ValueError("Sell quantity exceeds current position.")
                 proceeds = qty * px
@@ -209,6 +215,39 @@ class PaperPortfolioStore:
                 else:
                     positions[normalized_symbol] = {
                         "quantity": remaining_qty,
+                        "avg_cost": current_avg_cost,
+                    }
+            elif normalized_side == "short":
+                if current_qty > 1e-9:
+                    raise ValueError("Cannot short while long position exists. Use sell.")
+                proceeds = qty * px
+                short_size = abs(current_qty)
+                new_short_size = short_size + qty
+                if new_short_size <= 0:
+                    raise ValueError("Invalid resulting short quantity.")
+                new_avg_cost = ((short_size * current_avg_cost) + (qty * px)) / new_short_size
+                cash += proceeds
+                positions[normalized_symbol] = {
+                    "quantity": -new_short_size,
+                    "avg_cost": new_avg_cost,
+                }
+            else:  # cover
+                if current_qty >= -1e-9:
+                    raise ValueError("No short position to cover.")
+                short_size = abs(current_qty)
+                if short_size + 1e-9 < qty:
+                    raise ValueError("Cover quantity exceeds current short position.")
+                total_cost = qty * px
+                if cash + 1e-9 < total_cost:
+                    raise ValueError("Insufficient cash balance.")
+                realized_pnl = (current_avg_cost - px) * qty
+                remaining_short = short_size - qty
+                cash -= total_cost
+                if remaining_short <= 1e-9:
+                    positions.pop(normalized_symbol, None)
+                else:
+                    positions[normalized_symbol] = {
+                        "quantity": -remaining_short,
                         "avg_cost": current_avg_cost,
                     }
 

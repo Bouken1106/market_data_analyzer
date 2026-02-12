@@ -534,10 +534,15 @@ class MarketDataHub:
         normalized = symbol.upper().strip()
         if not SYMBOL_PATTERN.match(normalized):
             raise HTTPException(status_code=400, detail="Invalid symbol format.")
-        years = max(1, min(years, HISTORICAL_MAX_YEARS))
+        requested_years = max(1, int(years))
+        fetch_full_history = months is None and requested_years > HISTORICAL_MAX_YEARS
+        years = requested_years if fetch_full_history else max(1, min(requested_years, HISTORICAL_MAX_YEARS))
         months = None if months is None else max(1, min(int(months), ML_HISTORY_MAX_MONTHS))
 
-        cache_key = (normalized, f"years:{years}") if months is None else (normalized, f"months:{months}")
+        if months is None:
+            cache_key = (normalized, "years:max") if fetch_full_history else (normalized, f"years:{years}")
+        else:
+            cache_key = (normalized, f"months:{months}")
         async with self._historical_lock:
             cached = self._historical_cache.get(cache_key)
             if cached and not refresh and self._is_cache_fresh(cached.get("cached_epoch"), HISTORICAL_CACHE_TTL_SEC):
@@ -553,14 +558,30 @@ class MarketDataHub:
 
         timeout = httpx.Timeout(40.0, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
-            points, source_detail = await self._fetch_historical_points_with_detail(
-                client,
-                symbol=normalized,
-                interval=HISTORICAL_INTERVAL,
-                outputsize=HISTORICAL_MAX_POINTS,
-                start_date=start_date.isoformat(),
-                end_date=end_date.isoformat(),
-            )
+            if fetch_full_history and str(HISTORICAL_INTERVAL).strip().lower() in {"1day", "1d", "day"}:
+                points = await self._fetch_full_daily_series(client, symbol=normalized, refresh=refresh)
+                source_detail = {
+                    "provider": self.provider,
+                    "mode": "full_daily_history",
+                }
+            else:
+                if months is None:
+                    requested_days = (365 * years) + (years // 4)
+                else:
+                    requested_days = (31 * months) + 7
+                estimated_points = max(200, int(requested_days * 0.8))
+                outputsize = min(
+                    TIME_SERIES_MAX_OUTPUTSIZE,
+                    max(HISTORICAL_MAX_POINTS, estimated_points),
+                )
+                points, source_detail = await self._fetch_historical_points_with_detail(
+                    client,
+                    symbol=normalized,
+                    interval=HISTORICAL_INTERVAL,
+                    outputsize=outputsize,
+                    start_date=start_date.isoformat(),
+                    end_date=end_date.isoformat(),
+                )
 
         if not points:
             raise HTTPException(status_code=404, detail="No historical data found for this symbol.")
