@@ -28,7 +28,6 @@ from .config import (
 )
 from .hub import MarketDataHub
 from .ml.job_store import MlJobStore
-from .ml.pipelines import set_hub, set_ml_job_store
 from .routes import init_routes, router
 from .stores import (
     FmpReferenceStore,
@@ -93,17 +92,6 @@ hub = MarketDataHub(
     fmp_reference_store=fmp_reference_store,
 )
 
-# Inject singletons where needed
-set_hub(hub)
-set_ml_job_store(ml_job_store)
-init_routes(
-    hub=hub,
-    symbol_catalog_store=symbol_catalog_store,
-    ml_job_store=ml_job_store,
-    paper_portfolio_store=paper_portfolio_store,
-)
-
-
 # ---------------------------------------------------------------------------
 # FastAPI lifespan
 # ---------------------------------------------------------------------------
@@ -122,6 +110,14 @@ async def lifespan(_: FastAPI):
 # ---------------------------------------------------------------------------
 
 app = FastAPI(title="Market Data Analyzer", lifespan=lifespan)
+
+init_routes(
+    app,
+    hub=hub,
+    symbol_catalog_store=symbol_catalog_store,
+    ml_job_store=ml_job_store,
+    paper_portfolio_store=paper_portfolio_store,
+)
 
 
 @app.middleware("http")

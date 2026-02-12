@@ -6,10 +6,10 @@ import asyncio
 import json
 import math
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import numpy as np
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from .config import (
@@ -19,10 +19,8 @@ from .config import (
 )
 from .ml.catalog import ML_MODEL_CATALOG
 from .ml.pipelines import (
-    _cancel_check_for_job,
     _normalize_ml_history_months,
     _parse_compare_models,
-    _progress_callback_for_job,
     _run_ml_comparison_job,
     _run_patchtst_job,
     _run_patchtst_pipeline,
@@ -54,21 +52,54 @@ BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
 
-# --- Hub / job store singletons (injected by main.py) ---
-
-_hub: Any = None
-_symbol_catalog_store: Any = None
-_ml_job_store: Any = None
-_paper_portfolio_store: Any = None
+APP_STATE_HUB = "market_data_hub"
+APP_STATE_SYMBOL_CATALOG_STORE = "symbol_catalog_store"
+APP_STATE_ML_JOB_STORE = "ml_job_store"
+APP_STATE_PAPER_PORTFOLIO_STORE = "paper_portfolio_store"
 
 
-def init_routes(hub: Any, symbol_catalog_store: Any, ml_job_store: Any, paper_portfolio_store: Any) -> None:
-    """Called from main.py to inject singletons."""
-    global _hub, _symbol_catalog_store, _ml_job_store, _paper_portfolio_store
-    _hub = hub
-    _symbol_catalog_store = symbol_catalog_store
-    _ml_job_store = ml_job_store
-    _paper_portfolio_store = paper_portfolio_store
+def init_routes(
+    app: FastAPI,
+    *,
+    hub: Any,
+    symbol_catalog_store: Any,
+    ml_job_store: Any,
+    paper_portfolio_store: Any,
+) -> None:
+    """Register shared service objects on application state."""
+    app.state.__setattr__(APP_STATE_HUB, hub)
+    app.state.__setattr__(APP_STATE_SYMBOL_CATALOG_STORE, symbol_catalog_store)
+    app.state.__setattr__(APP_STATE_ML_JOB_STORE, ml_job_store)
+    app.state.__setattr__(APP_STATE_PAPER_PORTFOLIO_STORE, paper_portfolio_store)
+
+
+def _get_app_state_or_500(request: Request, key: str, label: str) -> Any:
+    value = getattr(request.app.state, key, None)
+    if value is None:
+        raise HTTPException(status_code=500, detail=f"{label} is not initialized.")
+    return value
+
+
+def _get_hub(request: Request) -> Any:
+    return _get_app_state_or_500(request, APP_STATE_HUB, "hub")
+
+
+def _get_symbol_catalog_store(request: Request) -> Any:
+    return _get_app_state_or_500(request, APP_STATE_SYMBOL_CATALOG_STORE, "symbol catalog store")
+
+
+def _get_ml_job_store(request: Request) -> Any:
+    return _get_app_state_or_500(request, APP_STATE_ML_JOB_STORE, "ML job store")
+
+
+def _get_paper_portfolio_store(request: Request) -> Any:
+    return _get_app_state_or_500(request, APP_STATE_PAPER_PORTFOLIO_STORE, "paper portfolio store")
+
+
+HubDep = Annotated[Any, Depends(_get_hub)]
+SymbolCatalogStoreDep = Annotated[Any, Depends(_get_symbol_catalog_store)]
+MlJobStoreDep = Annotated[Any, Depends(_get_ml_job_store)]
+PaperPortfolioStoreDep = Annotated[Any, Depends(_get_paper_portfolio_store)]
 
 
 def _to_valid_price(value: Any) -> float | None:
@@ -91,14 +122,14 @@ def _to_finite_number(value: Any) -> float | None:
     return parsed
 
 
-async def _resolve_trade_price(symbol: str, explicit_price: float | None) -> tuple[float, str]:
+async def _resolve_trade_price(hub: Any, symbol: str, explicit_price: float | None) -> tuple[float, str]:
     if explicit_price is not None:
         parsed = _to_valid_price(explicit_price)
         if parsed is None:
             raise HTTPException(status_code=400, detail="price must be greater than 0.")
         return parsed, "manual"
 
-    rows = await _hub.current_rows([symbol])
+    rows = await hub.current_rows([symbol])
     if not rows:
         raise HTTPException(
             status_code=400,
@@ -114,14 +145,14 @@ async def _resolve_trade_price(symbol: str, explicit_price: float | None) -> tup
     return parsed, "market"
 
 
-async def _paper_portfolio_payload() -> dict[str, Any]:
-    state = await _paper_portfolio_store.get_state()
+async def _paper_portfolio_payload(hub: Any, paper_portfolio_store: Any) -> dict[str, Any]:
+    state = await paper_portfolio_store.get_state()
     positions_raw = state.get("positions") if isinstance(state, dict) else {}
     if not isinstance(positions_raw, dict):
         positions_raw = {}
 
     symbols = sorted(str(symbol).upper().strip() for symbol in positions_raw.keys())
-    rows = await _hub.current_rows(symbols) if symbols else []
+    rows = await hub.current_rows(symbols) if symbols else []
     price_map: dict[str, float | None] = {}
     for row in rows:
         if not isinstance(row, dict):
@@ -206,9 +237,14 @@ async def _paper_portfolio_payload() -> dict[str, Any]:
     }
 
 
-async def _fetch_strategy_points(symbols: list[str], months: int, refresh: bool) -> dict[str, list[dict[str, Any]]]:
+async def _fetch_strategy_points(
+    hub: Any,
+    symbols: list[str],
+    months: int,
+    refresh: bool,
+) -> dict[str, list[dict[str, Any]]]:
     tasks = [
-        _hub.historical_payload(symbol=symbol, months=months, refresh=refresh)
+        hub.historical_payload(symbol=symbol, months=months, refresh=refresh)
         for symbol in symbols
     ]
     responses = await asyncio.gather(*tasks, return_exceptions=True)
@@ -355,32 +391,32 @@ async def historical_page(symbol: str) -> FileResponse:
 # --- API routes ---
 
 @router.get("/api/snapshot")
-async def snapshot() -> JSONResponse:
-    payload = await _hub.snapshot_payload()
+async def snapshot(hub: HubDep) -> JSONResponse:
+    payload = await hub.snapshot_payload()
     return JSONResponse(payload)
 
 
 @router.post("/api/symbols")
-async def update_symbols(req: SymbolUpdateRequest) -> JSONResponse:
+async def update_symbols(req: SymbolUpdateRequest, hub: HubDep) -> JSONResponse:
     symbols = normalize_symbols(req.symbols)
-    await _hub.set_symbols(symbols)
-    rows = await _hub.current_rows(symbols)
+    await hub.set_symbols(symbols)
+    rows = await hub.current_rows(symbols)
     return ok_json_response(
         symbols=symbols,
-        status=await _hub.status_payload(),
+        status=await hub.status_payload(),
         rows=rows,
     )
 
 
 @router.get("/api/credits")
-async def credits(refresh: bool = False) -> JSONResponse:
+async def credits(hub: HubDep, refresh: bool = False) -> JSONResponse:
     if refresh:
-        status = await _hub.refresh_api_credits()
+        status = await hub.refresh_api_credits()
     else:
-        status = await _hub.status_payload()
+        status = await hub.status_payload()
     note = (
         "refresh=true fetches exact daily remaining credits via /api_usage and consumes 1 API credit."
-        if getattr(_hub, "provider", "") in {"twelvedata", "both"}
+        if getattr(hub, "provider", "") in {"twelvedata", "both"}
         else "Current provider does not expose Twelve Data /api_usage credits."
     )
     return ok_json_response(
@@ -390,13 +426,17 @@ async def credits(refresh: bool = False) -> JSONResponse:
 
 
 @router.get("/api/portfolio")
-async def paper_portfolio() -> JSONResponse:
-    payload = await _paper_portfolio_payload()
+async def paper_portfolio(hub: HubDep, paper_portfolio_store: PaperPortfolioStoreDep) -> JSONResponse:
+    payload = await _paper_portfolio_payload(hub, paper_portfolio_store)
     return ok_json_response(**payload)
 
 
 @router.post("/api/portfolio/trades")
-async def paper_trade(req: PaperTradeRequest) -> JSONResponse:
+async def paper_trade(
+    req: PaperTradeRequest,
+    hub: HubDep,
+    paper_portfolio_store: PaperPortfolioStoreDep,
+) -> JSONResponse:
     symbols = normalize_symbols([req.symbol])
     if not symbols:
         raise HTTPException(status_code=400, detail="Invalid symbol format.")
@@ -410,9 +450,9 @@ async def paper_trade(req: PaperTradeRequest) -> JSONResponse:
     if not math.isfinite(quantity) or quantity <= 0:
         raise HTTPException(status_code=400, detail="quantity must be greater than 0.")
 
-    execution_price, execution_source = await _resolve_trade_price(symbol, req.price)
+    execution_price, execution_source = await _resolve_trade_price(hub, symbol, req.price)
     try:
-        trade = await _paper_portfolio_store.apply_trade(
+        trade = await paper_portfolio_store.apply_trade(
             symbol=symbol,
             side=side,
             quantity=quantity,
@@ -421,7 +461,7 @@ async def paper_trade(req: PaperTradeRequest) -> JSONResponse:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
-    payload = await _paper_portfolio_payload()
+    payload = await _paper_portfolio_payload(hub, paper_portfolio_store)
     return ok_json_response(
         trade={**trade, "execution_source": execution_source},
         **payload,
@@ -429,7 +469,11 @@ async def paper_trade(req: PaperTradeRequest) -> JSONResponse:
 
 
 @router.post("/api/portfolio/reset")
-async def paper_portfolio_reset(req: PaperPortfolioResetRequest) -> JSONResponse:
+async def paper_portfolio_reset(
+    req: PaperPortfolioResetRequest,
+    hub: HubDep,
+    paper_portfolio_store: PaperPortfolioStoreDep,
+) -> JSONResponse:
     if req.initial_cash is not None:
         try:
             initial_cash = float(req.initial_cash)
@@ -437,13 +481,17 @@ async def paper_portfolio_reset(req: PaperPortfolioResetRequest) -> JSONResponse
             raise HTTPException(status_code=400, detail="initial_cash must be greater than 0.") from None
         if not math.isfinite(initial_cash) or initial_cash <= 0:
             raise HTTPException(status_code=400, detail="initial_cash must be greater than 0.")
-    await _paper_portfolio_store.reset(initial_cash=req.initial_cash)
-    payload = await _paper_portfolio_payload()
+    await paper_portfolio_store.reset(initial_cash=req.initial_cash)
+    payload = await _paper_portfolio_payload(hub, paper_portfolio_store)
     return ok_json_response(**payload)
 
 
 @router.post("/api/strategy/evaluate")
-async def strategy_evaluate(req: StrategyEvaluationRequest) -> JSONResponse:
+async def strategy_evaluate(
+    req: StrategyEvaluationRequest,
+    hub: HubDep,
+    paper_portfolio_store: PaperPortfolioStoreDep,
+) -> JSONResponse:
     symbols = normalize_symbols(req.symbols)
     if len(symbols) < 2:
         raise HTTPException(status_code=400, detail="At least two symbols are required.")
@@ -481,7 +529,7 @@ async def strategy_evaluate(req: StrategyEvaluationRequest) -> JSONResponse:
     if benchmark_symbol not in fetch_symbols:
         fetch_symbols.append(benchmark_symbol)
 
-    points_by_symbol = await _fetch_strategy_points(fetch_symbols, months=months, refresh=bool(req.refresh))
+    points_by_symbol = await _fetch_strategy_points(hub, fetch_symbols, months=months, refresh=bool(req.refresh))
     asset_points = {symbol: points_by_symbol.get(symbol, []) for symbol in symbols}
     price_dates, prices, aligned_symbols = build_price_matrix(asset_points)
     if not price_dates or prices.shape[0] < (lookback_days + 30):
@@ -543,8 +591,8 @@ async def strategy_evaluate(req: StrategyEvaluationRequest) -> JSONResponse:
                 )
                 benchmark_metrics = {"symbol": benchmark_symbol, **bench_backtest.get("metrics", {})}
 
-    portfolio_state = await _paper_portfolio_payload()
-    latest_rows = await _hub.current_rows(aligned_symbols)
+    portfolio_state = await _paper_portfolio_payload(hub, paper_portfolio_store)
+    latest_rows = await hub.current_rows(aligned_symbols)
     latest_prices = {
         str(item.get("symbol") or "").upper().strip(): float(_to_valid_price(item.get("price")) or 0.0)
         for item in latest_rows
@@ -586,26 +634,32 @@ async def strategy_evaluate(req: StrategyEvaluationRequest) -> JSONResponse:
 
 
 @router.get("/api/symbol-catalog")
-async def symbol_catalog(refresh: bool = False) -> JSONResponse:
-    payload = await _symbol_catalog_store.get_catalog(refresh=refresh)
+async def symbol_catalog(symbol_catalog_store: SymbolCatalogStoreDep, refresh: bool = False) -> JSONResponse:
+    payload = await symbol_catalog_store.get_catalog(refresh=refresh)
     return ok_json_response(**payload)
 
 
 @router.get("/api/historical/{symbol}")
-async def historical(symbol: str, years: int = HISTORICAL_DEFAULT_YEARS, refresh: bool = False) -> JSONResponse:
-    payload = await _hub.historical_payload(symbol=symbol, years=years, refresh=refresh)
+async def historical(
+    symbol: str,
+    hub: HubDep,
+    years: int = HISTORICAL_DEFAULT_YEARS,
+    refresh: bool = False,
+) -> JSONResponse:
+    payload = await hub.historical_payload(symbol=symbol, years=years, refresh=refresh)
     return ok_json_response(**payload)
 
 
 @router.get("/api/security-overview/{symbol}")
 async def security_overview(
     symbol: str,
+    hub: HubDep,
     refresh: bool = False,
     include_intraday: bool = True,
     include_market: bool = True,
     include_qqq: bool = True,
 ) -> JSONResponse:
-    payload = await _hub.security_overview_payload(
+    payload = await hub.security_overview_payload(
         symbol=symbol,
         refresh=refresh,
         include_intraday=include_intraday,
@@ -616,8 +670,8 @@ async def security_overview(
 
 
 @router.get("/api/security-overview/{symbol}/intraday")
-async def security_overview_intraday(symbol: str, refresh: bool = False) -> JSONResponse:
-    payload = await _hub.security_overview_payload(
+async def security_overview_intraday(symbol: str, hub: HubDep, refresh: bool = False) -> JSONResponse:
+    payload = await hub.security_overview_payload(
         symbol=symbol,
         refresh=refresh,
         include_intraday=True,
@@ -639,20 +693,20 @@ async def security_overview_intraday(symbol: str, refresh: bool = False) -> JSON
 
 
 @router.post("/api/security-overview/{symbol}/clear-cache")
-async def clear_security_overview_cache(symbol: str) -> JSONResponse:
-    payload = await _hub.clear_symbol_overview_cache(symbol=symbol)
+async def clear_security_overview_cache(symbol: str, hub: HubDep) -> JSONResponse:
+    payload = await hub.clear_symbol_overview_cache(symbol=symbol)
     return ok_json_response(**payload)
 
 
 @router.get("/api/fmp-reference/{symbol}")
-async def fmp_reference(symbol: str, refresh: bool = False, cache_only: bool = False) -> JSONResponse:
-    payload = await _hub.fmp_reference_payload(symbol=symbol, refresh=refresh, cache_only=cache_only)
+async def fmp_reference(symbol: str, hub: HubDep, refresh: bool = False, cache_only: bool = False) -> JSONResponse:
+    payload = await hub.fmp_reference_payload(symbol=symbol, refresh=refresh, cache_only=cache_only)
     return ok_json_response(**payload)
 
 
 @router.post("/api/fmp-reference/{symbol}/clear-cache")
-async def clear_fmp_reference_cache(symbol: str) -> JSONResponse:
-    payload = await _hub.clear_fmp_reference_cache(symbol=symbol)
+async def clear_fmp_reference_cache(symbol: str, hub: HubDep) -> JSONResponse:
+    payload = await hub.clear_fmp_reference_cache(symbol=symbol)
     return ok_json_response(**payload)
 
 
@@ -663,6 +717,7 @@ async def ml_models() -> JSONResponse:
 
 @router.get("/api/ml/quantile-lstm")
 async def quantile_lstm_forecast(
+    hub: HubDep,
     symbol: str,
     months: int = ML_HISTORY_DEFAULT_MONTHS,
     sequence_length: int = 60,
@@ -678,6 +733,7 @@ async def quantile_lstm_forecast(
     refresh: bool = False,
 ) -> JSONResponse:
     payload = await _run_quantile_lstm_pipeline(
+        hub=hub,
         symbol=symbol,
         months=months,
         sequence_length=sequence_length,
@@ -697,6 +753,7 @@ async def quantile_lstm_forecast(
 
 @router.get("/api/ml/patchtst")
 async def patchtst_forecast(
+    hub: HubDep,
     symbol: str,
     months: int = ML_HISTORY_DEFAULT_MONTHS,
     sequence_length: int = 256,
@@ -712,6 +769,7 @@ async def patchtst_forecast(
     refresh: bool = False,
 ) -> JSONResponse:
     payload = await _run_patchtst_pipeline(
+        hub=hub,
         symbol=symbol,
         months=months,
         sequence_length=sequence_length,
@@ -730,33 +788,45 @@ async def patchtst_forecast(
 
 
 @router.post("/api/ml/quantile-lstm/jobs")
-async def start_quantile_lstm_job(req: QuantileLstmJobRequest) -> JSONResponse:
+async def start_quantile_lstm_job(
+    req: QuantileLstmJobRequest,
+    hub: HubDep,
+    ml_job_store: MlJobStoreDep,
+) -> JSONResponse:
     symbol = normalize_symbols([req.symbol])
     if not symbol:
         raise HTTPException(status_code=400, detail="Symbolを入力してください。")
     req.symbol = symbol[0]
     req.months = _normalize_ml_history_months(req.months)
 
-    job_id = _ml_job_store.create(kind="quantile_lstm", symbol=req.symbol)
-    asyncio.create_task(_run_quantile_lstm_job(job_id, req))
+    job_id = ml_job_store.create(kind="quantile_lstm", symbol=req.symbol)
+    asyncio.create_task(_run_quantile_lstm_job(job_id, req, hub=hub, ml_job_store=ml_job_store))
     return ok_json_response(job_id=job_id, status="queued")
 
 
 @router.post("/api/ml/patchtst/jobs")
-async def start_patchtst_job(req: QuantileLstmJobRequest) -> JSONResponse:
+async def start_patchtst_job(
+    req: QuantileLstmJobRequest,
+    hub: HubDep,
+    ml_job_store: MlJobStoreDep,
+) -> JSONResponse:
     symbol = normalize_symbols([req.symbol])
     if not symbol:
         raise HTTPException(status_code=400, detail="Symbolを入力してください。")
     req.symbol = symbol[0]
     req.months = _normalize_ml_history_months(req.months)
 
-    job_id = _ml_job_store.create(kind="patchtst_quantile", symbol=req.symbol)
-    asyncio.create_task(_run_patchtst_job(job_id, req))
+    job_id = ml_job_store.create(kind="patchtst_quantile", symbol=req.symbol)
+    asyncio.create_task(_run_patchtst_job(job_id, req, hub=hub, ml_job_store=ml_job_store))
     return ok_json_response(job_id=job_id, status="queued")
 
 
 @router.post("/api/ml/compare/jobs")
-async def start_ml_compare_job(req: MlComparisonJobRequest) -> JSONResponse:
+async def start_ml_compare_job(
+    req: MlComparisonJobRequest,
+    hub: HubDep,
+    ml_job_store: MlJobStoreDep,
+) -> JSONResponse:
     symbols = normalize_symbols(req.symbols) if str(req.symbols or "").strip() else []
     if not symbols:
         from .ml.catalog import ML_COMPARE_DEFAULT_SYMBOLS
@@ -771,36 +841,36 @@ async def start_ml_compare_job(req: MlComparisonJobRequest) -> JSONResponse:
         raise HTTPException(status_code=400, detail="At least one valid model is required.")
     req.models = ",".join(selected_models)
 
-    job_id = _ml_job_store.create(kind="ml_compare", symbol="MULTI")
-    asyncio.create_task(_run_ml_comparison_job(job_id, req))
+    job_id = ml_job_store.create(kind="ml_compare", symbol="MULTI")
+    asyncio.create_task(_run_ml_comparison_job(job_id, req, hub=hub, ml_job_store=ml_job_store))
     return ok_json_response(job_id=job_id, status="queued")
 
 
 @router.get("/api/ml/jobs/{job_id}")
-async def ml_job_status(job_id: str) -> JSONResponse:
-    payload = _ml_job_store.get(job_id)
+async def ml_job_status(job_id: str, ml_job_store: MlJobStoreDep) -> JSONResponse:
+    payload = ml_job_store.get(job_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="Job not found.")
     return ok_json_response(**payload)
 
 
 @router.post("/api/ml/jobs/{job_id}/cancel")
-async def ml_job_cancel(job_id: str) -> JSONResponse:
-    payload = _ml_job_store.request_cancel(job_id)
+async def ml_job_cancel(job_id: str, ml_job_store: MlJobStoreDep) -> JSONResponse:
+    payload = ml_job_store.request_cancel(job_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="Job not found.")
     return ok_json_response(**payload)
 
 
 @router.get("/api/sparkline")
-async def sparkline(symbols: str, refresh: bool = False) -> JSONResponse:
+async def sparkline(symbols: str, hub: HubDep, refresh: bool = False) -> JSONResponse:
     target_symbols = normalize_symbols(symbols)
     if not target_symbols:
         raise HTTPException(status_code=400, detail="At least one valid symbol is required.")
     if len(target_symbols) > MAX_BASIC_SYMBOLS:
         raise HTTPException(status_code=400, detail=f"You can request up to {MAX_BASIC_SYMBOLS} symbols at once.")
 
-    items = await _hub.sparkline_payload(target_symbols, refresh=refresh)
+    items = await hub.sparkline_payload(target_symbols, refresh=refresh)
     return ok_json_response(
         symbols=target_symbols,
         items=items,
@@ -808,11 +878,11 @@ async def sparkline(symbols: str, refresh: bool = False) -> JSONResponse:
 
 
 @router.get("/api/stream")
-async def stream(request: Request) -> StreamingResponse:
-    queue = _hub.register_listener()
+async def stream(request: Request, hub: HubDep) -> StreamingResponse:
+    queue = hub.register_listener()
 
     async def event_generator():
-        initial_payload = await _hub.snapshot_payload()
+        initial_payload = await hub.snapshot_payload()
         yield f"data: {json.dumps(initial_payload)}\n\n"
 
         try:
@@ -825,7 +895,7 @@ async def stream(request: Request) -> StreamingResponse:
                 except asyncio.TimeoutError:
                     yield ": keep-alive\n\n"
         finally:
-            _hub.unregister_listener(queue)
+            hub.unregister_listener(queue)
 
     return StreamingResponse(
         event_generator(),

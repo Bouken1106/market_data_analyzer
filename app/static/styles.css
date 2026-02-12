@@ -2367,15 +2367,18 @@ button {
   overflow: hidden;
 }
 
-/* Drawer-mode top padding breaks fixed terminal viewport sizing. */
-.monitor-page.terminal-page.has-drawer-menu {
-  padding-top: 0;
-}
-
 .monitor-page.terminal-page .nav-tabs {
   position: sticky;
   top: 0;
   z-index: 120;
+}
+
+/* Keep drawer navigation above backdrop on monitor page. */
+.monitor-page.terminal-page.has-drawer-menu .nav-tabs {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  z-index: 1300;
 }
 
 .monitor-page .terminal-layout {
@@ -2388,8 +2391,8 @@ button {
 }
 
 .monitor-page.terminal-page.has-drawer-menu .terminal-layout {
-  height: 100dvh;
-  min-height: 100dvh;
+  height: calc(100dvh - 56px);
+  min-height: calc(100dvh - 56px);
 }
 
 .monitor-page .terminal-pane {

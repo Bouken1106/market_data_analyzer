@@ -32,6 +32,7 @@ def _normalize_ml_history_months(months: int | Any) -> int:
 
 async def _run_quantile_lstm_pipeline(
     *,
+    hub: Any,
     symbol: str,
     months: int = ML_HISTORY_DEFAULT_MONTHS,
     sequence_length: int = 60,
@@ -53,6 +54,7 @@ async def _run_quantile_lstm_pipeline(
     from ..quantile_lstm import run_quantile_lstm_forecast
 
     return await _run_ml_pipeline(
+        hub=hub,
         symbol=symbol,
         months=months,
         sequence_length=sequence_length,
@@ -79,6 +81,7 @@ async def _run_quantile_lstm_pipeline(
 
 async def _run_ml_pipeline(
     *,
+    hub: Any,
     symbol: str,
     months: int,
     sequence_length: int,
@@ -104,9 +107,6 @@ async def _run_ml_pipeline(
     error_log_message: str,
     error_detail: str,
 ) -> dict[str, Any]:
-    # Deferred import to avoid circular dependency at module load
-    from ..hub import MarketDataHub as _Hub  # noqa: F811
-
     if cancel_check is not None:
         cancel_check()
 
@@ -115,8 +115,6 @@ async def _run_ml_pipeline(
 
     effective_months = _normalize_ml_history_months(months)
 
-    # Access the hub singleton (set during app initialisation in main.py)
-    hub = _get_hub()
     historical_data = await hub.historical_payload(symbol=symbol, months=effective_months, refresh=refresh)
     points = historical_data.get("points")
     if not isinstance(points, list):
@@ -173,6 +171,7 @@ async def _run_ml_pipeline(
 
 async def _run_patchtst_pipeline(
     *,
+    hub: Any,
     symbol: str,
     months: int = ML_HISTORY_DEFAULT_MONTHS,
     sequence_length: int = 256,
@@ -194,6 +193,7 @@ async def _run_patchtst_pipeline(
     from ..patchtst_quantile import run_patchtst_forecast
 
     return await _run_ml_pipeline(
+        hub=hub,
         symbol=symbol,
         months=months,
         sequence_length=sequence_length,
@@ -219,46 +219,11 @@ async def _run_patchtst_pipeline(
 
 
 # ---------------------------------------------------------------------------
-# Helper: access the hub singleton
-# ---------------------------------------------------------------------------
-
-_hub_ref: Any = None
-
-
-def set_hub(hub: Any) -> None:
-    """Called from main.py to register the hub singleton."""
-    global _hub_ref
-    _hub_ref = hub
-
-
-def _get_hub() -> Any:
-    if _hub_ref is None:
-        raise RuntimeError("Hub has not been initialized yet. Call set_hub() first.")
-    return _hub_ref
-
-
-# ---------------------------------------------------------------------------
 # Job-level helpers (callbacks and wrappers)
 # ---------------------------------------------------------------------------
 
-_ml_job_store_ref: Any = None
-
-
-def set_ml_job_store(store: Any) -> None:
-    """Called from main.py to register the ML job store singleton."""
-    global _ml_job_store_ref
-    _ml_job_store_ref = store
-
-
-def _get_ml_job_store() -> Any:
-    if _ml_job_store_ref is None:
-        raise RuntimeError("ML job store has not been initialized yet.")
-    return _ml_job_store_ref
-
-
-def _progress_callback_for_job(job_id: str):
+def _progress_callback_for_job(job_id: str, ml_job_store: Any):
     def _cb(progress: float, message: str) -> None:
-        ml_job_store = _get_ml_job_store()
         if ml_job_store.is_cancel_requested(job_id):
             raise MlJobCancelledError("ML job cancelled.")
         current = ml_job_store.get(job_id)
@@ -278,9 +243,8 @@ def _progress_callback_for_job(job_id: str):
     return _cb
 
 
-def _cancel_check_for_job(job_id: str):
+def _cancel_check_for_job(job_id: str, ml_job_store: Any):
     def _check() -> None:
-        ml_job_store = _get_ml_job_store()
         if ml_job_store.is_cancel_requested(job_id):
             raise MlJobCancelledError("ML job cancelled.")
 
@@ -397,8 +361,7 @@ def _compute_loss_metrics(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _run_ml_comparison_job(job_id: str, req: MlComparisonJobRequest) -> None:
-    ml_job_store = _get_ml_job_store()
+async def _run_ml_comparison_job(job_id: str, req: MlComparisonJobRequest, *, hub: Any, ml_job_store: Any) -> None:
     try:
         raw_symbols = normalize_symbols(req.symbols) if str(req.symbols or "").strip() else []
         symbols = raw_symbols or ML_COMPARE_DEFAULT_SYMBOLS
@@ -413,7 +376,7 @@ async def _run_ml_comparison_job(job_id: str, req: MlComparisonJobRequest) -> No
         split_train_val_ratio = ML_SPLIT_TRAIN_VAL_RATIO
 
         ml_job_store.update(job_id, status="running", progress=1, message="比較ジョブを開始しました。")
-        cancel_check = _cancel_check_for_job(job_id)
+        cancel_check = _cancel_check_for_job(job_id, ml_job_store)
 
         rows: list[dict[str, Any]] = []
         task_items = [(symbol, model_id) for symbol in symbols for model_id in selected_models]
@@ -438,6 +401,7 @@ async def _run_ml_comparison_job(job_id: str, req: MlComparisonJobRequest) -> No
             try:
                 if model_id == "quantile_lstm":
                     payload = await _run_quantile_lstm_pipeline(
+                        hub=hub,
                         symbol=symbol,
                         months=req.months,
                         sequence_length=req.sequence_length,
@@ -458,6 +422,7 @@ async def _run_ml_comparison_job(job_id: str, req: MlComparisonJobRequest) -> No
                     )
                 elif model_id == "patchtst_quantile":
                     payload = await _run_patchtst_pipeline(
+                        hub=hub,
                         symbol=symbol,
                         months=req.months,
                         sequence_length=req.sequence_length,
@@ -572,14 +537,14 @@ async def _run_ml_comparison_job(job_id: str, req: MlComparisonJobRequest) -> No
         ml_job_store.fail(job_id, error=str(exc))
 
 
-async def _run_quantile_lstm_job(job_id: str, req: QuantileLstmJobRequest) -> None:
-    ml_job_store = _get_ml_job_store()
+async def _run_quantile_lstm_job(job_id: str, req: QuantileLstmJobRequest, *, hub: Any, ml_job_store: Any) -> None:
     try:
         if ml_job_store.is_cancel_requested(job_id):
             ml_job_store.mark_cancelled(job_id, message="ジョブ開始前に停止しました。")
             return
         ml_job_store.update(job_id, status="running", progress=1, message="ジョブを開始しました。")
         result = await _run_quantile_lstm_pipeline(
+            hub=hub,
             symbol=req.symbol,
             months=req.months,
             sequence_length=req.sequence_length,
@@ -593,8 +558,8 @@ async def _run_quantile_lstm_job(job_id: str, req: QuantileLstmJobRequest) -> No
             representative_days=req.representative_days,
             seed=req.seed,
             refresh=req.refresh,
-            progress_callback=_progress_callback_for_job(job_id),
-            cancel_check=_cancel_check_for_job(job_id),
+            progress_callback=_progress_callback_for_job(job_id, ml_job_store),
+            cancel_check=_cancel_check_for_job(job_id, ml_job_store),
         )
         ml_job_store.complete(job_id, result=result)
     except MlJobCancelledError:
@@ -605,14 +570,14 @@ async def _run_quantile_lstm_job(job_id: str, req: QuantileLstmJobRequest) -> No
         ml_job_store.fail(job_id, error=str(exc))
 
 
-async def _run_patchtst_job(job_id: str, req: QuantileLstmJobRequest) -> None:
-    ml_job_store = _get_ml_job_store()
+async def _run_patchtst_job(job_id: str, req: QuantileLstmJobRequest, *, hub: Any, ml_job_store: Any) -> None:
     try:
         if ml_job_store.is_cancel_requested(job_id):
             ml_job_store.mark_cancelled(job_id, message="ジョブ開始前に停止しました。")
             return
         ml_job_store.update(job_id, status="running", progress=1, message="ジョブを開始しました。")
         result = await _run_patchtst_pipeline(
+            hub=hub,
             symbol=req.symbol,
             months=req.months,
             sequence_length=req.sequence_length,
@@ -626,8 +591,8 @@ async def _run_patchtst_job(job_id: str, req: QuantileLstmJobRequest) -> None:
             representative_days=req.representative_days,
             seed=req.seed,
             refresh=req.refresh,
-            progress_callback=_progress_callback_for_job(job_id),
-            cancel_check=_cancel_check_for_job(job_id),
+            progress_callback=_progress_callback_for_job(job_id, ml_job_store),
+            cancel_check=_cancel_check_for_job(job_id, ml_job_store),
         )
         ml_job_store.complete(job_id, result=result)
     except MlJobCancelledError:

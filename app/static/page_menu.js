@@ -13,11 +13,6 @@
   const nav = document.querySelector(".nav-tabs");
   if (!nav) return;
 
-  // Keep monitor terminal layout stable; skip drawer conversion on this page.
-  if (document.body.classList.contains("terminal-page")) {
-    return;
-  }
-
   document.body.classList.add("has-drawer-menu");
 
   const menuButton = document.createElement("button");
