@@ -325,7 +325,22 @@ function buildPortfolioView(baseState) {
   const equity = safeCash + marketValue;
   const unrealizedPnl = marketValue - costBasis;
   const totalReturnPct = safeInitialCash > 0 ? ((equity - safeInitialCash) / safeInitialCash) * 100 : null;
-  const recentTrades = Array.isArray(baseState.recent_trades) ? baseState.recent_trades : [];
+  const rawRecentTrades = Array.isArray(baseState.recent_trades) ? baseState.recent_trades : [];
+  const openDirectionBySymbol = new Map();
+  positions.forEach((item) => {
+    if (!item?.symbol || !Number.isFinite(item.quantity) || Math.abs(item.quantity) <= 0) return;
+    openDirectionBySymbol.set(item.symbol, item.quantity > 0 ? "long" : "short");
+  });
+  const recentTrades = rawRecentTrades.filter((item) => {
+    const symbol = normalizeSymbol(item?.symbol);
+    if (!symbol) return false;
+    const side = String(item?.side || "").toLowerCase();
+    const openDirection = openDirectionBySymbol.get(symbol);
+    if (!openDirection) return true;
+    if (openDirection === "long" && side === "buy") return false;
+    if (openDirection === "short" && side === "short") return false;
+    return true;
+  });
 
   return {
     initial_cash: safeInitialCash,
