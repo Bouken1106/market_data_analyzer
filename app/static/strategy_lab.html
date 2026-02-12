@@ -7,7 +7,7 @@
   <title>Strategy Lab</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="/static/styles.css?v=20260212b" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260212f" />
 </head>
 
 <body class="stg-page">
@@ -39,7 +39,22 @@
       </div>
     </header>
 
-    <section class="card stg-panel stg-settings-panel">
+    <nav class="flow-strip" aria-label="Primary actions">
+      <a class="flow-card flow-start" href="#stg-settings-panel">
+        <span class="flow-icon" aria-hidden="true">🎛️</span>
+        <span class="flow-label">戦略設定</span>
+      </a>
+      <a class="flow-card" href="#stg-summary-panel">
+        <span class="flow-icon" aria-hidden="true">📉</span>
+        <span class="flow-label">成績確認</span>
+      </a>
+      <a class="flow-card" href="#stg-trade-panel">
+        <span class="flow-icon" aria-hidden="true">🧭</span>
+        <span class="flow-label">売買提案</span>
+      </a>
+    </nav>
+
+    <section id="stg-settings-panel" class="card stg-panel stg-settings-panel">
       <h2>Strategy Settings</h2>
       <form id="stg-form" class="ml-form">
         <label>
@@ -185,7 +200,7 @@
       <p id="stg-status" class="hint">条件を設定して Run Strategy を実行してください。</p>
     </section>
 
-    <section class="card stg-panel stg-summary-panel">
+    <section id="stg-summary-panel" class="card stg-panel stg-summary-panel">
       <div class="ml-section-head">
         <h2>Backtest Summary</h2>
         <div class="ml-section-tools">
@@ -222,7 +237,7 @@
       </div>
     </section>
 
-    <section class="card stg-panel stg-trade-panel">
+    <section id="stg-trade-panel" class="card stg-panel stg-trade-panel">
       <h2>Rebalance Trade Proposals</h2>
       <div class="table-wrap">
         <table>

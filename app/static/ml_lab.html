@@ -7,7 +7,7 @@
   <title>ML Forecast Lab</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="/static/styles.css?v=20260212a" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260212f" />
 </head>
 
 <body class="ml-page">
@@ -40,13 +40,28 @@
       </div>
     </header>
 
-    <section class="card ml-panel ml-catalog-panel">
+    <nav class="flow-strip" aria-label="Primary actions">
+      <a class="flow-card flow-start" href="#ml-catalog-panel">
+        <span class="flow-icon" aria-hidden="true">🧠</span>
+        <span class="flow-label">モデル選択</span>
+      </a>
+      <a class="flow-card" href="#ml-config-panel">
+        <span class="flow-icon" aria-hidden="true">⚙️</span>
+        <span class="flow-label">条件入力</span>
+      </a>
+      <a class="flow-card" href="#ml-result-panel">
+        <span class="flow-icon" aria-hidden="true">📊</span>
+        <span class="flow-label">結果確認</span>
+      </a>
+    </nav>
+
+    <section id="ml-catalog-panel" class="card ml-panel ml-catalog-panel">
       <h2>Model Catalog</h2>
       <p class="hint">使いたいモデルを選択してください。将来的にこの一覧へ追加していけます。</p>
       <div id="ml-model-grid" class="ml-model-grid"></div>
     </section>
 
-    <section class="card ml-panel ml-config-panel">
+    <section id="ml-config-panel" class="card ml-panel ml-config-panel">
       <span id="ml-active-model-pill" class="pill">-</span>
       <h2 id="ml-config-title">Forecast Config</h2>
       <p id="ml-model-description" class="hint">-</p>
@@ -179,7 +194,7 @@
       </div>
     </section>
 
-    <section class="card ml-panel ml-metrics-panel">
+    <section id="ml-result-panel" class="card ml-panel ml-metrics-panel">
       <h2>Distribution Metrics (Test)</h2>
       <div class="ml-metric-grid">
         <div class="risk-item">

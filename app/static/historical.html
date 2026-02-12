@@ -7,7 +7,7 @@
   <title>Stock Overview</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="/static/styles.css?v=20260212a" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260212f" />
 </head>
 
 <body class="overview-page">
@@ -41,8 +41,23 @@
       </div>
     </header>
 
+    <nav class="flow-strip" aria-label="Primary actions">
+      <a class="flow-card flow-start" href="#overview-chart-panel">
+        <span class="flow-icon" aria-hidden="true">🕒</span>
+        <span class="flow-label">期間切替</span>
+      </a>
+      <a class="flow-card" href="#overview-chart-panel">
+        <span class="flow-icon" aria-hidden="true">🔍</span>
+        <span class="flow-label">ズーム操作</span>
+      </a>
+      <a class="flow-card" href="#overview-risk-panel">
+        <span class="flow-icon" aria-hidden="true">⚠️</span>
+        <span class="flow-label">リスク確認</span>
+      </a>
+    </nav>
+
     <section class="overview-hero-grid">
-      <section class="card chart-card overview-main-chart">
+      <section id="overview-chart-panel" class="card chart-card overview-main-chart">
         <button id="refresh-history" type="button" class="minor-action chart-refresh-btn">Refresh</button>
         <button id="clear-history-cache" type="button" class="minor-action chart-clear-btn">Clear Cache</button>
         <div class="chart-actions">
@@ -67,7 +82,7 @@
         <p id="history-meta" class="hint">Loading overview data...</p>
       </section>
 
-      <section class="card history-toolbar overview-side-panel">
+      <section id="overview-risk-panel" class="card history-toolbar overview-side-panel">
         <h2 class="section-title">Risk Snapshot</h2>
         <div class="risk-strip">
           <div class="risk-item">

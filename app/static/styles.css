@@ -2016,3 +2016,263 @@ tbody tr:hover {
     align-items: flex-start;
   }
 }
+
+/* ============================================================
+   User-Friendly Refresh (Dark Theme, 2026-02-12)
+   ============================================================ */
+
+:root {
+  --radius: 10px;
+  --radius-lg: 14px;
+  --gap: 12px;
+}
+
+.container {
+  max-width: 1360px;
+  padding: 16px 14px 26px;
+}
+
+.nav-tabs {
+  padding: 4px 10px 0;
+  gap: 4px;
+}
+
+.nav-tab {
+  border-radius: 8px 8px 0 0;
+  border: 1px solid transparent;
+  border-bottom: 2px solid transparent;
+  padding: 10px 14px;
+}
+
+.nav-tab:hover {
+  border-color: rgba(88, 166, 255, 0.25);
+}
+
+.nav-tab.active {
+  background: rgba(57, 210, 192, 0.08);
+}
+
+.header h1 {
+  font-size: clamp(1.28rem, 1.08rem + 0.9vw, 1.72rem);
+}
+
+.header p {
+  font-size: 0.93rem;
+  color: #c0d1e1;
+}
+
+.card {
+  padding: 14px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+}
+
+.label {
+  text-transform: none;
+  letter-spacing: 0.015em;
+}
+
+.hint {
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+input[type="text"],
+input[type="number"],
+select,
+textarea {
+  min-height: 38px;
+  border-radius: 8px;
+}
+
+button {
+  min-height: 36px;
+  border-radius: 8px;
+}
+
+/* Visual action flow */
+.flow-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+}
+
+.flow-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 1px solid rgba(88, 166, 255, 0.32);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(88, 166, 255, 0.12) 0%, rgba(32, 46, 61, 0.85) 100%);
+  color: var(--text);
+  text-decoration: none;
+  transition: transform var(--transition), border-color var(--transition), background var(--transition);
+}
+
+.flow-card:hover {
+  text-decoration: none;
+  transform: translateY(-1px);
+  border-color: rgba(57, 210, 192, 0.55);
+  background: linear-gradient(180deg, rgba(57, 210, 192, 0.16) 0%, rgba(32, 46, 61, 0.9) 100%);
+}
+
+.flow-card.flow-start {
+  border-color: rgba(57, 210, 192, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(57, 210, 192, 0.2);
+}
+
+.flow-icon {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(11, 16, 22, 0.5);
+  border: 1px solid rgba(88, 166, 255, 0.4);
+  font-size: 0.95rem;
+}
+
+.flow-label {
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.status-row > div,
+.status-box,
+.risk-item {
+  border-left-width: 3px;
+}
+
+.table-wrap {
+  border-radius: 10px;
+}
+
+@media (max-width: 900px) {
+  .flow-strip {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .flow-strip {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Page-distinct interaction language */
+.monitor-page .nav-tab.active {
+  color: var(--cyan);
+  border-bottom-color: var(--cyan);
+  background: rgba(57, 210, 192, 0.1);
+}
+
+.ml-page .nav-tab.active {
+  color: var(--blue);
+  border-bottom-color: var(--blue);
+  background: rgba(88, 166, 255, 0.1);
+}
+
+.cmp-page .nav-tab.active {
+  color: var(--amber);
+  border-bottom-color: var(--amber);
+  background: rgba(240, 136, 62, 0.1);
+}
+
+.stg-page .nav-tab.active {
+  color: var(--green);
+  border-bottom-color: var(--green);
+  background: rgba(38, 217, 127, 0.12);
+}
+
+/* Monitor: linear workflow */
+.monitor-page .flow-strip {
+  grid-template-columns: 1.2fr 1fr 1fr;
+}
+
+.monitor-page .flow-card {
+  border-radius: 999px;
+  padding: 11px 14px;
+}
+
+.monitor-page .flow-card:not(:last-child)::after {
+  content: "→";
+  margin-left: auto;
+  color: #7ecbc1;
+  font-weight: 700;
+}
+
+.monitor-page .flow-icon {
+  border-radius: 8px;
+}
+
+/* ML: experiment cards */
+.ml-page .flow-card {
+  min-height: 78px;
+  align-items: flex-start;
+  border-radius: 12px;
+  border-top: 3px solid rgba(88, 166, 255, 0.65);
+  background: linear-gradient(180deg, rgba(88, 166, 255, 0.2) 0%, rgba(32, 46, 61, 0.86) 100%);
+}
+
+.ml-page .flow-icon {
+  border-radius: 6px;
+  border-color: rgba(88, 166, 255, 0.6);
+  background: rgba(13, 24, 40, 0.65);
+}
+
+.ml-page .flow-label {
+  font-family: var(--font-mono);
+}
+
+/* Compare: benchmark tiles */
+.cmp-page .flow-card {
+  justify-content: center;
+  min-height: 62px;
+  border-radius: 8px;
+  border-style: dashed;
+  border-color: rgba(240, 136, 62, 0.42);
+  background: linear-gradient(180deg, rgba(240, 136, 62, 0.13) 0%, rgba(32, 46, 61, 0.9) 100%);
+}
+
+.cmp-page .flow-card.flow-start {
+  box-shadow: inset 0 0 0 1px rgba(240, 136, 62, 0.32);
+}
+
+.cmp-page .flow-icon {
+  border-color: rgba(240, 136, 62, 0.52);
+}
+
+.cmp-page .flow-label {
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+}
+
+/* Strategy: execution lane */
+.stg-page .flow-card {
+  min-height: 68px;
+  border-radius: 14px 8px;
+  border-left: 4px solid rgba(38, 217, 127, 0.62);
+  background: linear-gradient(180deg, rgba(38, 217, 127, 0.16) 0%, rgba(32, 46, 61, 0.88) 100%);
+}
+
+.stg-page .flow-card.flow-start {
+  border-left-color: rgba(57, 210, 192, 0.78);
+}
+
+.stg-page .flow-icon {
+  border-color: rgba(38, 217, 127, 0.52);
+}
+
+@media (max-width: 900px) {
+  .monitor-page .flow-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .monitor-page .flow-card:not(:last-child)::after {
+    content: "";
+  }
+}
