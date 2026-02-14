@@ -7,7 +7,7 @@
   <title>Market Data Analyzer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="/static/styles.css?v=20260212h" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260213n" />
 </head>
 
 <body class="monitor-page terminal-page">
@@ -200,11 +200,51 @@
           </table>
         </div>
       </div>
+
+      <section class="portfolio-table compact-table pf-ml-estimator" aria-label="ML期待リターン">
+        <h3>ML Expected Return (Next Day q50)</h3>
+        <div class="pf-ml-controls">
+          <label for="pf-ml-model-search">Model</label>
+          <div id="pf-ml-model-search-area" class="symbol-search-area">
+            <input
+              id="pf-ml-model-search"
+              type="text"
+              placeholder="Search model: lstm, patch..."
+              autocomplete="off"
+            />
+            <div id="pf-ml-model-dropdown" class="symbol-dropdown hidden"></div>
+          </div>
+          <div class="row pf-ml-actions">
+            <span id="pf-ml-model-pill" class="pill">-</span>
+            <button id="pf-ml-run" type="button">Calc Expected Return</button>
+            <button id="pf-ml-cancel" type="button" class="danger-action" disabled>停止</button>
+          </div>
+          <p id="pf-ml-status" class="hint">現在ポジションを対象に、次営業日のq50リターンを評価します。</p>
+          <p id="pf-ml-summary" class="hint"></p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Qty</th>
+                <th>Last</th>
+                <th>q50 Return</th>
+                <th>Expected PnL</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="pf-ml-results-body">
+              <tr><td colspan="6" class="pf-empty">No calculation yet</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
     </section>
   </main>
 
-  <script src="/static/app.terminal.js?v=20260212g" defer></script>
-  <script src="/static/page_menu.20260211b.js" defer></script>
+  <script src="/static/app.terminal.js?v=20260213m" defer></script>
+  <script src="/static/page_menu.20260211b.js?v=20260213i" defer></script>
 </body>
 
 </html>

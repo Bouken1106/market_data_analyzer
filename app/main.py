@@ -126,10 +126,13 @@ async def disable_monitor_asset_cache(request, call_next):
     path = request.url.path
     no_cache_paths = {
         "/",
+        "/ml-lab",
         "/static/app.js",
+        "/static/ml_lab.js",
         "/static/page_menu.js",
         "/static/app.monitor.20260211b.js",
         "/static/page_menu.20260211b.js",
+        "/static/styles.css",
         "/static/index.html",
     }
     if path in no_cache_paths:

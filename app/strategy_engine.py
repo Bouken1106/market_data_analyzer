@@ -283,8 +283,8 @@ def run_backtest(
             "rebalance_count": int(rebalance_events),
         },
         "series": [
-            {"date": return_dates[min(i, len(return_dates) - 1)], "equity": float(v)}
-            for i, v in enumerate(equity_curve)
+            {"date": return_dates[i], "equity": float(equity_curve[i + 1])}
+            for i in range(len(return_dates))
         ],
         "latest_weights": applied_weights[-1] if applied_weights else {symbol: 0.0 for symbol in symbols},
     }
@@ -324,7 +324,7 @@ def buy_and_hold_backtest(
     if returns.ndim != 1:
         returns = np.asarray(returns, dtype=np.float64).reshape(-1)
     equity = float(initial_capital)
-    series = [{"date": return_dates[0], "equity": equity}] if return_dates else []
+    series: list[dict[str, Any]] = []
     daily: list[float] = []
     for idx, value in enumerate(returns):
         r = float(value) if np.isfinite(value) else 0.0

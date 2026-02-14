@@ -27,6 +27,24 @@
     <span class="menu-line"></span>
   `;
 
+  const menuAnchor = document.createElement("div");
+  menuAnchor.className = "nav-menu-anchor";
+
+  const menuTitle = document.createElement("span");
+  menuTitle.className = "nav-menu-title";
+  const activeTab = nav.querySelector(".nav-tab.active");
+  const activeTabLabelNode = activeTab && activeTab.lastChild && activeTab.lastChild.nodeType === Node.TEXT_NODE
+    ? activeTab.lastChild
+    : null;
+  const activeLabel = activeTabLabelNode
+    ? activeTabLabelNode.textContent.replace(/\s+/g, " ").trim()
+    : "";
+  if (path === "/") {
+    menuTitle.textContent = "Live Monitor";
+  } else {
+    menuTitle.textContent = activeLabel || document.title || "Market Data Analyzer";
+  }
+
   nav.id = "site-nav";
 
   const backdrop = document.createElement("button");
@@ -60,5 +78,6 @@
     }
   });
 
-  document.body.append(menuButton, backdrop);
+  menuAnchor.append(menuButton, menuTitle);
+  document.body.append(menuAnchor, backdrop);
 })();

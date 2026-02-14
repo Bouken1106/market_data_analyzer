@@ -4,7 +4,7 @@ const mlSymbolInput = document.getElementById("ml-symbol");
 const mlSymbolDropdown = document.getElementById("ml-symbol-dropdown");
 const mlCatalogMetaEl = document.getElementById("ml-catalog-meta");
 const mlRefreshCatalogBtn = document.getElementById("ml-refresh-catalog");
-const mlModelGridEl = document.getElementById("ml-model-grid");
+const mlModelSearchInput = document.getElementById("ml-model-search");
 const mlActiveModelPillEl = document.getElementById("ml-active-model-pill");
 const mlConfigTitleEl = document.getElementById("ml-config-title");
 const mlModelDescriptionEl = document.getElementById("ml-model-description");
@@ -42,6 +42,12 @@ const btOutperfEl = document.getElementById("bt-outperf");
 const btCapitalStrategyEl = document.getElementById("bt-capital-strategy");
 const btCapitalBuyholdEl = document.getElementById("bt-capital-buyhold");
 const btWindowEl = document.getElementById("bt-window");
+const mlKpiSymbolModelEl = document.getElementById("ml-kpi-symbol-model");
+const mlKpiDatesEl = document.getElementById("ml-kpi-dates");
+const mlKpiNextProbEl = document.getElementById("ml-kpi-next-prob");
+const mlKpiNextMedianEl = document.getElementById("ml-kpi-next-median");
+const mlKpiProj60dEl = document.getElementById("ml-kpi-proj-60d");
+const mlKpiBtOutperfEl = document.getElementById("ml-kpi-bt-outperf");
 
 const COLORS = {
   bg: "#0b111d",
@@ -84,33 +90,6 @@ const FALLBACK_ML_MODELS = [
     status_label: "Ready",
     run_label: "Run PatchTST Quantile",
     api_path: "/api/ml/patchtst",
-  },
-  {
-    id: "quantile_gru",
-    name: "Quantile GRU",
-    short_description: "LSTMより軽量な系列モデル（準備中）",
-    status: "coming_soon",
-    status_label: "Coming Soon",
-    run_label: "Run Quantile GRU",
-    api_path: "",
-  },
-  {
-    id: "temporal_transformer",
-    name: "Temporal Transformer",
-    short_description: "注意機構ベースの時系列モデル（準備中）",
-    status: "coming_soon",
-    status_label: "Coming Soon",
-    run_label: "Run Temporal Transformer",
-    api_path: "",
-  },
-  {
-    id: "xgboost_quantile",
-    name: "XGBoost Quantile",
-    short_description: "勾配ブースティングの分位点回帰（準備中）",
-    status: "coming_soon",
-    status_label: "Coming Soon",
-    run_label: "Run XGBoost Quantile",
-    api_path: "",
   },
 ];
 
@@ -257,6 +236,11 @@ function setStatus(message, isError = false) {
   statusEl.classList.toggle("error", Boolean(isError));
 }
 
+function setText(el, value) {
+  if (!el) return;
+  el.textContent = value;
+}
+
 function setRecommendWarning(messages) {
   if (!recommendWarningEl) return;
   const list = Array.isArray(messages) ? messages : [];
@@ -392,7 +376,12 @@ function applyActiveModelUi() {
     mlConfigTitleEl.textContent = `${active.name} Config`;
   }
   if (mlModelDescriptionEl) {
-    mlModelDescriptionEl.textContent = active.short_description || "";
+    mlModelDescriptionEl.textContent = "";
+  }
+  const symbol = normalizeSymbol(mlSymbolInput?.value || "");
+  setText(mlKpiSymbolModelEl, symbol ? `${symbol} / ${active.name}` : active.name);
+  if (mlModelSearchInput) {
+    mlModelSearchInput.value = active.name;
   }
   syncRunButtonState();
 }
@@ -408,6 +397,11 @@ function resetMetricCards() {
   btCapitalStrategyEl.textContent = "-";
   btCapitalBuyholdEl.textContent = "-";
   btWindowEl.textContent = "-";
+  setText(mlKpiDatesEl, "-");
+  setText(mlKpiNextProbEl, "-");
+  setText(mlKpiNextMedianEl, "-");
+  setText(mlKpiProj60dEl, "-");
+  setText(mlKpiBtOutperfEl, "-");
   quantileLegendEl.textContent = "テスト期間の代表日を表示します。";
   fanMetaEl.textContent = "直近2カ月(test)の q50（中央値）、50%帯、90%帯、実測値を表示します。";
   nextDayMetaEl.textContent = "最新終値から翌営業日の上昇/下落確率を表示します。";
@@ -421,28 +415,47 @@ function drawModelPlaceholders() {
   drawPlaceholder(fanCanvas, `Run ${modelName} to draw fan chart`);
 }
 
-function renderMlModelCards() {
-  if (!mlModelGridEl) return;
-  mlModelGridEl.innerHTML = "";
+function _matchModelQuery(query) {
+  const needle = String(query || "").trim().toLowerCase();
+  if (!needle) return null;
+  const exact = mlModels.find((model) => {
+    return String(model.id || "").toLowerCase() === needle || String(model.name || "").toLowerCase() === needle;
+  });
+  if (exact) return exact;
+  return mlModels.find((model) => {
+    const haystack = [String(model.id || ""), String(model.name || ""), String(model.short_description || "")]
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(needle);
+  }) || null;
+}
 
+function _syncModelSearchDatalist() {
+  if (!mlModelSearchInput) return;
+  let datalist = document.getElementById("ml-model-options");
+  if (!datalist) {
+    datalist = document.createElement("datalist");
+    datalist.id = "ml-model-options";
+    document.body.appendChild(datalist);
+  }
+  datalist.innerHTML = "";
   for (const model of mlModels) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "ml-model-card";
-    if (model.id === activeModelId) {
-      button.classList.add("active");
-    }
-    if (model.status !== "ready") {
-      button.classList.add("pending");
-    }
-    button.dataset.modelId = model.id;
-    button.innerHTML =
-      `<span class="ml-model-card-head">`
-      + `<span class="ml-model-name">${model.name}</span>`
-      + `<span class="ml-model-state">${model.status_label || model.status}</span>`
-      + `</span>`
-      + `<span class="ml-model-summary">${model.short_description || ""}</span>`;
-    mlModelGridEl.appendChild(button);
+    const option = document.createElement("option");
+    option.value = model.name;
+    option.label = model.id;
+    datalist.appendChild(option);
+  }
+  mlModelSearchInput.setAttribute("list", "ml-model-options");
+}
+
+function _applyModelFromSearchInput() {
+  if (!mlModelSearchInput) return;
+  const matched = _matchModelQuery(mlModelSearchInput.value);
+  if (!matched) return;
+  if (matched.id !== activeModelId) {
+    activateModel(matched.id);
+  } else {
+    mlModelSearchInput.value = matched.name;
   }
 }
 
@@ -453,7 +466,6 @@ function activateModel(modelId) {
   resetZoom(quantileZoom);
   resetZoom(fanZoom);
   resetMetricCards();
-  renderMlModelCards();
   applyActiveModelUi();
   drawModelPlaceholders();
 
@@ -483,7 +495,7 @@ function normalizeMlModels(rawModels) {
         api_path: String(item?.api_path || ""),
       };
     })
-    .filter(Boolean);
+    .filter((item) => Boolean(item) && item.status === "ready" && Boolean(item.api_path));
 }
 
 async function loadMlModels() {
@@ -501,11 +513,12 @@ async function loadMlModels() {
     models = FALLBACK_ML_MODELS.slice();
   }
 
-  mlModels = models;
+  mlModels = models.filter((model) => model.status === "ready" && model.api_path);
   if (!mlModels.some((model) => model.id === activeModelId)) {
     const firstReady = mlModels.find((model) => canRunModel(model));
     activeModelId = firstReady?.id || mlModels[0]?.id || "quantile_lstm";
   }
+  _syncModelSearchDatalist();
   activateModel(activeModelId);
 }
 
@@ -1219,6 +1232,9 @@ function renderMetrics(payload) {
   const valCount = Number(splits?.val?.count || 0);
   const testCount = Number(splits?.test?.count || 0);
   metricSamplesEl.textContent = `${trainCount} / ${valCount} / ${testCount}`;
+  const testFrom = String(splits?.test?.from || "-");
+  const testTo = String(splits?.test?.to || "-");
+  setText(mlKpiDatesEl, `${testFrom} -> ${testTo}`);
 }
 
 function formatMoney(value) {
@@ -1257,6 +1273,7 @@ function renderBacktest60d(payload) {
   btReturnStrategyEl.textContent = `${(strategyReturn * 100).toFixed(2)}%`;
   btReturnBuyholdEl.textContent = `${(buyHoldReturn * 100).toFixed(2)}%`;
   btOutperfEl.textContent = `${(outperf * 100).toFixed(2)}%`;
+  setText(mlKpiBtOutperfEl, `${(outperf * 100).toFixed(2)}%`);
   btCapitalStrategyEl.textContent = formatMoney(strategyCapital);
   btCapitalBuyholdEl.textContent = formatMoney(buyHoldCapital);
   btWindowEl.textContent =
@@ -1364,6 +1381,9 @@ function renderNextDayDistribution(payload) {
   if (!forecast?.taus?.length || !forecast?.return_quantiles?.length) {
     drawPlaceholder(nextDayCanvas, "No next-day distribution data");
     nextDayMetaEl.textContent = "翌営業日の予測データがありません。";
+    setText(mlKpiNextProbEl, "-");
+    setText(mlKpiNextMedianEl, "-");
+    setText(mlKpiProj60dEl, "-");
     return;
   }
 
@@ -1379,6 +1399,10 @@ function renderNextDayDistribution(payload) {
   const q95Price = mode === "prices" ? Number(forecast.q95_price) : Number(forecast.q95_return);
   const upProb = Number(forecast.up_probability);
   const downProb = Number(forecast.down_probability);
+  const medianReturn = Number(forecast.q50_return);
+  const medianPrice = Number(forecast.q50_price);
+  const safeUpProb = Number.isFinite(upProb) ? upProb : 0;
+  const safeDownProb = Number.isFinite(downProb) ? downProb : 0;
 
   const { ctx, width, height } = fitCanvas(nextDayCanvas);
   ctx.clearRect(0, 0, width, height);
@@ -1394,8 +1418,8 @@ function renderNextDayDistribution(payload) {
 
   const barY = top + 18;
   const barH = 16;
-  const downW = plotWidth * Math.max(0, Math.min(1, downProb));
-  const upW = plotWidth * Math.max(0, Math.min(1, upProb));
+  const downW = plotWidth * Math.max(0, Math.min(1, safeDownProb));
+  const upW = plotWidth * Math.max(0, Math.min(1, safeUpProb));
 
   ctx.strokeStyle = "#31455f";
   ctx.lineWidth = 1;
@@ -1417,9 +1441,9 @@ function renderNextDayDistribution(payload) {
   ctx.fillStyle = "#e8eef8";
   ctx.font = '12px "Plus Jakarta Sans", "Zen Kaku Gothic New", sans-serif';
   ctx.textAlign = "left";
-  ctx.fillText(`Down ${((downProb || 0) * 100).toFixed(1)}%`, left, barY - 6);
+  ctx.fillText(`Down ${(safeDownProb * 100).toFixed(1)}%`, left, barY - 6);
   ctx.textAlign = "right";
-  ctx.fillText(`Up ${((upProb || 0) * 100).toFixed(1)}%`, right, barY - 6);
+  ctx.fillText(`Up ${(safeUpProb * 100).toFixed(1)}%`, right, barY - 6);
 
   const minRet = Math.min(...retQ);
   const maxRet = Math.max(...retQ);
@@ -1736,6 +1760,22 @@ function renderNextDayDistribution(payload) {
     + `| 90% range: ${mode === "prices"
       ? `${formatCompact(q05Price)} - ${formatCompact(q95Price)}`
       : `${(q05Price * 100).toFixed(2)}% - ${(q95Price * 100).toFixed(2)}%`}`;
+
+  setText(mlKpiNextProbEl, `UP ${(safeUpProb * 100).toFixed(1)}% / DOWN ${(safeDownProb * 100).toFixed(1)}%`);
+  const medianRetText = Number.isFinite(medianReturn) ? `${(medianReturn * 100).toFixed(2)}%` : "-";
+  setText(mlKpiNextMedianEl, `${medianRetText} (${formatCompact(medianPrice)})`);
+  setText(mlKpiDatesEl, `${forecast.as_of_date || "-"} -> ${forecast.target_date || "-"}`);
+
+  const inv60d = forecast.investment_60d;
+  const expectedRet = Number(inv60d?.expected_return);
+  const expectedCap = Number(inv60d?.expected_capital);
+  if (Number.isFinite(expectedRet) && Number.isFinite(expectedCap)) {
+    setText(mlKpiProj60dEl, `${(expectedRet * 100).toFixed(2)}% / ${formatMoney(expectedCap)}`);
+  } else if (typeof inv60d?.message === "string" && inv60d.message.trim()) {
+    setText(mlKpiProj60dEl, inv60d.message);
+  } else {
+    setText(mlKpiProj60dEl, "-");
+  }
 }
 
 function parseErrorMessage(body, fallback) {
@@ -1795,6 +1835,7 @@ async function runModelForecast() {
     setStatus("Symbolを入力してください。", true);
     return;
   }
+  setText(mlKpiSymbolModelEl, `${symbol} / ${activeModel.name}`);
 
   const requestPayload = {
     symbol,
@@ -2007,13 +2048,20 @@ if (cancelBtn) {
   });
 }
 
-if (mlModelGridEl) {
-  mlModelGridEl.addEventListener("click", (event) => {
-    const card = event.target.closest(".ml-model-card");
-    if (!card) return;
-    const modelId = card.dataset.modelId;
-    if (!modelId) return;
-    activateModel(modelId);
+if (mlModelSearchInput) {
+  mlModelSearchInput.addEventListener("input", () => {
+    const matched = _matchModelQuery(mlModelSearchInput.value);
+    if (matched && matched.id !== activeModelId) {
+      activateModel(matched.id);
+    }
+  });
+  mlModelSearchInput.addEventListener("change", () => {
+    _applyModelFromSearchInput();
+  });
+  mlModelSearchInput.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    _applyModelFromSearchInput();
   });
 }
 
@@ -2024,6 +2072,10 @@ if (mlSymbolInput) {
 
   mlSymbolInput.addEventListener("input", () => {
     renderMlDropdown();
+    const active = getActiveModel();
+    if (!active) return;
+    const symbol = normalizeSymbol(mlSymbolInput.value || "");
+    setText(mlKpiSymbolModelEl, symbol ? `${symbol} / ${active.name}` : active.name);
   });
 
   mlSymbolInput.addEventListener("keydown", (event) => {
@@ -2036,6 +2088,11 @@ if (mlSymbolInput) {
       if (!firstCandidate) return;
       event.preventDefault();
       mlSymbolInput.value = firstCandidate.dataset.symbol || "";
+      const active = getActiveModel();
+      if (active) {
+        const symbol = normalizeSymbol(mlSymbolInput.value || "");
+        setText(mlKpiSymbolModelEl, symbol ? `${symbol} / ${active.name}` : active.name);
+      }
       hideMlDropdown();
     }
   });
@@ -2050,6 +2107,11 @@ if (mlSymbolDropdown) {
     const button = event.target.closest(".dropdown-item");
     if (!button || !mlSymbolInput) return;
     mlSymbolInput.value = button.dataset.symbol || "";
+    const active = getActiveModel();
+    if (active) {
+      const symbol = normalizeSymbol(mlSymbolInput.value || "");
+      setText(mlKpiSymbolModelEl, symbol ? `${symbol} / ${active.name}` : active.name);
+    }
     hideMlDropdown();
     mlSymbolInput.focus();
   });

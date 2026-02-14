@@ -130,10 +130,12 @@ function renderTrades(tradeProposals) {
     tradesBodyEl.innerHTML = '<tr><td colspan="6">No trade proposal</td></tr>';
   } else {
     trades.forEach((item) => {
+      const side = String(item.side || "-");
+      const sideClass = side === "buy" ? "pf-side-buy" : side === "sell" ? "pf-side-sell" : "";
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td>${item.symbol || "-"}</td>
-        <td class="${item.side === "buy" ? "pf-side-buy" : "pf-side-sell"}">${item.side || "-"}</td>
+        <td class="${sideClass}">${side}</td>
         <td>${fmtNum(item.quantity, 4)}</td>
         <td>${fmtMoney(item.price)}</td>
         <td>${fmtMoney(item.delta_value)}</td>

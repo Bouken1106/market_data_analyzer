@@ -69,10 +69,18 @@ def _normalize_strategy_method(raw: str) -> str:
 
 def _normalize_rebalance_frequency(raw: str) -> str:
     value = str(raw or "").strip().lower()
-    aliases = {"daily": "daily", "weekly": "weekly", "monthly": "monthly"}
+    aliases = {
+        "daily": "daily",
+        "weekly": "weekly",
+        "monthly": "monthly",
+        "quarterly": "quarterly",
+    }
     normalized = aliases.get(value)
     if not normalized:
-        raise HTTPException(status_code=400, detail="rebalance_frequency must be daily, weekly, or monthly.")
+        raise HTTPException(
+            status_code=400,
+            detail="rebalance_frequency must be daily, weekly, monthly, or quarterly.",
+        )
     return normalized
 
 
@@ -82,7 +90,7 @@ def _build_trade_proposals(
     latest_prices: dict[str, float],
     portfolio_equity: float,
     min_trade_value: float,
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     current_qty: dict[str, float] = {}
     for position in current_positions:
         if not isinstance(position, dict):
@@ -100,6 +108,7 @@ def _build_trade_proposals(
         current_qty[symbol] = parsed_quantity
 
     proposals: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
     safe_equity = max(0.0, float(portfolio_equity))
     threshold = max(0.0, float(min_trade_value))
     for item in target_allocations:
@@ -119,15 +128,10 @@ def _build_trade_proposals(
 
         price = latest_prices.get(symbol)
         if not isinstance(price, (int, float)) or not math.isfinite(float(price)) or float(price) <= 0:
-            proposals.append(
+            skipped.append(
                 {
                     "symbol": symbol,
-                    "action": "hold",
                     "reason": "missing_market_price",
-                    "target_weight": weight,
-                    "target_value": None,
-                    "delta_shares": 0.0,
-                    "order_value": None,
                 }
             )
             continue
@@ -137,28 +141,32 @@ def _build_trade_proposals(
         current_value = current_shares * float(price)
         delta_value = target_value - current_value
         delta_shares = delta_value / float(price)
-        action = "hold"
+        side = "hold"
         if delta_shares > 1e-9:
-            action = "buy"
+            side = "buy"
         elif delta_shares < -1e-9:
-            action = "sell"
+            side = "sell"
         order_value = abs(delta_shares) * float(price)
         if order_value < threshold:
-            action = "hold"
+            side = "hold"
 
         proposals.append(
             {
                 "symbol": symbol,
-                "action": action,
+                "side": side,
                 "target_weight": weight,
+                "target_weight_pct": weight * 100.0,
                 "target_value": target_value,
                 "current_shares": current_shares,
+                "current_value": current_value,
                 "delta_shares": delta_shares,
+                "quantity": abs(delta_shares),
+                "delta_value": delta_value,
                 "order_value": order_value,
                 "price": float(price),
             }
         )
-    return proposals
+    return {"trades": proposals, "skipped": skipped}
 
 
 @router.post("/api/strategy/evaluate")
@@ -306,4 +314,3 @@ async def strategy_evaluate(
             "return_points": len(return_dates),
         },
     )
-
