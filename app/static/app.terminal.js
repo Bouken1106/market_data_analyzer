@@ -17,6 +17,9 @@ const marketOpenStateEl = document.getElementById("market-open-state");
 
 const watchlistEl = document.getElementById("watchlist");
 const watchlistHeadEl = document.getElementById("watchlist-head");
+const watchLlmTextEl = document.getElementById("watch-llm-text");
+const watchLlmMetaEl = document.getElementById("watch-llm-meta");
+const watchLlmRefreshBtn = document.getElementById("watch-llm-refresh");
 const symbolTabsEl = document.getElementById("symbol-tabs");
 const tabEmptyEl = document.getElementById("tab-empty");
 const symbolPanelEl = document.getElementById("symbol-panel");
@@ -92,11 +95,16 @@ let watchSortState = { key: "symbol", direction: "asc" };
 let openTabs = [];
 let activeTabSymbol = "";
 let draggingTabSymbol = "";
+let draggingTabPlacement = null;
 let symbolCatalog = [];
 let eventSource;
 let syncInFlight = false;
 let syncQueued = false;
 let marketClockTimer = null;
+let watchLlmInFlight = false;
+let watchLlmQueuedRefresh = false;
+let watchLlmLastSymbolsKey = "";
+let ignoreFirstEmptySymbolsEvent = false;
 let portfolioBaseState = null;
 let portfolioPollIntervalId = null;
 const PORTFOLIO_POLL_INTERVAL_MS = 300_000; // 5分
@@ -114,6 +122,9 @@ let chartPanState = {
   points: [],
   lastClientX: 0,
 };
+const SYMBOL_INSIGHTS_CACHE_KEY = "mda.symbol_insights.v1";
+const WATCHLIST_SYMBOLS_CACHE_KEY = "mda.watchlist_symbols.v1";
+const WATCHLIST_ROWS_CACHE_KEY = "mda.watchlist_rows.v1";
 
 const zoneFormatter = (timeZone) => new Intl.DateTimeFormat("en-US", {
   timeZone,
@@ -146,6 +157,27 @@ function uniqueSymbols(values) {
     out.push(symbol);
   });
   return out;
+}
+
+function upsertLatestRow(symbol, row, preserveOnInvalid = true) {
+  const normalized = normalizeSymbol(symbol);
+  if (!normalized) return;
+  const existing = latestRowsBySymbol.get(normalized);
+  const nextPriceNum = Number(row?.price);
+  const nextHasValidPrice = Number.isFinite(nextPriceNum) && nextPriceNum > 0;
+  const existingPriceNum = Number(existing?.price);
+  const existingHasValidPrice = Number.isFinite(existingPriceNum) && existingPriceNum > 0;
+
+  if (!nextHasValidPrice && preserveOnInvalid && existingHasValidPrice) {
+    return;
+  }
+
+  latestRowsBySymbol.set(normalized, {
+    symbol: normalized,
+    price: nextHasValidPrice ? nextPriceNum : null,
+    timestamp: row?.timestamp ?? existing?.timestamp ?? null,
+    source: row?.source ?? existing?.source ?? null,
+  });
 }
 
 function formatPrice(value) {
@@ -338,6 +370,202 @@ function setCatalogMeta(message) {
   catalogMetaEl.textContent = message || "";
 }
 
+function setWatchLlmComment(message, isError = false) {
+  if (!watchLlmTextEl) return;
+  watchLlmTextEl.textContent = message || "-";
+  watchLlmTextEl.classList.toggle("error", Boolean(isError));
+}
+
+function setWatchLlmMeta(message) {
+  if (!watchLlmMetaEl) return;
+  watchLlmMetaEl.textContent = message || "-";
+}
+
+function saveSymbolInsightsCache() {
+  try {
+    const items = [];
+    symbolInsightsBySymbol.forEach((value, symbol) => {
+      items.push({ symbol, ...value });
+    });
+    window.localStorage.setItem(
+      SYMBOL_INSIGHTS_CACHE_KEY,
+      JSON.stringify({ updated_at: new Date().toISOString(), items }),
+    );
+  } catch (_error) {
+    // ignore local cache errors
+  }
+}
+
+function saveWatchlistSymbolsCache(symbols = selectedSymbols) {
+  try {
+    const safeSymbols = uniqueSymbols(symbols).slice(0, MAX_SYMBOLS);
+    window.localStorage.setItem(
+      WATCHLIST_SYMBOLS_CACHE_KEY,
+      JSON.stringify({ updated_at: new Date().toISOString(), symbols: safeSymbols }),
+    );
+  } catch (_error) {
+    // ignore local cache errors
+  }
+}
+
+function saveWatchlistRowsCache() {
+  try {
+    const items = [];
+    latestRowsBySymbol.forEach((row, symbol) => {
+      const normalized = normalizeSymbol(symbol);
+      if (!normalized) return;
+      const priceNum = Number(row?.price);
+      if (!(Number.isFinite(priceNum) && priceNum > 0)) return;
+      items.push({
+        symbol: normalized,
+        price: priceNum,
+        timestamp: row?.timestamp ?? null,
+        source: row?.source ?? null,
+      });
+    });
+    window.localStorage.setItem(
+      WATCHLIST_ROWS_CACHE_KEY,
+      JSON.stringify({ updated_at: new Date().toISOString(), items }),
+    );
+  } catch (_error) {
+    // ignore local cache errors
+  }
+}
+
+function restoreWatchlistRowsCache() {
+  try {
+    const raw = window.localStorage.getItem(WATCHLIST_ROWS_CACHE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    const items = Array.isArray(parsed?.items) ? parsed.items : [];
+    items.forEach((item) => {
+      const symbol = normalizeSymbol(item?.symbol);
+      if (!symbol) return;
+      const priceNum = Number(item?.price);
+      latestRowsBySymbol.set(symbol, {
+        symbol,
+        price: Number.isFinite(priceNum) && priceNum > 0 ? priceNum : null,
+        timestamp: item?.timestamp ?? null,
+        source: item?.source ?? null,
+      });
+    });
+  } catch (_error) {
+    // ignore local cache errors
+  }
+}
+
+function restoreWatchlistSymbolsCache() {
+  try {
+    const raw = window.localStorage.getItem(WATCHLIST_SYMBOLS_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return uniqueSymbols(parsed?.symbols).slice(0, MAX_SYMBOLS);
+  } catch (_error) {
+    return [];
+  }
+}
+
+function restoreSymbolInsightsCache() {
+  try {
+    const raw = window.localStorage.getItem(SYMBOL_INSIGHTS_CACHE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    const items = Array.isArray(parsed?.items) ? parsed.items : [];
+    items.forEach((item) => {
+      const symbol = normalizeSymbol(item?.symbol);
+      if (!symbol) return;
+      const latestClose = Number(item?.latest_close);
+      const previousClose = Number(item?.previous_close);
+      const trend = (Array.isArray(item?.trend_30d) ? item.trend_30d : [])
+        .map((point) => Number(point))
+        .filter((num) => Number.isFinite(num));
+      symbolInsightsBySymbol.set(symbol, {
+        latest_close: Number.isFinite(latestClose) ? latestClose : null,
+        previous_close: Number.isFinite(previousClose) ? previousClose : null,
+        trend_30d: trend,
+      });
+    });
+  } catch (_error) {
+    // ignore local cache errors
+  }
+}
+
+async function refreshWatchlistCommentary(refresh = false) {
+  if (!watchLlmTextEl || !watchLlmMetaEl) return;
+  const symbols = uniqueSymbols(selectedSymbols).slice(0, MAX_SYMBOLS);
+  if (symbols.length < 2) {
+    watchLlmLastSymbolsKey = "";
+    setWatchLlmComment("2銘柄以上でコメントを表示します。");
+    setWatchLlmMeta(`モデル: ministral-3-3b`);
+    return;
+  }
+
+  const symbolsKey = symbols.join(",");
+  if (!refresh && !watchLlmInFlight && watchLlmLastSymbolsKey === symbolsKey) {
+    return;
+  }
+  if (watchLlmInFlight) {
+    watchLlmQueuedRefresh = watchLlmQueuedRefresh || refresh;
+    return;
+  }
+
+  watchLlmInFlight = true;
+  if (watchLlmRefreshBtn) watchLlmRefreshBtn.disabled = true;
+  setWatchLlmMeta("コメント生成中...");
+
+  try {
+    const params = new URLSearchParams({ symbols: symbols.join(",") });
+    if (refresh) params.set("refresh", "true");
+    const { response, result } = await fetchJson(`/api/watchlist-commentary?${params.toString()}`);
+    if (!response.ok) {
+      throw new Error(result.detail || "LLMコメントの生成に失敗しました。");
+    }
+
+    const comment = String(result?.comment || "").trim();
+    if (!comment) {
+      throw new Error("LLMコメントが空でした。");
+    }
+
+    setWatchLlmComment(comment);
+    const model = String(result?.model || "ministral-3-3b").trim() || "ministral-3-3b";
+    const updatedAt = formatDateTime(result?.generated_at);
+    setWatchLlmMeta(`${model} / ${updatedAt}`);
+    watchLlmLastSymbolsKey = symbolsKey;
+  } catch (error) {
+    setWatchLlmComment(error instanceof Error ? error.message : "LLMコメントの生成に失敗しました。", true);
+    setWatchLlmMeta("モデル: ministral-3-3b");
+  } finally {
+    watchLlmInFlight = false;
+    if (watchLlmRefreshBtn) watchLlmRefreshBtn.disabled = false;
+    if (watchLlmQueuedRefresh) {
+      const queuedNeedsRefresh = watchLlmQueuedRefresh;
+      watchLlmQueuedRefresh = false;
+      void refreshWatchlistCommentary(queuedNeedsRefresh);
+    }
+  }
+}
+
+async function loadSavedWatchlistCommentary() {
+  if (!watchLlmTextEl || !watchLlmMetaEl) return;
+  try {
+    const { response, result } = await fetchJson("/api/watchlist-commentary/latest");
+    if (!response.ok) return;
+    const comment = String(result?.comment || "").trim();
+    if (!comment) return;
+    const symbols = Array.isArray(result?.symbols) ? uniqueSymbols(result.symbols) : [];
+    if (symbols.length >= 2) {
+      const key = symbols.join(",");
+      if (key !== uniqueSymbols(selectedSymbols).join(",")) return;
+      watchLlmLastSymbolsKey = key;
+    }
+    setWatchLlmComment(comment);
+    const model = String(result?.model || "ministral-3-3b").trim() || "ministral-3-3b";
+    setWatchLlmMeta(`${model} / ${formatDateTime(result?.generated_at)}`);
+  } catch (_error) {
+    // ignore
+  }
+}
+
 function enableContextualScrollbar(target) {
   if (!(target instanceof HTMLElement)) return;
   target.classList.add("auto-scrollbar");
@@ -409,7 +637,7 @@ function computeChangePct(symbol, currentPrice, insight = symbolInsightsBySymbol
     ? latestClose
     : (Number.isFinite(previousClose) && previousClose > 0 ? previousClose : latestClose);
 
-  if (!Number.isFinite(priceNum) || !Number.isFinite(referenceClose) || referenceClose <= 0) {
+  if (!Number.isFinite(priceNum) || priceNum <= 0 || !Number.isFinite(referenceClose) || referenceClose <= 0) {
     return null;
   }
   return ((priceNum - referenceClose) / referenceClose) * 100;
@@ -558,11 +786,27 @@ function refreshWatchlist() {
 }
 
 function applySymbolsFromServer(symbols) {
-  selectedSymbols = uniqueSymbols(symbols).slice(0, MAX_SYMBOLS);
+  const normalized = uniqueSymbols(symbols).slice(0, MAX_SYMBOLS);
+  if (normalized.length === 0 && selectedSymbols.length > 0) {
+    // 空の更新イベントで既存ウォッチリストを消さない
+    return;
+  }
+  selectedSymbols = normalized;
+  saveWatchlistSymbolsCache(selectedSymbols);
   refreshWatchlist();
+  void loadSavedWatchlistCommentary();
   if (document.activeElement === symbolSearchInput) {
     renderDropdown();
   }
+}
+
+function extractSymbolsFromPayload(data) {
+  const fromStatus = Array.isArray(data?.status?.symbols) ? data.status.symbols : [];
+  if (fromStatus.length > 0) return uniqueSymbols(fromStatus).slice(0, MAX_SYMBOLS);
+  const fromSymbols = Array.isArray(data?.symbols) ? data.symbols : [];
+  if (fromSymbols.length > 0) return uniqueSymbols(fromSymbols).slice(0, MAX_SYMBOLS);
+  const rows = Array.isArray(data?.rows) ? data.rows : [];
+  return uniqueSymbols(rows.map((row) => row?.symbol)).slice(0, MAX_SYMBOLS);
 }
 
 function showDropdown() {
@@ -655,15 +899,14 @@ async function updateSymbolsOnServer() {
       rows.forEach((row) => {
         const symbol = normalizeSymbol(row?.symbol);
         if (!symbol) return;
-        latestRowsBySymbol.set(symbol, {
-          symbol,
+        upsertLatestRow(symbol, {
           price: row?.price ?? null,
           timestamp: row?.timestamp ?? null,
           source: row?.source ?? null,
         });
       });
+      saveWatchlistRowsCache();
       applySymbolsFromServer(serverSymbols);
-      await loadSymbolInsights(serverSymbols, false);
     } while (syncQueued);
   } finally {
     syncInFlight = false;
@@ -703,14 +946,22 @@ async function removeSymbol(symbol) {
   await updateSymbolsOnServer();
 }
 
-async function loadSymbolCatalog(refresh = false) {
+async function loadSymbolCatalog(refresh = false, cacheOnly = false) {
   refreshCatalogBtn.disabled = true;
-  setCatalogMeta(refresh ? "Refreshing symbol catalog..." : "Loading symbol catalog...");
+  if (cacheOnly) {
+    setCatalogMeta("Loading saved symbol catalog...");
+  } else {
+    setCatalogMeta(refresh ? "Refreshing symbol catalog..." : "Loading symbol catalog...");
+  }
 
   try {
-    const { response, result } = await fetchJson(
-      refresh ? "/api/symbol-catalog?refresh=true" : "/api/symbol-catalog",
-    );
+    let url = "/api/symbol-catalog";
+    if (refresh) {
+      url = "/api/symbol-catalog?refresh=true";
+    } else if (cacheOnly) {
+      url = "/api/symbol-catalog?cache_only=true";
+    }
+    const { response, result } = await fetchJson(url);
     if (!response.ok) {
       setCatalogMeta(result.detail || "Failed to load symbol catalog");
       return;
@@ -768,7 +1019,22 @@ async function loadSymbolInsights(symbols, refresh = false) {
         previous_close: Number.isFinite(previousClose) ? previousClose : null,
         trend_30d: trend,
       });
+
+      // 価格が未取得/0のときはスパークライン終値で表示を補完する
+      const existingRow = latestRowsBySymbol.get(symbol);
+      const hasValidPrice = Number(existingRow?.price) > 0;
+      if (!hasValidPrice && Number.isFinite(latestClose) && latestClose > 0) {
+        latestRowsBySymbol.set(symbol, {
+          ...(existingRow ?? {}),
+          symbol,
+          price: latestClose,
+          timestamp: item?.latest_close_date ?? existingRow?.timestamp ?? null,
+          source: existingRow?.source || "sparkline_close",
+        });
+        saveWatchlistRowsCache();
+      }
     });
+    saveSymbolInsightsCache();
   } catch (_error) {
     // Keep UI functional even if insight request fails.
   } finally {
@@ -833,6 +1099,47 @@ function clearTabDragVisualState() {
   symbolTabsEl.querySelectorAll(".symbol-tab").forEach((tab) => {
     tab.classList.remove("dragging", "drag-over-left", "drag-over-right");
   });
+}
+
+function getDropPlacement(clientX, dragSymbol = "") {
+  if (!symbolTabsEl) return null;
+  const tabs = Array.from(symbolTabsEl.querySelectorAll(".symbol-tab"));
+  const candidates = tabs.filter((tab) => (tab.dataset.symbol || "") !== dragSymbol);
+  const effectiveTabs = candidates.length ? candidates : tabs;
+  if (!effectiveTabs.length) return null;
+
+  for (const tab of effectiveTabs) {
+    const symbol = tab.dataset.symbol || "";
+    const rect = tab.getBoundingClientRect();
+    const withinTab = clientX >= rect.left && clientX <= rect.right;
+    if (!withinTab) continue;
+    return {
+      targetSymbol: symbol,
+      placeBefore: clientX < (rect.left + (rect.width / 2)),
+      tab,
+    };
+  }
+
+  // Handle gaps between tabs by choosing the nearest tab center.
+  let nearestTab = null;
+  let nearestDistance = Infinity;
+  effectiveTabs.forEach((tab) => {
+    const rect = tab.getBoundingClientRect();
+    const center = rect.left + (rect.width / 2);
+    const distance = Math.abs(clientX - center);
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestTab = tab;
+    }
+  });
+  if (!nearestTab) return null;
+  const targetSymbol = nearestTab.dataset.symbol || dragSymbol || "";
+  const rect = nearestTab.getBoundingClientRect();
+  return {
+    targetSymbol,
+    placeBefore: clientX < (rect.left + (rect.width / 2)),
+    tab: nearestTab,
+  };
 }
 
 function reorderOpenTabs(dragSymbol, targetSymbol, placeBefore) {
@@ -1416,16 +1723,21 @@ function handleEvent(event) {
     rows.forEach((row) => {
       const symbol = normalizeSymbol(row?.symbol);
       if (!symbol) return;
-      latestRowsBySymbol.set(symbol, {
-        symbol,
+      upsertLatestRow(symbol, {
         price: row?.price ?? null,
         timestamp: row?.timestamp ?? null,
         source: row?.source ?? null,
       });
     });
-    applySymbolsFromServer(rows.map((row) => row.symbol));
+    saveWatchlistRowsCache();
+    const symbols = extractSymbolsFromPayload(payload.data);
+    if (symbols.length === 0 && ignoreFirstEmptySymbolsEvent && selectedSymbols.length > 0) {
+      ignoreFirstEmptySymbolsEvent = false;
+      return;
+    }
+    ignoreFirstEmptySymbolsEvent = false;
+    applySymbolsFromServer(symbols);
     setStatus(payload.data?.status || {});
-    void loadSymbolInsights(selectedSymbols, false);
     renderPortfolio();
     return;
   }
@@ -1436,20 +1748,24 @@ function handleEvent(event) {
   }
 
   if (payload.type === "symbols") {
-    const symbols = Array.isArray(payload.data?.symbols) ? payload.data.symbols : [];
+    const symbols = extractSymbolsFromPayload(payload.data);
     const rows = Array.isArray(payload.data?.rows) ? payload.data.rows : [];
     rows.forEach((row) => {
       const symbol = normalizeSymbol(row?.symbol);
       if (!symbol) return;
-      latestRowsBySymbol.set(symbol, {
-        symbol,
+      upsertLatestRow(symbol, {
         price: row?.price ?? null,
         timestamp: row?.timestamp ?? null,
         source: row?.source ?? null,
       });
     });
+    saveWatchlistRowsCache();
+    if (symbols.length === 0 && ignoreFirstEmptySymbolsEvent && selectedSymbols.length > 0) {
+      ignoreFirstEmptySymbolsEvent = false;
+      return;
+    }
+    ignoreFirstEmptySymbolsEvent = false;
     applySymbolsFromServer(symbols);
-    void loadSymbolInsights(symbols, false);
     renderPortfolio();
     return;
   }
@@ -1457,12 +1773,12 @@ function handleEvent(event) {
   if (payload.type === "price") {
     const symbol = normalizeSymbol(payload.data?.symbol);
     if (!symbol) return;
-    latestRowsBySymbol.set(symbol, {
-      symbol,
+    upsertLatestRow(symbol, {
       price: payload.data?.price ?? null,
       timestamp: payload.data?.timestamp ?? null,
       source: payload.data?.source ?? null,
     });
+    saveWatchlistRowsCache();
     refreshWatchlist();
     renderPortfolio();
   }
@@ -2023,20 +2339,6 @@ async function loadPortfolioSilent() {
   }
 }
 
-function startPortfolioPolling() {
-  if (portfolioPollIntervalId !== null) return;
-  portfolioPollIntervalId = window.setInterval(async () => {
-    if (document.visibilityState === "hidden") return;
-    await loadPortfolioSilent();
-  }, PORTFOLIO_POLL_INTERVAL_MS);
-}
-
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") {
-    void loadPortfolioSilent();
-  }
-});
-
 symbolSearchInput.addEventListener("focus", () => {
   renderDropdown();
 });
@@ -2143,9 +2445,11 @@ symbolTabsEl.addEventListener("click", (event) => {
 });
 
 symbolTabsEl.addEventListener("dragstart", (event) => {
-  const tab = event.target.closest(".symbol-tab");
+  const target = event.target instanceof Element ? event.target : null;
+  const tab = target ? target.closest(".symbol-tab") : null;
   if (!tab) return;
   draggingTabSymbol = tab.dataset.symbol || "";
+  draggingTabPlacement = null;
   tab.classList.add("dragging");
   if (event.dataTransfer) {
     event.dataTransfer.effectAllowed = "move";
@@ -2155,35 +2459,35 @@ symbolTabsEl.addEventListener("dragstart", (event) => {
 
 symbolTabsEl.addEventListener("dragover", (event) => {
   if (!draggingTabSymbol) return;
-  const tab = event.target.closest(".symbol-tab");
-  if (!tab) return;
   event.preventDefault();
+  const placement = getDropPlacement(event.clientX, draggingTabSymbol);
+  if (!placement) return;
+  draggingTabPlacement = placement;
   clearTabDragVisualState();
-  const rect = tab.getBoundingClientRect();
-  const placeBefore = event.clientX < (rect.left + (rect.width / 2));
-  tab.classList.add(placeBefore ? "drag-over-left" : "drag-over-right");
+  placement.tab.classList.add(placement.placeBefore ? "drag-over-left" : "drag-over-right");
+  const draggingTab = symbolTabsEl.querySelector(`.symbol-tab[data-symbol="${draggingTabSymbol}"]`);
+  if (draggingTab) draggingTab.classList.add("dragging");
 });
 
 symbolTabsEl.addEventListener("drop", (event) => {
   if (!draggingTabSymbol) return;
   event.preventDefault();
-  const tab = event.target.closest(".symbol-tab");
-  if (tab) {
+  const placement = draggingTabPlacement || getDropPlacement(event.clientX, draggingTabSymbol);
+  if (placement) {
     const prevRects = captureTabRects();
-    const targetSymbol = tab.dataset.symbol || "";
-    const rect = tab.getBoundingClientRect();
-    const placeBefore = event.clientX < (rect.left + (rect.width / 2));
-    reorderOpenTabs(draggingTabSymbol, targetSymbol, placeBefore);
+    reorderOpenTabs(draggingTabSymbol, placement.targetSymbol, placement.placeBefore);
     renderTabs();
     animateTabReorder(prevRects);
   }
   clearTabDragVisualState();
   draggingTabSymbol = "";
+  draggingTabPlacement = null;
 });
 
 symbolTabsEl.addEventListener("dragend", () => {
   clearTabDragVisualState();
   draggingTabSymbol = "";
+  draggingTabPlacement = null;
 });
 
 window.addEventListener("mousemove", (event) => {
@@ -2396,13 +2700,61 @@ if (pfMlCancelBtn) {
   });
 }
 
-loadSymbolCatalog().catch(() => {
-  setCatalogMeta("Failed to load symbol catalog");
+setCatalogMeta("Loading saved symbol catalog...");
+restoreSymbolInsightsCache();
+restoreWatchlistRowsCache();
+const restoredWatchSymbols = restoreWatchlistSymbolsCache();
+if (restoredWatchSymbols.length > 0) {
+  ignoreFirstEmptySymbolsEvent = true;
+  selectedSymbols = restoredWatchSymbols;
+  refreshWatchlist();
+  void loadSavedWatchlistCommentary();
+  void loadSymbolInsights(restoredWatchSymbols, false);
+}
+
+async function hydrateInitialWatchlist() {
+  if (restoredWatchSymbols.length > 0) {
+    await updateSymbolsOnServer().catch(() => {
+      // ignore startup sync errors
+    });
+    return;
+  }
+  try {
+    const { response, result } = await fetchJson("/api/snapshot");
+    if (!response.ok || result?.type !== "snapshot") return;
+    const rows = Array.isArray(result?.data?.rows) ? result.data.rows : [];
+    rows.forEach((row) => {
+      const symbol = normalizeSymbol(row?.symbol);
+      if (!symbol) return;
+      upsertLatestRow(symbol, {
+        price: row?.price ?? null,
+        timestamp: row?.timestamp ?? null,
+        source: row?.source ?? null,
+      });
+    });
+    saveWatchlistRowsCache();
+    const symbols = extractSymbolsFromPayload(result?.data);
+    if (symbols.length > 0) {
+      applySymbolsFromServer(symbols);
+      void loadSymbolInsights(symbols, false);
+    }
+    setStatus(result?.data?.status || {});
+  } catch (_error) {
+    // ignore startup sync errors
+  }
+}
+loadSymbolCatalog(false, true).catch(() => {
+  setCatalogMeta("Symbol list is not loaded. Click Refresh Symbols when needed.");
 });
-connectEventStream();
+void hydrateInitialWatchlist().finally(() => {
+  connectEventStream();
+  window.setTimeout(() => {
+    if (selectedSymbols.length > 0) return;
+    void hydrateInitialWatchlist();
+  }, 1500);
+});
 startMarketClock();
 loadPortfolio();
-startPortfolioPolling();
 setPfMlActiveModel(pfMlActiveModelId);
 setPfMlActionState();
 loadPfMlModels();
@@ -2423,14 +2775,13 @@ async function refreshWatchlistData() {
   btn.textContent = "更新中…";
 
   try {
-    // sparkline を強制再取得 (latestClose / previousClose を最新化)
-    // refresh=true で 6時間キャッシュをバイパスして API から直接取得
-    const params = new URLSearchParams({ symbols: symbols.join(","), refresh: "true" });
-    const { response, result } = await fetchJson(`/api/sparkline?${params.toString()}`);
-    if (response.ok && Array.isArray(result.items)) {
-      result.items.forEach((item) => {
+    const refreshed = new Set();
+    const applyItems = (items) => {
+      if (!Array.isArray(items)) return;
+      items.forEach((item) => {
         const symbol = normalizeSymbol(item?.symbol);
         if (!symbol) return;
+        refreshed.add(symbol);
         const latestClose = Number(item?.latest_close);
         const previousClose = Number(item?.previous_close);
         const trend = (Array.isArray(item?.trend_30d) ? item.trend_30d : [])
@@ -2442,6 +2793,7 @@ async function refreshWatchlistData() {
           previous_close: Number.isFinite(previousClose) ? previousClose : null,
           trend_30d: trend,
         });
+        saveSymbolInsightsCache();
 
         // 現在価格が未取得の場合 → sparkline の latest_close を代替として使用
         // (市場CLOSED時は latest_close ≈ 現在価格)
@@ -2456,8 +2808,24 @@ async function refreshWatchlistData() {
             timestamp: item.latest_close_date ?? null,
             source: "sparkline_close",
           });
+          saveWatchlistRowsCache();
         }
       });
+    };
+
+    // まずは一括再取得。取りこぼした銘柄のみ個別再取得する。
+    const batchParams = new URLSearchParams({ symbols: symbols.join(","), refresh: "true" });
+    const batch = await fetchJson(`/api/sparkline?${batchParams.toString()}`);
+    if (batch.response.ok) {
+      applyItems(batch.result?.items);
+    }
+
+    const missing = symbols.filter((symbol) => !refreshed.has(symbol));
+    for (const symbol of missing) {
+      const params = new URLSearchParams({ symbols: symbol, refresh: "true" });
+      const single = await fetchJson(`/api/sparkline?${params.toString()}`);
+      if (!single.response.ok) continue;
+      applyItems(single.result?.items);
     }
   } catch (_err) {
     // ネットワークエラー等 - 失敗しても UI は壊さない
@@ -2467,8 +2835,13 @@ async function refreshWatchlistData() {
   }
 
   refreshWatchlist();
+  await refreshWatchlistCommentary(true);
 }
 
 document.getElementById("watchlist-refresh")?.addEventListener("click", () => {
   void refreshWatchlistData();
+});
+
+watchLlmRefreshBtn?.addEventListener("click", () => {
+  void refreshWatchlistCommentary(true);
 });

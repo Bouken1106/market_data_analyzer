@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from ..config import LOGGER, MAX_BASIC_SYMBOLS
+from ..config import AUTO_REFRESH_ON_STARTUP, LOGGER, MAX_BASIC_SYMBOLS
 from ..utils import fallback_interval_seconds, to_iso8601
 
 
@@ -52,6 +52,10 @@ class MarketDataStateMixin:
 
     async def start(self) -> None:
         await self._hydrate_prices_from_store(self.symbols)
+        if not AUTO_REFRESH_ON_STARTUP:
+            await self._set_mode("cached-only", False)
+            return
+
         self._worker_tasks = [
             asyncio.create_task(self._websocket_worker(), name="ws-worker"),
             asyncio.create_task(self._fallback_rest_worker(), name="rest-fallback-worker"),
@@ -101,6 +105,13 @@ class MarketDataStateMixin:
 
         async with self._state_lock:
             self.symbols = new_symbols
+
+        ui_state_store = getattr(self, "ui_state_store", None)
+        if ui_state_store is not None:
+            try:
+                ui_state_store.set_symbols(new_symbols)
+            except Exception as exc:
+                LOGGER.warning("Failed to persist symbols: %s", exc)
 
         await self._hydrate_prices_from_store(new_symbols)
         self._restart_ws_event.set()
@@ -203,4 +214,3 @@ class MarketDataStateMixin:
                     "timestamp": to_iso8601(cached.get("timestamp")),
                     "source": "stored",
                 }
-

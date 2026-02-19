@@ -43,8 +43,22 @@ class SymbolCatalogStore:
         self._loaded_epoch = 0.0
         self._lock = asyncio.Lock()
 
-    async def get_catalog(self, refresh: bool = False) -> dict[str, Any]:
+    async def get_catalog(self, refresh: bool = False, cache_only: bool = False) -> dict[str, Any]:
         async with self._lock:
+            if cache_only:
+                if self._symbols:
+                    self._loaded_from = "memory-cache"
+                    return self._payload()
+                cached = self._load_from_cache(require_fresh=False)
+                if cached:
+                    self._apply_state(cached["symbols"], cached["updated_at"], source="cache-only")
+                    return self._payload()
+                self._symbols = []
+                self._updated_at = None
+                self._loaded_from = "cache-miss"
+                self._loaded_epoch = time.time()
+                return self._payload()
+
             if not refresh and self._symbols and self._is_memory_fresh():
                 return self._payload()
 

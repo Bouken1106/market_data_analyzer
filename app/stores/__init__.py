@@ -5,6 +5,7 @@ from .fmp_reference import FmpReferenceStore
 from .last_price import LastPriceStore
 from .paper_portfolio import PaperPortfolioStore
 from .symbol_catalog import SymbolCatalogStore
+from .ui_state import UiStateStore
 
 __all__ = [
     "FullDailyHistoryStore",
@@ -12,4 +13,5 @@ __all__ = [
     "LastPriceStore",
     "PaperPortfolioStore",
     "SymbolCatalogStore",
+    "UiStateStore",
 ]

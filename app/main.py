@@ -20,6 +20,7 @@ from .config import (
     LAST_PRICE_CACHE_PATH,
     PAPER_INITIAL_CASH,
     PAPER_PORTFOLIO_CACHE_PATH,
+    UI_STATE_CACHE_PATH,
     FULL_DAILY_HISTORY_CACHE_DIR,
     MAX_BASIC_SYMBOLS,
     SYMBOL_CATALOG_CACHE_PATH,
@@ -35,6 +36,7 @@ from .stores import (
     LastPriceStore,
     PaperPortfolioStore,
     SymbolCatalogStore,
+    UiStateStore,
 )
 from .utils import normalize_symbols
 
@@ -81,15 +83,21 @@ symbol_catalog_store = SymbolCatalogStore(
     ttl_sec=SYMBOL_CATALOG_TTL_SEC,
 )
 ml_job_store = MlJobStore(max_jobs=120)
+ui_state_store = UiStateStore(cache_path=UI_STATE_CACHE_PATH)
+persisted_symbols = ui_state_store.get_symbols()
+initial_symbols = persisted_symbols if persisted_symbols else DEFAULT_SYMBOLS
+if not persisted_symbols:
+    ui_state_store.set_symbols(initial_symbols)
 
 hub = MarketDataHub(
     provider=DATA_PROVIDER,
     twelvedata_api_key=TWELVE_DATA_API_KEY,
     fmp_api_key=FMP_API_KEY,
-    symbols=DEFAULT_SYMBOLS,
+    symbols=initial_symbols,
     last_price_store=last_price_store,
     full_daily_history_store=full_daily_history_store,
     fmp_reference_store=fmp_reference_store,
+    ui_state_store=ui_state_store,
 )
 
 # ---------------------------------------------------------------------------
@@ -117,6 +125,7 @@ init_routes(
     symbol_catalog_store=symbol_catalog_store,
     ml_job_store=ml_job_store,
     paper_portfolio_store=paper_portfolio_store,
+    ui_state_store=ui_state_store,
 )
 
 
@@ -128,6 +137,7 @@ async def disable_monitor_asset_cache(request, call_next):
         "/",
         "/ml-lab",
         "/static/app.js",
+        "/static/app.terminal.js",
         "/static/ml_lab.js",
         "/static/page_menu.js",
         "/static/app.monitor.20260211b.js",

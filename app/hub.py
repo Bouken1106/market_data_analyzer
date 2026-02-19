@@ -34,6 +34,7 @@ class MarketDataHub(MarketDataRealtimeMixin, MarketDataQueriesMixin, MarketDataS
         last_price_store: LastPriceStore,
         full_daily_history_store: FullDailyHistoryStore,
         fmp_reference_store: FmpReferenceStore,
+        ui_state_store: Any | None = None,
     ) -> None:
         self.provider = str(provider or DATA_PROVIDER).strip().lower()
         self.twelvedata_api_key = str(twelvedata_api_key or "").strip()
@@ -46,6 +47,7 @@ class MarketDataHub(MarketDataRealtimeMixin, MarketDataQueriesMixin, MarketDataS
         self.last_price_store = last_price_store
         self.full_daily_history_store = full_daily_history_store
         self.fmp_reference_store = fmp_reference_store
+        self.ui_state_store = ui_state_store
         self.ws_connected = False
         self.last_ws_message_at = 0.0
         self.mode = "starting"

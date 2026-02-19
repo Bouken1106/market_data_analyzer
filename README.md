@@ -75,6 +75,11 @@ FULL_HISTORY_MAX_CHUNKS=20
 DAILY_DIFF_MIN_RECHECK_SEC=21600
 BETA_MARKET_RECHECK_SEC=86400
 PAPER_INITIAL_CASH=1000000
+LMSTUDIO_BASE_URL=http://127.0.0.1:1234/v1
+LMSTUDIO_CHAT_COMPLETIONS_URL=http://127.0.0.1:1234/v1/chat/completions
+LMSTUDIO_MODEL=ministral-3-3b
+LMSTUDIO_API_KEY=
+LMSTUDIO_TIMEOUT_SEC=25
 ```
 
 プロバイダー切替:
@@ -143,6 +148,9 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
    - 売買コスト: 手数料bps + スリッページbps を日次バックテストに反映
    - サマリー: CAGR, Total Return, Volatility, Sharpe, Max Drawdown, ベンチマーク比較
    - 現在の Paper Portfolio 状態を使ったリバランス提案（売買方向・数量・金額差分）
+11. `/` の右側パネル上部に Watchlist Comment を表示
+   - LM Studio (`LMSTUDIO_MODEL=ministral-3-3b`) に、監視中銘柄の前日比/30日リターン/30日ボラティリティを渡して短評を生成
+   - 右上の `↻` ボタンで、指標再取得 + コメント再生成
 
 補足:
 - 起動時に `/api_usage` を1回呼び、日次残量を初期化します（1クレジット消費）。
@@ -191,6 +199,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `POST /api/security-overview/{symbol}/clear-cache`: 当該銘柄の詳細キャッシュを削除
 - `GET /api/fmp-reference/{symbol}`: FMPの企業情報・財務・コーポレートアクションを取得（`refresh=true`で再取得）
 - `POST /api/fmp-reference/{symbol}/clear-cache`: FMP reference キャッシュを削除
+- `GET /api/watchlist-commentary?symbols=AAPL,AMZN,...`: 監視銘柄の前日比/30日リターン/30日ボラを計算し、LM Studioで短評を生成
 - `GET /api/ml/models`: ML Forecast Lab のモデル一覧（Ready / Coming Soon）
 - `GET /api/ml/quantile-lstm?...`: Quantile LSTM を学習・推論し、分位点/評価/描画データを返却（`months=3..60`, デフォルト `60`）
 - `GET /api/ml/patchtst?...`: PatchTST Quantile を学習・推論し、分位点/評価/描画データを返却（`months=3..60`, デフォルト `60`）

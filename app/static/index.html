@@ -7,7 +7,7 @@
   <title>Market Data Analyzer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="/static/styles.css?v=20260213n" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260219a" />
 </head>
 
 <body class="monitor-page terminal-page">
@@ -42,6 +42,17 @@
       </div>
       <p id="catalog-meta" class="hint">Loading symbol catalog...</p>
       <p id="selection-error" class="hint error"></p>
+
+      <details id="watch-llm-panel" class="watch-llm-panel" aria-label="ウォッチリスト短評">
+        <summary class="watch-llm-summary">
+          <span class="watch-llm-title">Watchlist Comment</span>
+        </summary>
+        <div class="watch-llm-head">
+          <button id="watch-llm-refresh" type="button" class="minor-action watch-llm-refresh" title="コメントを再生成">↻ 再生成</button>
+        </div>
+        <p id="watch-llm-text" class="watch-llm-text">2銘柄以上でコメントを表示します。</p>
+        <p id="watch-llm-meta" class="watch-llm-meta">モデル: ministral-3-3b</p>
+      </details>
 
       <div id="watchlist-head" class="watchlist-head" aria-label="ウィックリスト列ヘッダー">
         <button type="button" class="watch-sort-btn watch-sort-symbol" data-sort-key="symbol">銘柄</button>
@@ -126,7 +137,8 @@
       </article>
     </section>
 
-    <section class="terminal-pane trade-pane" aria-label="仮想トレード">
+    <div class="trade-column">
+      <section class="terminal-pane trade-pane" aria-label="仮想トレード">
       <header class="pane-head">
         <h2>仮想トレード</h2>
         <p class="pane-sub">Paper Portfolio</p>
@@ -241,10 +253,11 @@
           </table>
         </div>
       </section>
-    </section>
+      </section>
+    </div>
   </main>
 
-  <script src="/static/app.terminal.js?v=20260219a" defer></script>
+  <script src="/static/app.terminal.js?v=20260219i" defer></script>
   <script src="/static/page_menu.20260211b.js?v=20260213i" defer></script>
 </body>
 

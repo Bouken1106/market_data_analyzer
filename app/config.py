@@ -33,6 +33,11 @@ def _float_env(name: str, default: float, minimum: float) -> float:
     return max(minimum, value)
 
 
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "1" if default else "0").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 # ---------------------------------------------------------------------------
 # Logger
 # ---------------------------------------------------------------------------
@@ -118,7 +123,9 @@ LAST_PRICE_CACHE_PATH = _APP_DIR / "cache" / "last_prices.json"
 FULL_DAILY_HISTORY_CACHE_DIR = _APP_DIR / "cache" / "daily_history"
 FMP_REFERENCE_CACHE_DIR = _APP_DIR / "cache" / "fmp_reference"
 PAPER_PORTFOLIO_CACHE_PATH = _APP_DIR / "cache" / "paper_portfolio.json"
+UI_STATE_CACHE_PATH = _APP_DIR / "cache" / "ui_state.json"
 PAPER_INITIAL_CASH = _float_env("PAPER_INITIAL_CASH", default=1_000_000, minimum=1)
+AUTO_REFRESH_ON_STARTUP = _bool_env("AUTO_REFRESH_ON_STARTUP", default=False)
 
 # ---------------------------------------------------------------------------
 # Historical data
@@ -157,6 +164,19 @@ FMP_SPLITS_URL = "https://financialmodelingprep.com/stable/splits"
 OVERVIEW_CACHE_TTL_SEC = _int_env("OVERVIEW_CACHE_TTL_SEC", default=120, minimum=10)
 SPARKLINE_CACHE_TTL_SEC = _int_env("SPARKLINE_CACHE_TTL_SEC", default=21600, minimum=300)
 SPARKLINE_POINTS = _int_env("SPARKLINE_POINTS", default=30, minimum=10)
+
+# ---------------------------------------------------------------------------
+# Local LLM (LM Studio)
+# ---------------------------------------------------------------------------
+
+LMSTUDIO_BASE_URL = os.getenv("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1").strip().rstrip("/")
+LMSTUDIO_CHAT_COMPLETIONS_URL = os.getenv(
+    "LMSTUDIO_CHAT_COMPLETIONS_URL",
+    f"{LMSTUDIO_BASE_URL}/chat/completions",
+).strip()
+LMSTUDIO_MODEL = os.getenv("LMSTUDIO_MODEL", "ministral-3-3b").strip() or "ministral-3-3b"
+LMSTUDIO_API_KEY = os.getenv("LMSTUDIO_API_KEY", "").strip()
+LMSTUDIO_TIMEOUT_SEC = _float_env("LMSTUDIO_TIMEOUT_SEC", default=25.0, minimum=3.0)
 
 # ---------------------------------------------------------------------------
 # ML defaults
