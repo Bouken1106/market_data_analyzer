@@ -31,10 +31,13 @@
       <header class="pane-head">
         <h1>ウィックリスト</h1>
         <span class="pane-sub">最大8銘柄</span>
+        <button id="watchlist-refresh" type="button" class="minor-action watchlist-refresh-btn"
+          title="株価と前日比を最新データで更新">↻ 更新</button>
       </header>
 
       <div id="symbol-search-area" class="terminal-search">
-        <input id="symbol-search" name="symbol-search" type="text" autocomplete="off" placeholder="銘柄検索 (AAPL, MSFT...)" />
+        <input id="symbol-search" name="symbol-search" type="text" autocomplete="off"
+          placeholder="銘柄検索 (AAPL, MSFT...)" />
         <div id="symbol-dropdown" class="symbol-dropdown hidden"></div>
       </div>
       <p id="catalog-meta" class="hint">Loading symbol catalog...</p>
@@ -175,6 +178,7 @@
               <tr>
                 <th>Symbol</th>
                 <th>Qty</th>
+                <th>Avg Cost</th>
                 <th>Last</th>
                 <th>Unrealized</th>
               </tr>
@@ -206,12 +210,7 @@
         <div class="pf-ml-controls">
           <label for="pf-ml-model-search">Model</label>
           <div id="pf-ml-model-search-area" class="symbol-search-area">
-            <input
-              id="pf-ml-model-search"
-              type="text"
-              placeholder="Search model: lstm, patch..."
-              autocomplete="off"
-            />
+            <input id="pf-ml-model-search" type="text" placeholder="Search model: lstm, patch..." autocomplete="off" />
             <div id="pf-ml-model-dropdown" class="symbol-dropdown hidden"></div>
           </div>
           <div class="row pf-ml-actions">
@@ -235,7 +234,9 @@
               </tr>
             </thead>
             <tbody id="pf-ml-results-body">
-              <tr><td colspan="6" class="pf-empty">No calculation yet</td></tr>
+              <tr>
+                <td colspan="6" class="pf-empty">No calculation yet</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -243,7 +244,7 @@
     </section>
   </main>
 
-  <script src="/static/app.terminal.js?v=20260213m" defer></script>
+  <script src="/static/app.terminal.js?v=20260219a" defer></script>
   <script src="/static/page_menu.20260211b.js?v=20260213i" defer></script>
 </body>
 

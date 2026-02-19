@@ -98,6 +98,8 @@ let syncInFlight = false;
 let syncQueued = false;
 let marketClockTimer = null;
 let portfolioBaseState = null;
+let portfolioPollIntervalId = null;
+const PORTFOLIO_POLL_INTERVAL_MS = 300_000; // 5分
 let pfMlModels = [
   { id: "quantile_lstm", name: "Quantile LSTM", status_label: "Ready" },
   { id: "patchtst_quantile", name: "PatchTST Quantile", status_label: "Ready" },
@@ -401,6 +403,8 @@ function computeChangePct(symbol, currentPrice, insight = symbolInsightsBySymbol
   const latestClose = Number(insight?.latest_close);
   const previousClose = Number(insight?.previous_close);
   const marketIsOpen = openSymbolsSet.has(symbol);
+  // 市場OPEN中: 現在価格 vs 直近終値 (当日の日中変化)
+  // 市場CLOSED: 直近終値 vs 前日終値 (当日セッションの変化)
   const referenceClose = marketIsOpen
     ? latestClose
     : (Number.isFinite(previousClose) && previousClose > 0 ? previousClose : latestClose);
@@ -440,7 +444,7 @@ function computeWatchMetrics(symbol) {
   const price = Number(latest?.price);
   const pct = computeChangePct(symbol, latest?.price);
   return {
-    price: Number.isFinite(price) ? price : null,
+    price: price > 0 ? price : null,
     changePct: Number.isFinite(pct) ? pct : null,
   };
 }
@@ -1855,15 +1859,18 @@ function buildPortfolioView(baseState) {
     const rowPnl = Number.isFinite(lastPrice)
       ? (quantity > 0 ? (lastPrice - avgCost) * absQty : (avgCost - lastPrice) * absQty)
       : null;
+    const rowPnlPct = (Number.isFinite(rowPnl) && rowCostBasis > 0) ? (rowPnl / rowCostBasis) * 100 : null;
 
     if (Number.isFinite(rowMarketValue)) marketValue += rowMarketValue;
     costBasis += rowCostBasis;
 
-      positions.push({
-        symbol,
-        quantity,
-        last_price: lastPrice,
-        unrealized_pnl: rowPnl,
+    positions.push({
+      symbol,
+      quantity,
+      avg_cost: avgCost,
+      last_price: lastPrice,
+      unrealized_pnl: rowPnl,
+      unrealized_pnl_pct: rowPnlPct,
     });
   });
 
@@ -1917,7 +1924,7 @@ function renderPortfolio() {
   if (view.positions.length === 0) {
     const tr = document.createElement("tr");
     const td = document.createElement("td");
-    td.colSpan = 4;
+    td.colSpan = 5;
     td.className = "pf-empty";
     td.textContent = "No positions";
     tr.appendChild(td);
@@ -1925,18 +1932,32 @@ function renderPortfolio() {
   } else {
     view.positions.forEach((item) => {
       const tr = document.createElement("tr");
+      const pnl = Number(item.unrealized_pnl);
+      const pnlPct = Number(item.unrealized_pnl_pct);
+      if (Number.isFinite(pnl)) {
+        tr.classList.toggle("pf-row-positive", pnl > 0);
+        tr.classList.toggle("pf-row-negative", pnl < 0);
+      }
+      let unrealizedText = "-";
+      if (Number.isFinite(pnl)) {
+        unrealizedText = formatSigned(pnl, 2);
+        if (Number.isFinite(pnlPct)) {
+          unrealizedText += ` (${formatSignedPercent(pnlPct)})`;
+        }
+      }
       const cells = [
         item.symbol,
         Number(item.quantity).toFixed(4).replace(/\.?0+$/, ""),
+        Number.isFinite(item.avg_cost) ? `$ ${formatMoney(item.avg_cost)}` : "-",
         Number.isFinite(item.last_price) ? `$ ${formatMoney(item.last_price)}` : "-",
-        Number.isFinite(item.unrealized_pnl) ? formatSigned(item.unrealized_pnl, 2) : "-",
+        unrealizedText,
       ];
       cells.forEach((text, idx) => {
         const td = document.createElement("td");
         td.textContent = text;
-        if (idx === 3) {
-          td.classList.toggle("pf-positive", Number(item.unrealized_pnl) > 0);
-          td.classList.toggle("pf-negative", Number(item.unrealized_pnl) < 0);
+        if (idx === 4) {
+          td.classList.toggle("pf-positive", pnl > 0);
+          td.classList.toggle("pf-negative", pnl < 0);
         }
         tr.appendChild(td);
       });
@@ -1990,6 +2011,31 @@ async function loadPortfolio() {
     setPortfolioMessage("Failed to load portfolio.", true);
   }
 }
+
+async function loadPortfolioSilent() {
+  try {
+    const { response, result } = await fetchJson("/api/portfolio");
+    if (!response.ok) return;
+    portfolioBaseState = result;
+    renderPortfolio();
+  } catch (_error) {
+    // silent – periodic refresh, do not show error message
+  }
+}
+
+function startPortfolioPolling() {
+  if (portfolioPollIntervalId !== null) return;
+  portfolioPollIntervalId = window.setInterval(async () => {
+    if (document.visibilityState === "hidden") return;
+    await loadPortfolioSilent();
+  }, PORTFOLIO_POLL_INTERVAL_MS);
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    void loadPortfolioSilent();
+  }
+});
 
 symbolSearchInput.addEventListener("focus", () => {
   renderDropdown();
@@ -2356,9 +2402,73 @@ loadSymbolCatalog().catch(() => {
 connectEventStream();
 startMarketClock();
 loadPortfolio();
+startPortfolioPolling();
 setPfMlActiveModel(pfMlActiveModelId);
 setPfMlActionState();
 loadPfMlModels();
 enableContextualScrollbar(watchlistEl);
 enableContextualScrollbar(centerPaneEl);
 renderActiveTab();
+
+// ウォッチリスト更新ボタン
+async function refreshWatchlistData() {
+  const btn = document.getElementById("watchlist-refresh");
+  if (!btn || btn.disabled) return;
+
+  const symbols = uniqueSymbols(selectedSymbols);
+  if (symbols.length === 0) return;
+
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = "更新中…";
+
+  try {
+    // sparkline を強制再取得 (latestClose / previousClose を最新化)
+    // refresh=true で 6時間キャッシュをバイパスして API から直接取得
+    const params = new URLSearchParams({ symbols: symbols.join(","), refresh: "true" });
+    const { response, result } = await fetchJson(`/api/sparkline?${params.toString()}`);
+    if (response.ok && Array.isArray(result.items)) {
+      result.items.forEach((item) => {
+        const symbol = normalizeSymbol(item?.symbol);
+        if (!symbol) return;
+        const latestClose = Number(item?.latest_close);
+        const previousClose = Number(item?.previous_close);
+        const trend = (Array.isArray(item?.trend_30d) ? item.trend_30d : [])
+          .map((point) => Number(point))
+          .filter((num) => Number.isFinite(num));
+
+        symbolInsightsBySymbol.set(symbol, {
+          latest_close: Number.isFinite(latestClose) ? latestClose : null,
+          previous_close: Number.isFinite(previousClose) ? previousClose : null,
+          trend_30d: trend,
+        });
+
+        // 現在価格が未取得の場合 → sparkline の latest_close を代替として使用
+        // (市場CLOSED時は latest_close ≈ 現在価格)
+        // SSEがすでに有効な価格を持っている場合は上書きしない
+        const existingRow = latestRowsBySymbol.get(symbol);
+        const hasValidPrice = existingRow && Number(existingRow.price) > 0;
+        if (!hasValidPrice && Number.isFinite(latestClose) && latestClose > 0) {
+          latestRowsBySymbol.set(symbol, {
+            ...(existingRow ?? {}),
+            symbol,
+            price: latestClose,
+            timestamp: item.latest_close_date ?? null,
+            source: "sparkline_close",
+          });
+        }
+      });
+    }
+  } catch (_err) {
+    // ネットワークエラー等 - 失敗しても UI は壊さない
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+
+  refreshWatchlist();
+}
+
+document.getElementById("watchlist-refresh")?.addEventListener("click", () => {
+  void refreshWatchlistData();
+});

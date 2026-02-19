@@ -171,6 +171,8 @@ class MarketDataStateMixin:
     async def _hydrate_prices_from_store(self, symbols: list[str]) -> None:
         if not symbols:
             return
+        MAX_CACHED_PRICE_AGE_SEC = 7 * 24 * 3600  # 7日以上古いキャッシュ価格は使わない
+        now = datetime.now(timezone.utc).timestamp()
         async with self._state_lock:
             for symbol in symbols:
                 if symbol in self.prices:
@@ -178,9 +180,27 @@ class MarketDataStateMixin:
                 cached = self.last_price_store.get(symbol)
                 if not cached:
                     continue
+                # タイムスタンプが古すぎるキャッシュは無視してAPIから新鮮な価格を取得させる
+                raw_ts = cached.get("timestamp")
+                if raw_ts:
+                    try:
+                        ts_epoch = datetime.fromisoformat(
+                            str(raw_ts).replace("Z", "+00:00")
+                        ).astimezone(timezone.utc).timestamp()
+                        if (now - ts_epoch) > MAX_CACHED_PRICE_AGE_SEC:
+                            LOGGER.info(
+                                "Skipping stale cached price for %s (age %.0fh > %dh)",
+                                symbol,
+                                (now - ts_epoch) / 3600,
+                                MAX_CACHED_PRICE_AGE_SEC // 3600,
+                            )
+                            continue
+                    except (ValueError, TypeError):
+                        pass  # タイムスタンプが解析できない場合はそのまま使用
                 self.prices[symbol] = {
                     "symbol": symbol,
                     "price": cached.get("price"),
                     "timestamp": to_iso8601(cached.get("timestamp")),
                     "source": "stored",
                 }
+
