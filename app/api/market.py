@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -25,6 +26,35 @@ from ..utils import normalize_symbols, ok_json_response
 from .deps import HubDep, SymbolCatalogStoreDep, UiStateStoreDep
 
 router = APIRouter()
+_WATCHLIST_MAX_COMMENT_LEN = 80
+_JSON_DECODER = json.JSONDecoder()
+_WATCHLIST_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "watchlist_commentary",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "picks": {
+                    "type": "array",
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "symbol": {"type": "string"},
+                            "comment": {"type": "string"},
+                        },
+                        "required": ["symbol", "comment"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["picks"],
+            "additionalProperties": False,
+        },
+    },
+}
 
 
 def _safe_float(value: Any) -> float | None:
@@ -109,70 +139,245 @@ def _build_watchlist_prompt(current_date: str, metrics: list[dict[str, Any]]) ->
     lines.extend(
         [
             "",
-            "これらの銘柄の中から2つ特徴的な銘柄を選び、それらに対する情報を一言で短くまとめて下さい。"
-            "(与えられてない情報を用いた分析は不要で、まとめの文章のみ書け)",
+            "上記の銘柄だけを対象に、特徴的な2銘柄を選ぶ。",
+            "必ずJSONのみで返すこと。形式:",
+            '{"picks":[{"symbol":"AAPL","comment":"..."} , {"symbol":"NVDA","comment":"..."}]}',
+            "制約: symbolは表内の銘柄のみ、commentは日本語1文、簡潔、余計な説明禁止。",
         ]
     )
     return "\n".join(lines)
 
 
-async def _request_lmstudio_commentary(prompt: str) -> str:
+def _extract_first_json_object(raw_text: str) -> dict[str, Any] | None:
+    for idx, char in enumerate(raw_text):
+        if char != "{":
+            continue
+        try:
+            parsed, _ = _JSON_DECODER.raw_decode(raw_text[idx:])
+        except ValueError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _normalize_comment_line(text: str) -> str:
+    compact = " ".join(str(text).replace("\r", "\n").split())
+    compact = re.sub(r"[*_`>#]+", "", compact).strip()
+    return compact[:_WATCHLIST_MAX_COMMENT_LEN].strip()
+
+
+def _commentary_from_json(raw_text: str, valid_symbols: list[str]) -> str | None:
+    payload = _extract_first_json_object(raw_text)
+    if not isinstance(payload, dict):
+        return None
+
+    picks = payload.get("picks")
+    if not isinstance(picks, list):
+        return None
+
+    symbol_set = {symbol.upper() for symbol in valid_symbols}
+    selected: list[str] = []
+    used_symbols: set[str] = set()
+    for item in picks:
+        if not isinstance(item, dict):
+            continue
+        symbol = str(item.get("symbol") or "").strip().upper()
+        if symbol not in symbol_set or symbol in used_symbols:
+            continue
+        comment = _normalize_comment_line(item.get("comment") or "")
+        if not comment:
+            continue
+        selected.append(f"{symbol}: {comment}")
+        used_symbols.add(symbol)
+        if len(selected) >= 2:
+            break
+
+    if len(selected) < 2:
+        return None
+    return "\n".join(selected)
+
+
+def _fallback_commentary(raw_text: str, valid_symbols: list[str]) -> str:
+    symbol_set = {symbol.upper() for symbol in valid_symbols}
+    lines = [line.strip() for line in str(raw_text).replace("\r", "\n").split("\n")]
+
+    accepted: list[str] = []
+    used_symbols: set[str] = set()
+    for raw_line in lines:
+        if not raw_line:
+            continue
+        lowered = raw_line.lower()
+        if lowered.startswith(("alright", "i need to", "let me", "first,", "first ", "second,", "third,")):
+            continue
+
+        tokens = re.findall(r"[A-Z]{1,6}(?:\.[A-Z]{1,5})?", raw_line.upper())
+        symbol = ""
+        for token in tokens:
+            if token in symbol_set and token not in used_symbols:
+                symbol = token
+                break
+        if not symbol:
+            continue
+
+        line = _normalize_comment_line(raw_line)
+        if not line:
+            continue
+        accepted.append(f"{symbol}: {line}")
+        used_symbols.add(symbol)
+        if len(accepted) >= 2:
+            break
+
+    if len(accepted) >= 2:
+        return "\n".join(accepted)
+    if accepted:
+        return accepted[0]
+    return "コメントの整形に失敗しました。再実行してください。"
+
+
+async def _request_lmstudio_commentary(prompt: str, valid_symbols: list[str]) -> tuple[str, str]:
     headers = {"Content-Type": "application/json"}
     if LMSTUDIO_API_KEY:
         headers["Authorization"] = f"Bearer {LMSTUDIO_API_KEY}"
 
-    payload = {
-        "model": LMSTUDIO_MODEL,
-        "messages": [
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ],
-        "temperature": 0.2,
-        "max_tokens": 200,
-    }
-
     timeout = httpx.Timeout(LMSTUDIO_TIMEOUT_SEC, connect=min(10.0, LMSTUDIO_TIMEOUT_SEC))
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(LMSTUDIO_CHAT_COMPLETIONS_URL, json=payload, headers=headers)
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"LM Studio request failed: {exc}") from exc
+    base_messages = [
+        {
+            "role": "system",
+            "content": (
+                "あなたは株式ウォッチリスト要約アシスタントです。"
+                "思考過程や分析手順は一切出力しない。"
+                "常にJSONのみを返す。"
+                '形式は {"picks":[{"symbol":"...","comment":"..."},{"symbol":"...","comment":"..."}]} のみ。'
+            ),
+        },
+        {
+            "role": "user",
+            "content": prompt,
+        },
+    ]
 
-    try:
-        result = response.json()
-    except ValueError:
-        result = {}
+    async def _chat(
+        messages: list[dict[str, str]],
+        *,
+        max_tokens: int,
+        response_format: dict[str, Any] | None,
+    ) -> tuple[str, int, str | None, str]:
+        payload: dict[str, Any] = {
+            "model": LMSTUDIO_MODEL,
+            "messages": messages,
+            "temperature": 0.2,
+            "max_tokens": max_tokens,
+        }
+        if response_format is not None:
+            payload["response_format"] = response_format
 
-    if response.status_code >= 400:
-        detail: str | None = None
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(LMSTUDIO_CHAT_COMPLETIONS_URL, json=payload, headers=headers)
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail=f"LM Studio request failed: {exc}") from exc
+
+        try:
+            result = response.json()
+        except ValueError:
+            result = {}
+
+        error_message: str | None = None
         if isinstance(result, dict):
             error = result.get("error")
             if isinstance(error, dict):
-                detail = str(error.get("message") or "").strip() or None
+                error_message = str(error.get("message") or "").strip() or None
             elif isinstance(error, str):
-                detail = error.strip() or None
-            if detail is None:
-                detail = str(result.get("detail") or "").strip() or None
+                error_message = error.strip() or None
+            if error_message is None:
+                error_message = str(result.get("detail") or "").strip() or None
+
+        if response.status_code >= 400:
+            return "", response.status_code, error_message, LMSTUDIO_MODEL
+
+        if not isinstance(result, dict):
+            raise HTTPException(status_code=502, detail="LM Studio returned an invalid response format.")
+        choices = result.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise HTTPException(status_code=502, detail="LM Studio response does not include choices.")
+
+        model_name = str(result.get("model") or "").strip() or LMSTUDIO_MODEL
+        first = choices[0] if isinstance(choices[0], dict) else {}
+        message = first.get("message") if isinstance(first, dict) else {}
+        content = message.get("content") if isinstance(message, dict) else None
+        return str(content or "").strip(), response.status_code, None, model_name
+
+    raw_commentary, status_code, error_detail, used_model = await _chat(
+        base_messages,
+        max_tokens=320,
+        response_format=_WATCHLIST_RESPONSE_FORMAT,
+    )
+    if status_code >= 400:
+        # Some LM Studio model backends ignore or reject response_format; retry without it.
+        if status_code in {400, 404, 422}:
+            raw_commentary, status_code, error_detail, used_model = await _chat(
+                base_messages,
+                max_tokens=320,
+                response_format=None,
+            )
+        if status_code >= 400:
+            raise HTTPException(
+                status_code=502,
+                detail=f"LM Studio error: {error_detail or f'HTTP {status_code}'}",
+            )
+
+    if not raw_commentary:
+        raise HTTPException(status_code=502, detail="LM Studio returned an empty commentary.")
+
+    commentary = _commentary_from_json(raw_commentary, valid_symbols)
+    if commentary:
+        return commentary, used_model
+
+    repair_messages = [
+        {
+            "role": "system",
+            "content": (
+                "あなたはJSON整形器です。"
+                "入力文を要約し、指定形式JSONのみを返す。"
+                "説明文や前置きは出力禁止。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "有効な銘柄: "
+                + ",".join(valid_symbols)
+                + "\n次の文章を2銘柄の短評JSONへ整形してください。"
+                + '\n形式: {"picks":[{"symbol":"...","comment":"..."},{"symbol":"...","comment":"..."}]}'
+                + "\n文章:\n"
+                + raw_commentary
+            ),
+        },
+    ]
+    repaired_commentary, repair_status, repair_error, repair_model = await _chat(
+        repair_messages,
+        max_tokens=220,
+        response_format=_WATCHLIST_RESPONSE_FORMAT,
+    )
+    if repair_status >= 400 and repair_status in {400, 404, 422}:
+        repaired_commentary, repair_status, repair_error, repair_model = await _chat(
+            repair_messages,
+            max_tokens=220,
+            response_format=None,
+        )
+    if repair_status < 400:
+        repaired = _commentary_from_json(repaired_commentary, valid_symbols)
+        if repaired:
+            return repaired, repair_model
+
+    if repair_status >= 400 and not raw_commentary:
         raise HTTPException(
             status_code=502,
-            detail=f"LM Studio error: {detail or f'HTTP {response.status_code}'}",
+            detail=f"LM Studio error: {repair_error or f'HTTP {repair_status}'}",
         )
 
-    if not isinstance(result, dict):
-        raise HTTPException(status_code=502, detail="LM Studio returned an invalid response format.")
-    choices = result.get("choices")
-    if not isinstance(choices, list) or not choices:
-        raise HTTPException(status_code=502, detail="LM Studio response does not include choices.")
-
-    first = choices[0] if isinstance(choices[0], dict) else {}
-    message = first.get("message") if isinstance(first, dict) else {}
-    content = message.get("content") if isinstance(message, dict) else None
-    commentary = str(content or "").strip()
-    if not commentary:
-        raise HTTPException(status_code=502, detail="LM Studio returned an empty commentary.")
-    return commentary
+    return _fallback_commentary(raw_commentary, valid_symbols), used_model
 
 
 @router.get("/api/snapshot")
@@ -333,12 +538,12 @@ async def watchlist_commentary(
     ]
     current_date = datetime.now(timezone.utc).astimezone().date().isoformat()
     prompt = _build_watchlist_prompt(current_date=current_date, metrics=metrics)
-    commentary = await _request_lmstudio_commentary(prompt)
+    commentary, used_model = await _request_lmstudio_commentary(prompt, target_symbols)
 
     payload = {
         "symbols": target_symbols,
         "current_date": current_date,
-        "model": LMSTUDIO_MODEL,
+        "model": used_model,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "comment": commentary,
         "prompt": prompt,

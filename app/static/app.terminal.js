@@ -81,6 +81,7 @@ const PF_ML_JOB_START_ENDPOINT = {
   quantile_lstm: "/api/ml/quantile-lstm/jobs",
   patchtst_quantile: "/api/ml/patchtst/jobs",
 };
+const WATCHLIST_MODEL_UNKNOWN = "-";
 
 const watchItemsBySymbol = new Map();
 const latestRowsBySymbol = new Map();
@@ -104,6 +105,7 @@ let marketClockTimer = null;
 let watchLlmInFlight = false;
 let watchLlmQueuedRefresh = false;
 let watchLlmLastSymbolsKey = "";
+let watchLlmModelName = WATCHLIST_MODEL_UNKNOWN;
 let ignoreFirstEmptySymbolsEvent = false;
 let portfolioBaseState = null;
 let portfolioPollIntervalId = null;
@@ -496,7 +498,7 @@ async function refreshWatchlistCommentary(refresh = false) {
   if (symbols.length < 2) {
     watchLlmLastSymbolsKey = "";
     setWatchLlmComment("2銘柄以上でコメントを表示します。");
-    setWatchLlmMeta(`モデル: ministral-3-3b`);
+    setWatchLlmMeta(`モデル: ${watchLlmModelName}`);
     return;
   }
 
@@ -527,13 +529,14 @@ async function refreshWatchlistCommentary(refresh = false) {
     }
 
     setWatchLlmComment(comment);
-    const model = String(result?.model || "ministral-3-3b").trim() || "ministral-3-3b";
+    const model = String(result?.model || WATCHLIST_MODEL_UNKNOWN).trim() || WATCHLIST_MODEL_UNKNOWN;
+    watchLlmModelName = model;
     const updatedAt = formatDateTime(result?.generated_at);
     setWatchLlmMeta(`${model} / ${updatedAt}`);
     watchLlmLastSymbolsKey = symbolsKey;
   } catch (error) {
     setWatchLlmComment(error instanceof Error ? error.message : "LLMコメントの生成に失敗しました。", true);
-    setWatchLlmMeta("モデル: ministral-3-3b");
+    setWatchLlmMeta(`モデル: ${watchLlmModelName}`);
   } finally {
     watchLlmInFlight = false;
     if (watchLlmRefreshBtn) watchLlmRefreshBtn.disabled = false;
@@ -559,7 +562,8 @@ async function loadSavedWatchlistCommentary() {
       watchLlmLastSymbolsKey = key;
     }
     setWatchLlmComment(comment);
-    const model = String(result?.model || "ministral-3-3b").trim() || "ministral-3-3b";
+    const model = String(result?.model || WATCHLIST_MODEL_UNKNOWN).trim() || WATCHLIST_MODEL_UNKNOWN;
+    watchLlmModelName = model;
     setWatchLlmMeta(`${model} / ${formatDateTime(result?.generated_at)}`);
   } catch (_error) {
     // ignore
