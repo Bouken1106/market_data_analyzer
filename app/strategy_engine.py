@@ -45,28 +45,29 @@ def build_price_matrix(
     points_by_symbol: dict[str, list[dict[str, Any]]],
 ) -> tuple[list[str], np.ndarray, list[str]]:
     """Build aligned close-price matrix using common timestamps only."""
-    maps: dict[str, dict[str, float]] = {}
-    for symbol, points in points_by_symbol.items():
-        close_map = _to_close_map(points)
-        if close_map:
-            maps[symbol] = close_map
+    maps = {
+        symbol: close_map
+        for symbol, points in points_by_symbol.items()
+        if (close_map := _to_close_map(points))
+    }
 
     if not maps:
         return [], np.empty((0, 0), dtype=np.float64), []
 
     symbols = sorted(maps.keys())
-    common_dates: set[str] | None = None
-    for symbol in symbols:
-        keys = set(maps[symbol].keys())
-        common_dates = keys if common_dates is None else common_dates.intersection(keys)
+    common_dates = set.intersection(*(set(maps[symbol].keys()) for symbol in symbols))
     if not common_dates:
         return [], np.empty((0, len(symbols)), dtype=np.float64), symbols
 
     ordered_dates = sorted(common_dates)
-    matrix = np.zeros((len(ordered_dates), len(symbols)), dtype=np.float64)
-    for c, symbol in enumerate(symbols):
+    matrix = np.empty((len(ordered_dates), len(symbols)), dtype=np.float64)
+    for col, symbol in enumerate(symbols):
         close_map = maps[symbol]
-        matrix[:, c] = [close_map[d] for d in ordered_dates]
+        matrix[:, col] = np.fromiter(
+            (close_map[day] for day in ordered_dates),
+            dtype=np.float64,
+            count=len(ordered_dates),
+        )
 
     return ordered_dates, matrix, symbols
 
@@ -143,6 +144,8 @@ def _is_rebalance_day(freq: str, previous_day: str | None, current_day: str) -> 
     prev = date.fromisoformat(previous_day)
     cur = date.fromisoformat(current_day)
     key = str(freq or "monthly").strip().lower()
+    if key == "daily":
+        return True
     if key == "weekly":
         return cur.isocalendar()[:2] != prev.isocalendar()[:2]
     if key == "quarterly":
@@ -216,9 +219,10 @@ def run_backtest(
 
     equity = float(initial_capital)
     weights = np.zeros((n_assets,), dtype=np.float64)
-    equity_curve: list[float] = [equity]
-    applied_weights: list[dict[str, float]] = []
-    daily_returns: list[float] = []
+    weight_sum = 0.0
+    equity_curve = np.empty(horizon + 1, dtype=np.float64)
+    equity_curve[0] = equity
+    daily_returns = np.zeros(horizon, dtype=np.float64)
     turnover_sum = 0.0
     cost_sum = 0.0
     rebalance_events = 0
@@ -237,7 +241,7 @@ def run_backtest(
                 max_weight=max_weight,
             )
             drift = float(np.max(np.abs(weights - desired))) if weights.size else 0.0
-            should_rebalance = scheduled or drift >= threshold or np.sum(weights) <= 0
+            should_rebalance = scheduled or drift >= threshold or weight_sum <= 1e-12
             if should_rebalance:
                 turnover = float(np.sum(np.abs(desired - weights)))
                 cost = equity * turnover * transaction_cost_rate
@@ -246,11 +250,12 @@ def run_backtest(
                     cost_sum += cost
                 turnover_sum += turnover
                 weights = desired
+                weight_sum = float(np.sum(weights))
                 rebalance_events += 1
                 last_rebalance_date = day
 
         day_vector = returns[idx, :]
-        day_ret = float(np.dot(weights, day_vector)) if np.sum(weights) > 0 else 0.0
+        day_ret = float(np.dot(weights, day_vector)) if weight_sum > 1e-12 else 0.0
         if np.isfinite(day_ret):
             equity *= (1.0 + day_ret)
         else:
@@ -260,23 +265,23 @@ def run_backtest(
         gross_sum = float(np.sum(gross))
         if gross_sum > 1e-12 and np.all(np.isfinite(gross)):
             weights = gross / gross_sum
+            weight_sum = 1.0
         else:
-            weights = np.zeros((n_assets,), dtype=np.float64)
+            weights.fill(0.0)
+            weight_sum = 0.0
 
-        equity_curve.append(float(equity))
-        daily_returns.append(float(day_ret))
-        applied_weights.append({symbol: float(weights[pos]) for pos, symbol in enumerate(symbols)})
+        equity_curve[idx + 1] = equity
+        daily_returns[idx] = day_ret
 
-    curve_array = np.asarray(equity_curve, dtype=np.float64)
-    daily_array = np.asarray(daily_returns, dtype=np.float64)
-    metrics = _performance_metrics(curve_array, daily_array)
-    years = max(daily_array.size / TRADING_DAYS_PER_YEAR, 1e-9)
+    metrics = _performance_metrics(equity_curve, daily_returns)
+    years = max(daily_returns.size / TRADING_DAYS_PER_YEAR, 1e-9)
     annual_turnover = turnover_sum / years
+    latest_weights = {symbol: float(weights[pos]) for pos, symbol in enumerate(symbols)}
 
     return {
         "metrics": {
             **metrics,
-            "final_equity": float(curve_array[-1]) if curve_array.size else None,
+            "final_equity": float(equity_curve[-1]) if equity_curve.size else None,
             "avg_annual_turnover": float(annual_turnover) if np.isfinite(annual_turnover) else None,
             "total_trade_cost": float(cost_sum),
             "trade_cost_pct": float((cost_sum / initial_capital) * 100.0) if initial_capital > 0 else None,
@@ -286,7 +291,7 @@ def run_backtest(
             {"date": return_dates[i], "equity": float(equity_curve[i + 1])}
             for i in range(len(return_dates))
         ],
-        "latest_weights": applied_weights[-1] if applied_weights else {symbol: 0.0 for symbol in symbols},
+        "latest_weights": latest_weights,
     }
 
 
@@ -324,18 +329,19 @@ def buy_and_hold_backtest(
     if returns.ndim != 1:
         returns = np.asarray(returns, dtype=np.float64).reshape(-1)
     equity = float(initial_capital)
+    horizon = int(returns.shape[0])
+    equity_curve = np.empty(horizon + 1, dtype=np.float64)
+    equity_curve[0] = equity
     series: list[dict[str, Any]] = []
-    daily: list[float] = []
+    daily = np.zeros(horizon, dtype=np.float64)
     for idx, value in enumerate(returns):
         r = float(value) if np.isfinite(value) else 0.0
         equity *= (1.0 + r)
-        daily.append(r)
+        daily[idx] = r
+        equity_curve[idx + 1] = equity
         if idx < len(return_dates):
             series.append({"date": return_dates[idx], "equity": float(equity)})
-    metrics = _performance_metrics(
-        np.asarray([item["equity"] for item in series], dtype=np.float64) if series else np.asarray([], dtype=np.float64),
-        np.asarray(daily, dtype=np.float64),
-    )
+    metrics = _performance_metrics(equity_curve, daily)
     return {
         "metrics": {
             **metrics,

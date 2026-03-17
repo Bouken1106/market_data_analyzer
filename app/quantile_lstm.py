@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import random
 import time
 from dataclasses import dataclass
@@ -11,6 +10,8 @@ import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
+
+from .ml.array_utils import apply_feature_scaler_3d, build_feature_windows, fit_feature_scaler_3d
 
 QUANTILE_STEP = 0.001
 TAIL_QUANTILE = 0.0001
@@ -197,7 +198,7 @@ def run_quantile_lstm_forecast(
 
     _run_cancel_check(cancel_check)
     _emit_progress(progress_callback, 28, "特徴量スケーリングを実行しています。")
-    scaled_train_x, scaled_val_x, scaled_test_x = _scale_features(train_x, val_x, test_x)
+    scaled_train_x, scaled_val_x, scaled_test_x, scaler_mean, scaler_std = _scale_features(train_x, val_x, test_x)
 
     _run_cancel_check(cancel_check)
     _emit_progress(progress_callback, 30, "LSTM 学習を開始します。")
@@ -235,7 +236,6 @@ def run_quantile_lstm_forecast(
     test_base_close = base_closes[test_idx]
     test_realized_close = realized_closes[test_idx]
     test_pred_price_quantiles = test_base_close[:, None] * np.exp(test_pred_quantiles)
-    scaler_mean, scaler_std = _fit_feature_scaler(train_x)
 
     latest_input = features[-config.sequence_length :].astype(np.float32).reshape(1, config.sequence_length, -1)
     latest_input_scaled = _apply_feature_scaler(latest_input, scaler_mean, scaler_std)
@@ -525,23 +525,17 @@ def _build_sequences(
     sequence_length: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     n_rows = int(features.shape[0])
-    feature_dim = int(features.shape[1])
     sample_count = n_rows - sequence_length
     if sample_count <= 0:
         raise ValueError("系列長がデータ数を超えています。")
 
-    seq_x = np.zeros((sample_count, sequence_length, feature_dim), dtype=np.float32)
-    targets = np.zeros(sample_count, dtype=np.float32)
-    target_dates = np.empty(sample_count, dtype=object)
-    base_closes = np.zeros(sample_count, dtype=np.float64)
-    realized_closes = np.zeros(sample_count, dtype=np.float64)
-
-    for sample_idx, t in enumerate(range(sequence_length - 1, n_rows - 1)):
-        seq_x[sample_idx] = features[(t - sequence_length + 1) : (t + 1)]
-        targets[sample_idx] = float(math.log(max(closes[t + 1], 1e-12) / max(closes[t], 1e-12)))
-        target_dates[sample_idx] = dates[t + 1]
-        base_closes[sample_idx] = closes[t]
-        realized_closes[sample_idx] = closes[t + 1]
+    seq_x = build_feature_windows(features, sequence_length, sample_count=sample_count, dtype=np.float32)
+    safe_prev_close = np.clip(closes[sequence_length - 1 : -1], 1e-12, None)
+    safe_next_close = np.clip(closes[sequence_length:], 1e-12, None)
+    targets = np.log(safe_next_close / safe_prev_close).astype(np.float32, copy=False)
+    target_dates = np.asarray(dates[sequence_length:], dtype=object)
+    base_closes = np.asarray(closes[sequence_length - 1 : -1], dtype=np.float64)
+    realized_closes = np.asarray(closes[sequence_length:], dtype=np.float64)
 
     return seq_x, targets, target_dates, base_closes, realized_closes
 
@@ -606,31 +600,25 @@ def _split_time_series_indices_recent_window(
 
 
 def _fit_feature_scaler(train_x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    feature_dim = train_x.shape[-1]
-    train_2d = train_x.reshape(-1, feature_dim)
-    mean = train_2d.mean(axis=0, keepdims=True)
-    std = train_2d.std(axis=0, keepdims=True)
-    std = np.where(std < 1e-8, 1.0, std)
-    return mean, std
+    return fit_feature_scaler_3d(train_x, min_std=1e-8, dtype=np.float32)
 
 
 def _apply_feature_scaler(values: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
-    out = (values - mean.reshape(1, 1, -1)) / std.reshape(1, 1, -1)
-    out = out.astype(np.float32)
-    out[~np.isfinite(out)] = 0.0
-    return out
+    return apply_feature_scaler_3d(values, mean, std, dtype=np.float32, fill_non_finite=0.0)
 
 
 def _scale_features(
     train_x: np.ndarray,
     val_x: np.ndarray,
     test_x: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     mean, std = _fit_feature_scaler(train_x)
     return (
         _apply_feature_scaler(train_x, mean, std),
         _apply_feature_scaler(val_x, mean, std),
         _apply_feature_scaler(test_x, mean, std),
+        mean,
+        std,
     )
 
 
@@ -772,7 +760,7 @@ def _predict_quantiles_sorted(
 ) -> np.ndarray:
     model.eval()
     with torch.no_grad():
-        x = torch.from_numpy(features.astype(np.float32)).to(device)
+        x = torch.from_numpy(features.astype(np.float32, copy=False)).to(device)
         pred = model(x).detach().cpu().numpy().astype(np.float64)
     # Quantile crossing handling: enforce monotonic order after inference.
     return np.sort(pred, axis=1)

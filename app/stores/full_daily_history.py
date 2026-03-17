@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import LOGGER, SYMBOL_PATTERN
+from ..ohlcv import normalize_ohlcv_points
 
 
 class FullDailyHistoryStore:
@@ -27,11 +28,8 @@ class FullDailyHistoryStore:
         return self.cache_dir / f"{symbol}.json"
 
     @staticmethod
-    def _to_float(value: Any) -> float | None:
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
+    def _clone_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [dict(item) for item in points]
 
     def _load_from_disk_no_lock(self, symbol: str) -> list[dict[str, Any]]:
         path = self._path_for(symbol)
@@ -53,53 +51,41 @@ class FullDailyHistoryStore:
         points = payload.get("points") if isinstance(payload, dict) else None
         if not isinstance(points, list):
             return []
-        normalized: list[dict[str, Any]] = []
-        for item in points:
-            if not isinstance(item, dict):
-                continue
-            t = str(item.get("t", "")).strip()
-            c = item.get("c")
-            if not t:
-                continue
-            close = self._to_float(c)
-            if close is None or close <= 0:
-                continue
-            o = self._to_float(item.get("o"))
-            h = self._to_float(item.get("h"))
-            l = self._to_float(item.get("l"))
-            v = self._to_float(item.get("v"))
-            open_value = o if o is not None and o > 0 else close
-            high_value = h if h is not None and h > 0 else max(open_value, close)
-            low_value = l if l is not None and l > 0 else min(open_value, close)
-            normalized.append(
-                {
-                    "t": t,
-                    "o": open_value,
-                    "h": max(high_value, open_value, close),
-                    "l": min(low_value, open_value, close),
-                    "c": close,
-                    "v": v,
-                }
-            )
-        return normalized
+        return normalize_ohlcv_points(
+            points,
+            timestamp_keys=("t",),
+            open_keys=("o",),
+            high_keys=("h",),
+            low_keys=("l",),
+            close_keys=("c",),
+            volume_keys=("v",),
+        )
 
-    async def get(self, symbol: str) -> list[dict[str, Any]]:
+    async def get(self, symbol: str, *, copy: bool = True) -> list[dict[str, Any]]:
         normalized_symbol = self._normalize_symbol(symbol)
         if not normalized_symbol or not SYMBOL_PATTERN.match(normalized_symbol):
             return []
         async with self._lock:
             cached = self._memory.get(normalized_symbol)
             if cached is not None:
-                return [dict(item) for item in cached]
+                return self._clone_points(cached) if copy else cached
             loaded = self._load_from_disk_no_lock(normalized_symbol)
             self._memory[normalized_symbol] = loaded
-            return [dict(item) for item in loaded]
+            return self._clone_points(loaded) if copy else loaded
 
     async def upsert(self, symbol: str, points: list[dict[str, Any]]) -> None:
         normalized_symbol = self._normalize_symbol(symbol)
         if not normalized_symbol or not SYMBOL_PATTERN.match(normalized_symbol):
             return
-        safe_points = [dict(item) for item in points if isinstance(item, dict)]
+        safe_points = normalize_ohlcv_points(
+            points,
+            timestamp_keys=("t",),
+            open_keys=("o",),
+            high_keys=("h",),
+            low_keys=("l",),
+            close_keys=("c",),
+            volume_keys=("v",),
+        )
         async with self._lock:
             self._memory[normalized_symbol] = safe_points
             try:
@@ -113,7 +99,7 @@ class FullDailyHistoryStore:
                     "points": safe_points,
                 }
                 self._path_for(normalized_symbol).write_text(
-                    json.dumps(payload, ensure_ascii=False),
+                    json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
                     encoding="utf-8",
                 )
             except Exception as exc:
@@ -156,6 +142,8 @@ class FullDailyHistoryStore:
             value = self._updated_at_epoch.get(normalized_symbol)
             if value is not None:
                 return float(value)
-            _ = self._load_from_disk_no_lock(normalized_symbol)
+            loaded = self._load_from_disk_no_lock(normalized_symbol)
+            if loaded and normalized_symbol not in self._memory:
+                self._memory[normalized_symbol] = loaded
             value = self._updated_at_epoch.get(normalized_symbol)
             return float(value) if value is not None else None

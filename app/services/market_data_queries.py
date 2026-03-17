@@ -45,6 +45,11 @@ from ..config import (
     TIME_SERIES_URL,
 )
 from ..market_session import infer_country_from_symbol
+from ..ohlcv import (
+    latest_session_points,
+    merge_points_by_timestamp as merge_ohlcv_points,
+    normalize_ohlcv_point,
+)
 from ..utils import _datetime_from_unix, normalize_symbols, to_iso8601
 
 
@@ -1037,36 +1042,18 @@ class MarketDataQueriesMixin:
 
         points: list[dict[str, Any]] = []
         for item in values:
-            if not isinstance(item, dict):
-                continue
-            dt = str(item.get("datetime", "")).strip()
-            close_value = self._try_parse_float(item.get("close"))
-            if not dt or close_value is None or close_value <= 0:
-                continue
-
-            open_value = self._try_parse_float(item.get("open"))
-            high_value = self._try_parse_float(item.get("high"))
-            low_value = self._try_parse_float(item.get("low"))
-            volume_value = self._try_parse_float(item.get("volume"))
-
-            if open_value is None or open_value <= 0:
-                open_value = close_value
-            if high_value is None or high_value <= 0:
-                high_value = max(open_value, close_value)
-            if low_value is None or low_value <= 0:
-                low_value = min(open_value, close_value)
-
-            points.append(
-                {
-                    "t": dt,
-                    "o": open_value,
-                    "h": max(high_value, open_value, close_value),
-                    "l": min(low_value, open_value, close_value),
-                    "c": close_value,
-                    "v": volume_value,
-                    "_src": "twelvedata",
-                }
+            point = normalize_ohlcv_point(
+                item,
+                timestamp_keys=("datetime",),
+                open_keys=("open",),
+                high_keys=("high",),
+                low_keys=("low",),
+                close_keys=("close",),
+                volume_keys=("volume",),
+                source="twelvedata",
             )
+            if point is not None:
+                points.append(point)
 
         return points
 
@@ -1160,36 +1147,18 @@ class MarketDataQueriesMixin:
 
         points: list[dict[str, Any]] = []
         for item in values:
-            if not isinstance(item, dict):
-                continue
-            dt = str(item.get("date") or item.get("datetime") or "").strip()
-            close_value = self._try_parse_float(item.get("close"))
-            if not dt or close_value is None or close_value <= 0:
-                continue
-
-            open_value = self._try_parse_float(item.get("open"))
-            high_value = self._try_parse_float(item.get("high"))
-            low_value = self._try_parse_float(item.get("low"))
-            volume_value = self._try_parse_float(item.get("volume"))
-
-            if open_value is None or open_value <= 0:
-                open_value = close_value
-            if high_value is None or high_value <= 0:
-                high_value = max(open_value, close_value)
-            if low_value is None or low_value <= 0:
-                low_value = min(open_value, close_value)
-
-            points.append(
-                {
-                    "t": dt,
-                    "o": open_value,
-                    "h": max(high_value, open_value, close_value),
-                    "l": min(low_value, open_value, close_value),
-                    "c": close_value,
-                    "v": volume_value,
-                    "_src": "fmp",
-                }
+            point = normalize_ohlcv_point(
+                item,
+                timestamp_keys=("date", "datetime"),
+                open_keys=("open",),
+                high_keys=("high",),
+                low_keys=("low",),
+                close_keys=("close",),
+                volume_keys=("volume",),
+                source="fmp",
             )
+            if point is not None:
+                points.append(point)
 
         points.sort(key=lambda item: str(item.get("t", "")))
         if outputsize > 0 and len(points) > outputsize:
@@ -1208,7 +1177,7 @@ class MarketDataQueriesMixin:
             await self.full_daily_history_store.clear(symbol)
             cached_points: list[dict[str, Any]] = []
         else:
-            cached_points = await self.full_daily_history_store.get(symbol)
+            cached_points = await self.full_daily_history_store.get(symbol, copy=False)
         if cached_points:
             last_date = self._point_date(cached_points[-1])
             if last_date and last_date >= today:
@@ -1226,7 +1195,7 @@ class MarketDataQueriesMixin:
                     return cached_points
 
             # Catch up in chunks to avoid truncation when the cached range is old.
-            merged_cached = [dict(item) for item in cached_points]
+            point_groups: list[list[dict[str, Any]]] = [cached_points]
             start_cursor = (last_date - timedelta(days=5)) if last_date else (today - timedelta(days=10))
             chunks = 0
             while start_cursor <= today and chunks < FULL_HISTORY_MAX_CHUNKS:
@@ -1243,7 +1212,7 @@ class MarketDataQueriesMixin:
                     end_date=chunk_end.isoformat(),
                 )
                 if incremental_points:
-                    merged_cached = self._merge_points_by_timestamp(merged_cached, incremental_points)
+                    point_groups.append(incremental_points)
                 start_cursor = chunk_end + timedelta(days=1)
                 chunks += 1
 
@@ -1254,6 +1223,7 @@ class MarketDataQueriesMixin:
                     FULL_HISTORY_MAX_CHUNKS,
                 )
 
+            merged_cached = merge_ohlcv_points(*point_groups)
             await self.full_daily_history_store.upsert(symbol, merged_cached)
             return merged_cached
 
@@ -1303,7 +1273,7 @@ class MarketDataQueriesMixin:
                 FULL_HISTORY_MAX_CHUNKS,
             )
 
-        deduped = self._merge_points_by_timestamp([], merged)
+        deduped = merge_ohlcv_points(merged)
         await self.full_daily_history_store.upsert(symbol, deduped)
         return deduped
 
@@ -1433,12 +1403,7 @@ class MarketDataQueriesMixin:
 
     @staticmethod
     def _extract_latest_session_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if not points:
-            return []
-        latest_date = str(points[-1].get("t", "")).split(" ")[0]
-        if not latest_date:
-            return points
-        return [item for item in points if str(item.get("t", "")).startswith(latest_date)]
+        return latest_session_points(points)
 
     @staticmethod
     def _point_date(point: dict[str, Any]) -> date | None:
@@ -1456,18 +1421,7 @@ class MarketDataQueriesMixin:
         base_points: list[dict[str, Any]],
         incoming_points: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        merged: dict[str, dict[str, Any]] = {}
-        for item in base_points:
-            key = str(item.get("t", "")).strip()
-            if not key:
-                continue
-            merged[key] = dict(item)
-        for item in incoming_points:
-            key = str(item.get("t", "")).strip()
-            if not key:
-                continue
-            merged[key] = dict(item)
-        return [merged[key] for key in sorted(merged.keys())]
+        return merge_ohlcv_points(base_points, incoming_points)
 
     @staticmethod
     def _moving_average(points: list[dict[str, Any]], window: int) -> float | None:

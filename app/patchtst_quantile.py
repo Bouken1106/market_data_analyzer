@@ -12,6 +12,8 @@ from matplotlib import pyplot as plt
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
+from .ml.array_utils import apply_feature_scaler_3d, build_feature_windows, fit_feature_scaler_3d
+
 TAIL_QUANTILE = 0.0001
 DEFAULT_QUANTILES = np.concatenate(
     (
@@ -423,20 +425,11 @@ def build_rolling_windows(prepared: PreparedData, input_length: int) -> Windowed
         raise ValueError("Not enough rows to build rolling windows.")
 
     sample_count = len(prepared.dates) - input_length
-    feature_count = prepared.features.shape[1]
-    x = np.empty((sample_count, input_length, feature_count), dtype=np.float32)
-    y = np.empty(sample_count, dtype=np.float32)
-    base_prices = np.empty(sample_count, dtype=np.float64)
-    target_prices = np.empty(sample_count, dtype=np.float64)
-    target_dates = np.empty(sample_count, dtype=object)
-
-    for i in range(sample_count):
-        end_idx = i + input_length - 1
-        x[i] = prepared.features[i : i + input_length]
-        y[i] = np.float32(prepared.returns[end_idx + 1])  # r_{t+1}
-        base_prices[i] = prepared.prices[end_idx]  # P_t
-        target_prices[i] = prepared.prices[end_idx + 1]  # P_{t+1}
-        target_dates[i] = prepared.dates[end_idx + 1]
+    x = build_feature_windows(prepared.features, input_length, sample_count=sample_count, dtype=np.float32)
+    y = np.asarray(prepared.returns[input_length:], dtype=np.float32)
+    base_prices = np.asarray(prepared.prices[input_length - 1 : -1], dtype=np.float64)
+    target_prices = np.asarray(prepared.prices[input_length:], dtype=np.float64)
+    target_dates = np.asarray(prepared.dates[input_length:], dtype=object)
 
     return WindowedData(x=x, y=y, base_prices=base_prices, target_prices=target_prices, target_dates=target_dates)
 
@@ -463,15 +456,11 @@ def split_time_series_indices(
 
 
 def fit_feature_scaler(train_x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    flat = train_x.reshape(-1, train_x.shape[-1]).astype(np.float64)
-    mean = flat.mean(axis=0)
-    std = flat.std(axis=0)
-    std = np.where(std < 1e-6, 1.0, std)
-    return mean.astype(np.float32), std.astype(np.float32)
+    return fit_feature_scaler_3d(train_x, min_std=1e-6, dtype=np.float32)
 
 
 def apply_feature_scaler(x: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
-    return ((x - mean[None, None, :]) / std[None, None, :]).astype(np.float32)
+    return apply_feature_scaler_3d(x, mean, std, dtype=np.float32, fill_non_finite=0.0)
 
 
 def pinball_loss(y_true: torch.Tensor, y_pred: torch.Tensor, quantiles: torch.Tensor) -> torch.Tensor:

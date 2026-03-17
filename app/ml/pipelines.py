@@ -69,6 +69,41 @@ async def _run_quantile_lstm_pipeline(
     )
 
 
+def _build_training_config_payload(
+    *,
+    sequence_length: int,
+    hidden_size: int,
+    num_layers: int,
+    dropout: float,
+    learning_rate: float,
+    batch_size: int,
+    max_epochs: int,
+    patience: int,
+    representative_days: int,
+    seed: int,
+    split_eval_days: int | None,
+    split_train_val_ratio: float | None,
+) -> dict[str, Any]:
+    effective_split_eval_days = int(split_eval_days) if split_eval_days is not None else ML_SPLIT_EVAL_DAYS
+    effective_split_train_val_ratio = (
+        float(split_train_val_ratio) if split_train_val_ratio is not None else ML_SPLIT_TRAIN_VAL_RATIO
+    )
+    return {
+        "sequence_length": sequence_length,
+        "hidden_size": hidden_size,
+        "num_layers": num_layers,
+        "dropout": dropout,
+        "learning_rate": learning_rate,
+        "batch_size": batch_size,
+        "max_epochs": max_epochs,
+        "patience": patience,
+        "representative_days": representative_days,
+        "seed": seed,
+        "split_eval_days": max(1, effective_split_eval_days),
+        "split_train_val_ratio": max(0.5, min(0.95, effective_split_train_val_ratio)),
+    }
+
+
 async def _run_ml_pipeline(
     *,
     hub: Any,
@@ -110,24 +145,20 @@ async def _run_ml_pipeline(
     if not isinstance(points, list):
         raise HTTPException(status_code=502, detail="Unexpected historical payload format.")
 
-    config_payload = {
-        "sequence_length": sequence_length,
-        "hidden_size": hidden_size,
-        "num_layers": num_layers,
-        "dropout": dropout,
-        "learning_rate": learning_rate,
-        "batch_size": batch_size,
-        "max_epochs": max_epochs,
-        "patience": patience,
-        "representative_days": representative_days,
-        "seed": seed,
-    }
-    effective_split_eval_days = int(split_eval_days) if split_eval_days is not None else ML_SPLIT_EVAL_DAYS
-    effective_split_train_val_ratio = (
-        float(split_train_val_ratio) if split_train_val_ratio is not None else ML_SPLIT_TRAIN_VAL_RATIO
+    config_payload = _build_training_config_payload(
+        sequence_length=sequence_length,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+        dropout=dropout,
+        learning_rate=learning_rate,
+        batch_size=batch_size,
+        max_epochs=max_epochs,
+        patience=patience,
+        representative_days=representative_days,
+        seed=seed,
+        split_eval_days=split_eval_days,
+        split_train_val_ratio=split_train_val_ratio,
     )
-    config_payload["split_eval_days"] = max(1, effective_split_eval_days)
-    config_payload["split_train_val_ratio"] = max(0.5, min(0.95, effective_split_train_val_ratio))
 
     if progress_callback is not None:
         progress_callback(5, training_start_message)
