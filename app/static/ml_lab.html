@@ -4,13 +4,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ML Lab</title>
+  <title>次営業日株価予測</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="/static/styles.css?v=20260213m" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260318a" />
 </head>
 
-<body class="ml-page terminal-page">
+<body class="ml-page mlops-page">
   <nav class="nav-tabs" aria-label="Main navigation">
     <a href="/" class="nav-tab" data-path="/">
       <span class="nav-tab-icon">📊</span> Monitor
@@ -26,303 +26,575 @@
     </a>
   </nav>
 
-  <main class="container ml-layout">
-    <div class="ml-terminal-layout">
-      <aside class="ml-col-left ml-terminal-pane">
-        <section id="ml-catalog-panel" class="card ml-panel ml-catalog-panel">
-          <h2>Model Catalog</h2>
-          <input id="ml-model-search" type="text" placeholder="Search model (lstm, patch...)" autocomplete="off" />
-        </section>
-
-        <section id="ml-config-panel" class="card ml-panel ml-config-panel">
-          <span id="ml-active-model-pill" class="pill">-</span>
-          <h2 id="ml-config-title">Forecast Config</h2>
-          <form id="ml-form" class="ml-form">
-            <div class="ml-form-grid">
-              <label>
-                <span class="ml-label-row">
-                  <span>Symbol</span>
-                  <details class="param-help">
-                    <summary>?</summary>
-                    <p>予測対象のティッカー。米国株シンボル（例: AAPL）。許容範囲: 1〜15文字。</p>
-                  </details>
-                </span>
-                <div id="ml-symbol-search-area" class="symbol-search-area">
-                  <input id="ml-symbol" type="text" value="AAPL" placeholder="Click and search: AAPL, MSFT, NVDA..."
-                    maxlength="15" autocomplete="off" />
-                  <div id="ml-symbol-dropdown" class="symbol-dropdown hidden"></div>
-                </div>
-              </label>
-              <label>
-                <span class="ml-label-row">
-                  <span>History Months</span>
-                  <details class="param-help">
-                    <summary>?</summary>
-                    <p>学習に使うヒストリカル期間（月）。許容範囲: 3〜60。</p>
-                  </details>
-                </span>
-                <input id="ml-years" type="number" value="60" min="3" max="60" />
-              </label>
-              <label>
-                <span class="ml-label-row">
-                  <span>Sequence Length</span>
-                  <details class="param-help">
-                    <summary>?</summary>
-                    <p>1サンプルに使う過去営業日数（L）。推奨範囲: 20〜240。</p>
-                  </details>
-                </span>
-                <input id="ml-seq-len" type="number" value="60" min="20" max="1024" />
-              </label>
-              <label>
-                <span class="ml-label-row">
-                  <span>Hidden Size</span>
-                  <details class="param-help">
-                    <summary>?</summary>
-                    <p>LSTM隠れ状態の次元。推奨範囲: 16〜256。</p>
-                  </details>
-                </span>
-                <input id="ml-hidden-size" type="number" value="64" min="16" max="2048" />
-              </label>
-              <label>
-                <span class="ml-label-row">
-                  <span>Layers</span>
-                  <details class="param-help">
-                    <summary>?</summary>
-                    <p>LSTMの層数。推奨範囲: 1〜4。</p>
-                  </details>
-                </span>
-                <input id="ml-num-layers" type="number" value="2" min="1" max="12" />
-              </label>
-              <label>
-                <span class="ml-label-row">
-                  <span>Dropout</span>
-                  <details class="param-help">
-                    <summary>?</summary>
-                    <p>過学習抑制の無効化率。推奨範囲: 0.00〜0.60。</p>
-                  </details>
-                </span>
-                <input id="ml-dropout" type="number" value="0.2" min="0" max="0.6" step="0.05" />
-              </label>
-              <label>
-                <span class="ml-label-row">
-                  <span>Batch Size</span>
-                  <details class="param-help">
-                    <summary>?</summary>
-                    <p>1ステップで処理するサンプル数。推奨範囲: 8〜512。</p>
-                  </details>
-                </span>
-                <input id="ml-batch-size" type="number" value="64" min="8" max="1024" />
-              </label>
-              <label>
-                <span class="ml-label-row">
-                  <span>Epochs</span>
-                  <details class="param-help">
-                    <summary>?</summary>
-                    <p>学習データ全体の反復上限。推奨範囲: 10〜400。</p>
-                  </details>
-                </span>
-                <input id="ml-max-epochs" type="number" value="80" min="10" max="2000" />
-              </label>
-              <label>
-                <span class="ml-label-row">
-                  <span>Patience</span>
-                  <details class="param-help">
-                    <summary>?</summary>
-                    <p>改善なし許容epoch数（EarlyStopping）。推奨範囲: 2〜80。</p>
-                  </details>
-                </span>
-                <input id="ml-patience" type="number" value="10" min="2" max="400" />
-              </label>
-            </div>
-            <div class="row ml-form-actions">
-              <button id="ml-run-btn" type="submit">Run Model</button>
-              <button id="ml-cancel-btn" type="button" class="danger-action" disabled>停止</button>
-              <label class="ml-checkbox">
-                <input id="ml-refresh" type="checkbox" />
-                Force refresh historical data
-              </label>
-            </div>
-          </form>
-          <div class="row">
-            <p id="ml-catalog-meta" class="hint">Loading symbol catalog...</p>
-            <button id="ml-refresh-catalog" type="button" class="minor-action">Refresh Symbol List</button>
+  <main class="container mlops-layout">
+    <header class="header mlops-header">
+      <div class="header-top">
+        <div>
+          <h1>次営業日株価予測</h1>
+          <p>日本株 / 日足 / 翌日方向分類。予測ダッシュボード、学習・検証、バックテスト、モデル管理、運用監視を1ページに統合。</p>
+        </div>
+        <div class="mlops-head-meta">
+          <div class="mlops-head-meta-item">
+            <span class="label">最終更新</span>
+            <span id="mlops-header-updated" class="mlops-head-value">-</span>
           </div>
-          <p id="ml-recommend-warning" class="hint"></p>
-          <p id="ml-status" class="hint">設定後に実行してください。</p>
-          <div id="ml-progress-wrap" class="ml-progress hidden" aria-live="polite">
-            <div class="ml-progress-track">
-              <div id="ml-progress-bar" class="ml-progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"
-                aria-valuenow="0"></div>
-            </div>
-            <p id="ml-progress-text" class="hint">0.0%</p>
+          <div class="mlops-head-meta-item">
+            <span class="label">環境</span>
+            <span id="mlops-header-env" class="pill chip-cyan">-</span>
           </div>
-        </section>
-      </aside>
+        </div>
+      </div>
+      <div class="live-monitor-chips">
+        <span class="pill chip-cyan">日本株</span>
+        <span class="pill chip-green">日足</span>
+        <span class="pill chip-amber">prediction_daily互換</span>
+      </div>
+    </header>
 
-      <section class="ml-col-center ml-terminal-pane">
-        <div class="ml-chart-grid">
-          <section class="card ml-panel ml-chart-panel ml-nextday-panel">
-            <div class="ml-section-head">
-              <h2>Next Day Distribution</h2>
-              <div class="ml-section-tools">
-                <label class="ml-inline-select">
-                  <span>Scale</span>
-                  <select id="next-day-scale">
-                    <option value="returns">Returns</option>
-                    <option value="prices">Prices</option>
-                  </select>
-                </label>
-                <label class="ml-inline-select">
-                  <span>Dist</span>
-                  <select id="next-day-dist-type">
-                    <option value="pdf">PDF</option>
-                    <option value="cdf">CDF</option>
-                  </select>
-                </label>
+    <section class="card mlops-banner">
+      <div>
+        <h2>仕様書反映ステータス</h2>
+        <p class="hint">`specifications/stock_ml_page_spec_v0_1.txt` の画面構成と入力制約を反映したUIです。日本株日足は実データ連携し、`LightGBM` 本実装と `expected_return / score_rank` 算出まで反映しています。</p>
+      </div>
+      <div class="mlops-banner-pills">
+        <span class="pill chip-cyan">Tab A-E</span>
+        <span class="pill chip-green">walk-forward + gap</span>
+        <span class="pill chip-amber">ランダム分割なし</span>
+      </div>
+    </section>
+
+    <nav class="flow-strip mlops-flow" aria-label="Primary paths">
+      <a class="flow-card flow-start" href="#mlops-tabs" data-tab-target="dashboard">
+        <span class="flow-icon" aria-hidden="true">📈</span>
+        <span class="flow-label">本日の予測を見る</span>
+      </a>
+      <a class="flow-card" href="#mlops-tabs" data-tab-target="train">
+        <span class="flow-icon" aria-hidden="true">🧪</span>
+        <span class="flow-label">モデルを検証する</span>
+      </a>
+      <a class="flow-card" href="#mlops-tabs" data-tab-target="models">
+        <span class="flow-icon" aria-hidden="true">🧾</span>
+        <span class="flow-label">採用モデルを確認する</span>
+      </a>
+    </nav>
+
+    <section class="card mlops-action-bar" aria-label="固定アクション">
+      <div class="mlops-action-buttons">
+        <button id="mlops-refresh-data" type="button" class="secondary">データ更新</button>
+        <button id="mlops-run-inference" type="button">推論実行</button>
+        <button id="mlops-create-training" type="button" class="secondary">学習ジョブ作成</button>
+        <button id="mlops-export-report" type="button" class="secondary">レポート出力</button>
+      </div>
+      <div class="mlops-action-status">
+        <span id="mlops-global-badge" class="mlops-badge is-unknown">UNKNOWN</span>
+        <p id="mlops-global-status" class="hint">初期化中...</p>
+      </div>
+    </section>
+
+    <div class="mlops-shell">
+      <aside class="card mlops-sidebar" aria-label="共通条件">
+        <div class="mlops-sticky">
+          <section class="mlops-side-section">
+            <div class="mlops-side-head">
+              <h2>共通フィルタ</h2>
+              <p class="hint">未来営業日・未確定日を候補に出さない前提で固定。</p>
+            </div>
+
+            <div class="mlops-readonly-grid">
+              <div class="mlops-readonly-card">
+                <span class="label">市場</span>
+                <span>日本株</span>
+              </div>
+              <div class="mlops-readonly-card">
+                <span class="label">時間足</span>
+                <span>日足</span>
               </div>
             </div>
-            <div class="ml-canvas-shell">
-              <canvas id="next-day-canvas" class="ml-canvas" height="260"></canvas>
+
+            <div class="ml-form-grid mlops-filter-grid">
+              <label>
+                <span class="ml-label-row">
+                  <span>予測基準日</span>
+                </span>
+                <select id="mlops-prediction-date"></select>
+              </label>
+              <label>
+                <span class="ml-label-row">
+                  <span>ユニバース</span>
+                </span>
+                <select id="mlops-universe-filter"></select>
+              </label>
+              <label>
+                <span class="ml-label-row">
+                  <span>モデル</span>
+                </span>
+                <select id="mlops-model-family"></select>
+              </label>
+              <label>
+                <span class="ml-label-row">
+                  <span>特徴量セット</span>
+                </span>
+                <select id="mlops-feature-set"></select>
+              </label>
+              <label>
+                <span class="ml-label-row">
+                  <span>cost_buffer</span>
+                </span>
+                <select id="mlops-cost-buffer"></select>
+              </label>
+              <label class="mlops-filter-wide">
+                <span class="ml-label-row">
+                  <span>実行メモ</span>
+                </span>
+                <textarea id="mlops-run-note" rows="4" maxlength="200" placeholder="手動実行理由を200文字以内で記録"></textarea>
+              </label>
             </div>
-            <p id="next-day-meta" class="hint">翌営業日の上昇/下落確率を表示</p>
           </section>
 
-          <section class="card ml-panel ml-chart-panel ml-backtest-panel">
-            <h2>60-Day Backtest</h2>
-            <div class="ml-canvas-shell">
-              <canvas id="backtest-canvas" class="ml-canvas" height="260"></canvas>
+          <section class="mlops-side-section">
+            <div class="mlops-side-head">
+              <h2>運用ステータス</h2>
+              <p class="hint">採用モデル、鮮度、リークチェック、実行可否を集約表示。</p>
             </div>
+            <div id="mlops-sidebar-status" class="mlops-status-stack"></div>
           </section>
 
-          <section class="card ml-panel ml-chart-panel ml-quantile-panel">
-            <div class="ml-section-head">
-              <h2>Quantile Function</h2>
-              <div class="ml-section-tools">
-                <label class="ml-inline-select">
-                  <span>Scale</span>
-                  <select id="quantile-scale">
-                    <option value="returns">Returns</option>
-                    <option value="prices">Prices</option>
-                  </select>
-                </label>
-                <div class="ml-zoom-actions">
-                  <button id="quantile-zoom-in" type="button" class="secondary">+</button>
-                  <button id="quantile-zoom-out" type="button" class="secondary">−</button>
-                  <button id="quantile-zoom-reset" type="button" class="minor-action">Reset</button>
-                </div>
-              </div>
+          <section class="mlops-side-section">
+            <div class="mlops-side-head">
+              <h2>UIガードレール</h2>
             </div>
-            <div class="ml-canvas-shell">
-              <canvas id="quantile-function-canvas" class="ml-canvas ml-draggable" height="280"></canvas>
-            </div>
-            <p id="quantile-legend" class="hint">テスト期間の代表日を表示</p>
-          </section>
-
-          <section class="card ml-panel ml-chart-panel ml-fan-panel">
-            <div class="ml-section-head">
-              <h2>Fan Chart</h2>
-              <div class="ml-section-tools">
-                <label class="ml-inline-select">
-                  <span>Scale</span>
-                  <select id="fan-scale">
-                    <option value="returns">Returns</option>
-                    <option value="prices">Prices</option>
-                  </select>
-                </label>
-                <div class="ml-zoom-actions">
-                  <button id="fan-zoom-in" type="button" class="secondary">+</button>
-                  <button id="fan-zoom-out" type="button" class="secondary">−</button>
-                  <button id="fan-zoom-reset" type="button" class="minor-action">Reset</button>
-                </div>
-              </div>
-            </div>
-            <div class="ml-canvas-shell">
-              <canvas id="fan-chart-canvas" class="ml-canvas ml-draggable" height="280"></canvas>
-            </div>
-            <p id="fan-meta" class="hint">q50, 50%帯, 90%帯, 実測値を表示</p>
+            <ul class="mlops-rule-list">
+              <li>ランダム分割は表示しません。</li>
+              <li>未来日付を含む学習期間は指定できません。</li>
+              <li>prediction_daily 重複生成は上書き禁止前提です。</li>
+              <li>score_rank は score_cls 降順で自動算出します。</li>
+            </ul>
           </section>
         </div>
-      </section>
+      </aside>
 
-      <aside class="ml-col-right ml-terminal-pane">
-        <section id="ml-result-panel" class="card ml-panel ml-metrics-panel">
-          <h2>Numeric Details</h2>
-          <div class="ml-kpi-ribbon">
-            <div class="risk-item">
-              <span class="label">Symbol / Model</span>
-              <span id="ml-kpi-symbol-model">-</span>
+      <section class="mlops-content">
+        <div id="mlops-tabs" class="mlops-tab-strip" role="tablist" aria-label="ML tabs">
+          <button type="button" class="mlops-tab is-active" data-tab="dashboard" role="tab" aria-selected="true">A 予測ダッシュボード</button>
+          <button type="button" class="mlops-tab" data-tab="train" role="tab" aria-selected="false">B 学習・検証</button>
+          <button type="button" class="mlops-tab" data-tab="backtest" role="tab" aria-selected="false">C バックテスト</button>
+          <button type="button" class="mlops-tab" data-tab="models" role="tab" aria-selected="false">D モデル管理</button>
+          <button type="button" class="mlops-tab" data-tab="ops" role="tab" aria-selected="false">E 運用・監視</button>
+        </div>
+
+        <section class="card mlops-tab-panel" data-tab-panel="dashboard">
+          <div class="mlops-panel-head">
+            <div>
+              <h2>Tab A - 予測ダッシュボード</h2>
+              <p class="hint">営業日D引け後に生成した D+1 向け予測を、最短導線で確認する運用画面。</p>
             </div>
-            <div class="risk-item">
-              <span class="label">As Of / Target</span>
-              <span id="ml-kpi-dates">-</span>
-            </div>
-            <div class="risk-item">
-              <span class="label">Next Day Up / Down</span>
-              <span id="ml-kpi-next-prob">-</span>
-            </div>
-            <div class="risk-item">
-              <span class="label">Next Day Median</span>
-              <span id="ml-kpi-next-median">-</span>
-            </div>
-            <div class="risk-item">
-              <span class="label">60D Projection (Expected)</span>
-              <span id="ml-kpi-proj-60d">-</span>
-            </div>
-            <div class="risk-item">
-              <span class="label">Backtest Outperformance</span>
-              <span id="ml-kpi-bt-outperf">-</span>
+            <div class="mlops-inline-actions">
+              <label class="mlops-search">
+                <span class="label">銘柄検索</span>
+                <input id="mlops-prediction-search" type="text" placeholder="8035 / トヨタ / 任天堂..." autocomplete="off" />
+              </label>
+              <button id="mlops-export-csv" type="button" class="secondary">CSV出力</button>
             </div>
           </div>
 
-          <div class="ml-metric-grid">
-            <div class="risk-item">
-              <span class="label">Mean Pinball Loss (Latest 2M Test)</span>
-              <span id="metric-pinball">-</span>
-            </div>
-            <div class="risk-item">
-              <span class="label">Coverage q05-q95</span>
-              <span id="metric-cov90">-</span>
-            </div>
-            <div class="risk-item">
-              <span class="label">Coverage q25-q75</span>
-              <span id="metric-cov50">-</span>
-            </div>
-            <div class="risk-item">
-              <span class="label">Samples (train / val / test)</span>
-              <span id="metric-samples">-</span>
-            </div>
-            <div class="risk-item">
-              <span class="label">Strategy Return (60D)</span>
-              <span id="bt-return-strategy">-</span>
-            </div>
-            <div class="risk-item">
-              <span class="label">Hold Return (60D)</span>
-              <span id="bt-return-buyhold">-</span>
-            </div>
-            <div class="risk-item">
-              <span class="label">Strategy Capital</span>
-              <span id="bt-capital-strategy">-</span>
-            </div>
-            <div class="risk-item">
-              <span class="label">Hold Capital</span>
-              <span id="bt-capital-buyhold">-</span>
-            </div>
-            <div class="risk-item">
-              <span class="label">Backtest Window</span>
-              <span id="bt-window">-</span>
-            </div>
-            <div class="risk-item">
-              <span class="label">Outperf</span>
-              <span id="bt-outperf">-</span>
-            </div>
+          <div id="mlops-dashboard-summary" class="mlops-summary-grid"></div>
+
+          <div class="mlops-dashboard-grid">
+            <section class="mlops-subcard">
+              <div class="mlops-subcard-head">
+                <div>
+                  <h3>上位予測銘柄</h3>
+                  <p id="mlops-dashboard-caption" class="hint">-</p>
+                </div>
+                <span class="mlops-badge is-unknown">prob_up順</span>
+              </div>
+              <div class="table-wrap">
+                <table class="mlops-prediction-table">
+                  <thead>
+                    <tr>
+                      <th>Code</th>
+                      <th>Company</th>
+                      <th>Sector</th>
+                      <th>prob_up</th>
+                      <th>score_cls</th>
+                      <th>expected_return</th>
+                      <th>警告</th>
+                    </tr>
+                  </thead>
+                  <tbody id="mlops-prediction-body"></tbody>
+                </table>
+              </div>
+              <p id="mlops-dashboard-footnote" class="hint">score_rank と expected_return を prediction_daily 互換で返します。</p>
+            </section>
+
+            <section class="mlops-subcard mlops-detail-card">
+              <div class="mlops-subcard-head">
+                <div>
+                  <h3>銘柄詳細</h3>
+                  <p class="hint">行選択で右側パネルを更新。複数選択不可。</p>
+                </div>
+              </div>
+              <div id="mlops-detail-head" class="mlops-detail-head"></div>
+              <div id="mlops-detail-metrics" class="mlops-mini-metrics"></div>
+              <div class="mlops-detail-section">
+                <h4>主要特徴量寄与</h4>
+                <div id="mlops-feature-contrib" class="mlops-feature-list"></div>
+              </div>
+              <div class="mlops-detail-section">
+                <h4>イベント接近 / 前日比</h4>
+                <div id="mlops-detail-notes" class="mlops-note-list"></div>
+              </div>
+            </section>
+          </div>
+
+          <div class="mlops-dashboard-lower">
+            <section class="mlops-subcard">
+              <div class="mlops-subcard-head">
+                <div>
+                  <h3>セクター別平均スコア</h3>
+                  <p class="hint">sector33_code 単位の平均 prob_up。</p>
+                </div>
+              </div>
+              <div id="mlops-sector-scores" class="mlops-bar-list"></div>
+            </section>
+
+            <section class="mlops-subcard">
+              <div class="mlops-subcard-head">
+                <div>
+                  <h3>警告一覧</h3>
+                  <p class="hint">欠損、約定不能懸念、鮮度異常を表示。</p>
+                </div>
+              </div>
+              <div id="mlops-alert-list" class="mlops-stack-list"></div>
+            </section>
+
+            <section class="mlops-subcard">
+              <div class="mlops-subcard-head">
+                <div>
+                  <h3>推論ログ</h3>
+                  <p class="hint">collector -> reporter の主要イベント。</p>
+                </div>
+              </div>
+              <div id="mlops-inference-log" class="mlops-log-list"></div>
+            </section>
           </div>
         </section>
-      </aside>
+
+        <section class="card mlops-tab-panel" data-tab-panel="train" hidden>
+          <div class="mlops-panel-head">
+            <div>
+              <h2>Tab B - 学習・検証</h2>
+              <p class="hint">設定自由度を絞り、事故を起こしにくい画面を優先。LightGBM と Logistic Regression を同一条件で比較。</p>
+            </div>
+          </div>
+
+          <div class="mlops-split-grid">
+            <section class="mlops-subcard">
+              <div class="mlops-subcard-head">
+                <div>
+                  <h3>入力フォーム要約</h3>
+                  <p class="hint">時系列制約を守る preset のみ表示。</p>
+                </div>
+              </div>
+              <div id="mlops-train-config" class="mlops-key-value-grid"></div>
+            </section>
+
+            <section class="mlops-subcard">
+              <div class="mlops-subcard-head">
+                <div>
+                  <h3>禁止事項</h3>
+                  <p class="hint">リーク防止のため UI から選ばせない項目。</p>
+                </div>
+              </div>
+              <ul id="mlops-train-rules" class="mlops-rule-list"></ul>
+            </section>
+          </div>
+
+          <div id="mlops-train-summary" class="mlops-summary-grid"></div>
+
+          <div class="mlops-split-grid">
+            <section class="mlops-subcard">
+              <div class="mlops-subcard-head">
+                <div>
+                  <h3>モデル比較</h3>
+                  <p class="hint">fold平均と運用性指標を横並びで表示。</p>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>モデル</th>
+                      <th>ROC-AUC</th>
+                      <th>PR-AUC</th>
+                      <th>Balanced Acc</th>
+                      <th>Hit Ratio</th>
+                      <th>Train Time</th>
+                      <th>推論時間</th>
+                      <th>特徴量数</th>
+                      <th>欠損率</th>
+                    </tr>
+                  </thead>
+                  <tbody id="mlops-train-compare-body"></tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="mlops-subcard">
+              <div class="mlops-subcard-head">
+                <div>
+                  <h3>受入判定</h3>
+                  <p class="hint">既存採用モデルとの比較結果。</p>
+                </div>
+              </div>
+              <div id="mlops-train-acceptance" class="mlops-stack-list"></div>
+            </section>
+          </div>
+
+          <div class="mlops-split-grid">
+            <section class="mlops-subcard">
+              <div class="mlops-subcard-head">
+                <div>
+                  <h3>walk-forward 詳細</h3>
+                  <p class="hint">train期間 / gap / valid期間 / 件数を明示。</p>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Fold</th>
+                      <th>Train</th>
+                      <th>Gap</th>
+                      <th>Valid</th>
+                      <th>件数</th>
+                      <th>LGBM ROC-AUC</th>
+                      <th>LogReg ROC-AUC</th>
+                    </tr>
+                  </thead>
+                  <tbody id="mlops-fold-body"></tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="mlops-subcard">
+              <div class="mlops-subcard-head">
+                <div>
+                  <h3>fold 推移</h3>
+                  <p class="hint">主モデルと比較モデルの ROC-AUC 推移。</p>
+                </div>
+              </div>
+              <div id="mlops-fold-chart" class="mlops-chart-shell"></div>
+            </section>
+          </div>
+
+          <section class="mlops-subcard">
+            <div class="mlops-subcard-head">
+              <div>
+                <h3>予測スコア分布</h3>
+                <p class="hint">ヒストグラムで score_cls の偏りを確認。</p>
+              </div>
+            </div>
+            <div id="mlops-score-distribution" class="mlops-distribution-grid"></div>
+          </section>
+        </section>
+
+        <section class="card mlops-tab-panel" data-tab-panel="backtest" hidden>
+          <div class="mlops-panel-head">
+            <div>
+              <h2>Tab C - バックテスト</h2>
+              <p class="hint">D日引け後予測 → D+1寄り買い → D+1引け売り の1日保有を標準ルールとして比較。</p>
+            </div>
+          </div>
+
+          <div class="mlops-split-grid">
+            <section class="mlops-subcard">
+              <div class="mlops-subcard-head">
+                <div>
+                  <h3>売買ルール設定</h3>
+                  <p class="hint">初版固定ルール中心。流動性条件は解除不可。</p>
+                </div>
+              </div>
+              <div id="mlops-backtest-settings" class="mlops-key-value-grid"></div>
+            </section>
+
+            <section class="mlops-subcard">
+              <div class="mlops-subcard-head">
+                <div>
+                  <h3>現行採用モデル vs 候補モデル</h3>
+                  <p class="hint">同一コスト条件で比較。</p>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>モデル</th>
+                      <th>CAGR</th>
+                      <th>Sharpe</th>
+                      <th>Max Drawdown</th>
+                      <th>Turnover</th>
+                      <th>勝率</th>
+                      <th>約定不能</th>
+                    </tr>
+                  </thead>
+                  <tbody id="mlops-backtest-compare-body"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+
+          <div id="mlops-backtest-summary" class="mlops-summary-grid"></div>
+
+          <div class="mlops-split-grid">
+            <section class="mlops-subcard">
+              <div class="mlops-subcard-head">
+                <div>
+                  <h3>累積リターン曲線</h3>
+                  <p class="hint">コスト控除後の active / candidate を重ねて表示。</p>
+                </div>
+              </div>
+              <div id="mlops-equity-chart" class="mlops-chart-shell"></div>
+            </section>
+
+            <section class="mlops-subcard">
+              <div class="mlops-subcard-head">
+                <div>
+                  <h3>月次損益ヒートマップ</h3>
+                  <p class="hint">候補モデルの月次成績。</p>
+                </div>
+              </div>
+              <div id="mlops-monthly-heatmap" class="mlops-heatmap"></div>
+            </section>
+          </div>
+
+          <section class="mlops-subcard">
+            <div class="mlops-subcard-head">
+              <div>
+                <h3>例外表示</h3>
+                <p class="hint">ストップ高/安、売買停止、データ欠損による除外を明示。</p>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>日付</th>
+                    <th>区分</th>
+                    <th>件数</th>
+                    <th>影響率</th>
+                    <th>備考</th>
+                  </tr>
+                </thead>
+                <tbody id="mlops-backtest-exception-body"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section class="card mlops-tab-panel" data-tab-panel="models" hidden>
+          <div class="mlops-panel-head">
+            <div>
+              <h2>Tab D - モデル管理</h2>
+              <p class="hint">採用中モデルと候補モデルを同一画面で比較し、本番採用の可否を判断。</p>
+            </div>
+          </div>
+
+          <div class="mlops-model-grid">
+            <section class="mlops-subcard">
+              <div class="mlops-subcard-head">
+                <div>
+                  <h3>モデル一覧</h3>
+                  <p class="hint">採用中 / 候補 / 失効 / 失敗 を色バッジ表示。</p>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table class="mlops-model-table">
+                  <thead>
+                    <tr>
+                      <th>model_version</th>
+                      <th>feature_version</th>
+                      <th>family</th>
+                      <th>status</th>
+                      <th>主要指標</th>
+                      <th>警告</th>
+                    </tr>
+                  </thead>
+                  <tbody id="mlops-model-body"></tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="mlops-subcard">
+              <div class="mlops-subcard-head">
+                <div>
+                  <h3>詳細パネル</h3>
+                  <p class="hint">学習条件、評価条件、説明可能性、監査情報を集約。</p>
+                </div>
+                <button id="mlops-adopt-model" type="button" class="secondary">採用モデルへ切替</button>
+              </div>
+              <div id="mlops-model-detail-head" class="mlops-detail-head"></div>
+              <div id="mlops-model-detail-grid" class="mlops-key-value-grid"></div>
+              <div class="mlops-detail-section">
+                <h4>説明可能性</h4>
+                <div id="mlops-model-explainability" class="mlops-stack-list"></div>
+              </div>
+              <div class="mlops-detail-section">
+                <h4>監査情報</h4>
+                <div id="mlops-model-audit" class="mlops-note-list"></div>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="card mlops-tab-panel" data-tab-panel="ops" hidden>
+          <div class="mlops-panel-head">
+            <div>
+              <h2>Tab E - 運用・データ監視</h2>
+              <p class="hint">collector -> normalizer -> feature_builder -> predictor -> reporter の各段階を監視。</p>
+            </div>
+          </div>
+
+          <section class="mlops-subcard">
+            <div class="mlops-subcard-head">
+              <div>
+                <h3>パイプライン状態</h3>
+                <p class="hint">日次バッチの主要段階と更新時刻。</p>
+              </div>
+            </div>
+            <div id="mlops-pipeline-grid" class="mlops-pipeline-grid"></div>
+          </section>
+
+          <div id="mlops-ops-summary" class="mlops-summary-grid"></div>
+
+          <div class="mlops-split-grid">
+            <section class="mlops-subcard">
+              <div class="mlops-subcard-head">
+                <div>
+                  <h3>監視アラート</h3>
+                  <p class="hint">取得件数異常、欠損率、ドリフトを確認。</p>
+                </div>
+              </div>
+              <div id="mlops-ops-alerts" class="mlops-stack-list"></div>
+            </section>
+
+            <section class="mlops-subcard">
+              <div class="mlops-subcard-head">
+                <div>
+                  <h3>実行ログ / 監査ログ</h3>
+                  <p class="hint">主要操作を追跡可能に保持。</p>
+                </div>
+              </div>
+              <div id="mlops-ops-logs" class="mlops-log-list"></div>
+            </section>
+          </div>
+        </section>
+      </section>
     </div>
   </main>
 
-  <script src="/static/ml_lab.js?v=20260213e"></script>
-  <script src="/static/page_menu.js?v=20260213i" defer></script>
+  <script src="/static/ml_lab.js?v=20260318a"></script>
+  <script src="/static/page_menu.js?v=20260318a" defer></script>
 </body>
 
 </html>

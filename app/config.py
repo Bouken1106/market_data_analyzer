@@ -124,6 +124,7 @@ FULL_DAILY_HISTORY_CACHE_DIR = _APP_DIR / "cache" / "daily_history"
 FMP_REFERENCE_CACHE_DIR = _APP_DIR / "cache" / "fmp_reference"
 PAPER_PORTFOLIO_CACHE_PATH = _APP_DIR / "cache" / "paper_portfolio.json"
 UI_STATE_CACHE_PATH = _APP_DIR / "cache" / "ui_state.json"
+STOCK_ML_PAGE_STATE_CACHE_PATH = _APP_DIR / "cache" / "stock_ml_page_state.json"
 PAPER_INITIAL_CASH = _float_env("PAPER_INITIAL_CASH", default=1_000_000, minimum=1)
 AUTO_REFRESH_ON_STARTUP = _bool_env("AUTO_REFRESH_ON_STARTUP", default=False)
 

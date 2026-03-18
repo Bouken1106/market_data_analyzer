@@ -20,6 +20,7 @@ from .config import (
     LAST_PRICE_CACHE_PATH,
     PAPER_INITIAL_CASH,
     PAPER_PORTFOLIO_CACHE_PATH,
+    STOCK_ML_PAGE_STATE_CACHE_PATH,
     UI_STATE_CACHE_PATH,
     FULL_DAILY_HISTORY_CACHE_DIR,
     MAX_BASIC_SYMBOLS,
@@ -35,6 +36,7 @@ from .stores import (
     FullDailyHistoryStore,
     LastPriceStore,
     PaperPortfolioStore,
+    StockMlPageStore,
     SymbolCatalogStore,
     UiStateStore,
 )
@@ -84,6 +86,7 @@ symbol_catalog_store = SymbolCatalogStore(
 )
 ml_job_store = MlJobStore(max_jobs=120)
 ui_state_store = UiStateStore(cache_path=UI_STATE_CACHE_PATH)
+stock_ml_page_store = StockMlPageStore(cache_path=STOCK_ML_PAGE_STATE_CACHE_PATH)
 persisted_symbols = ui_state_store.get_symbols()
 initial_symbols = persisted_symbols if persisted_symbols else DEFAULT_SYMBOLS
 if not persisted_symbols:
@@ -126,6 +129,7 @@ init_routes(
     ml_job_store=ml_job_store,
     paper_portfolio_store=paper_portfolio_store,
     ui_state_store=ui_state_store,
+    stock_ml_page_store=stock_ml_page_store,
 )
 
 

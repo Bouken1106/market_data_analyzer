@@ -89,6 +89,20 @@ class StrategyEvaluationRequest(BaseModel):
     refresh: bool = False
 
 
+class StockMlPageActionRequest(BaseModel):
+    prediction_date: str | None = None
+    universe_filter: str = "jp_large_cap_stooq_v1"
+    model_family: str = "LightGBM Classifier"
+    feature_set: str = "base_v1"
+    cost_buffer: float = 0.0
+    run_note: str = ""
+    refresh: bool = False
+
+
+class StockMlModelAdoptionRequest(StockMlPageActionRequest):
+    model_version: str
+
+
 # ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------

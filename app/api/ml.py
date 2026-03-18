@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from ..config import ML_HISTORY_DEFAULT_MONTHS
 from ..ml.catalog import ML_MODEL_CATALOG
+from ..ml.stock_page import StockMlPageService
 from ..ml.pipelines import (
     _parse_compare_models,
     _run_ml_comparison_job,
@@ -17,11 +18,23 @@ from ..ml.pipelines import (
     _run_quantile_lstm_job,
     _run_quantile_lstm_pipeline,
 )
-from ..models import MlComparisonJobRequest, QuantileLstmJobRequest
+from ..models import (
+    MlComparisonJobRequest,
+    QuantileLstmJobRequest,
+    StockMlModelAdoptionRequest,
+    StockMlPageActionRequest,
+)
 from ..utils import normalize_ml_history_months, normalize_symbols, ok_json_response
-from .deps import HubDep, MlJobStoreDep
+from .deps import HubDep, MlJobStoreDep, StockMlPageStoreDep
 
 router = APIRouter()
+
+
+def _stock_ml_page_service(hub: HubDep, stock_ml_page_store: StockMlPageStoreDep) -> StockMlPageService:
+    return StockMlPageService(
+        full_daily_history_store=hub.full_daily_history_store,
+        page_store=stock_ml_page_store,
+    )
 
 
 def _normalize_job_symbol(raw_symbol: str) -> str:
@@ -34,6 +47,107 @@ def _normalize_job_symbol(raw_symbol: str) -> str:
 @router.get("/api/ml/models")
 async def ml_models() -> JSONResponse:
     return ok_json_response(models=ML_MODEL_CATALOG)
+
+
+@router.get("/api/ml/stock-page")
+async def stock_ml_page_snapshot(
+    hub: HubDep,
+    stock_ml_page_store: StockMlPageStoreDep,
+    prediction_date: str | None = None,
+    universe_filter: str = "jp_large_cap_stooq_v1",
+    model_family: str = "LightGBM Classifier",
+    feature_set: str = "base_v1",
+    cost_buffer: float = 0.0,
+    run_note: str = "",
+    refresh: bool = False,
+) -> JSONResponse:
+    service = _stock_ml_page_service(hub, stock_ml_page_store)
+    payload = await service.build_snapshot(
+        prediction_date=prediction_date,
+        universe_filter=universe_filter,
+        model_family=model_family,
+        feature_set=feature_set,
+        cost_buffer=cost_buffer,
+        run_note=run_note,
+        refresh=refresh,
+    )
+    return ok_json_response(**payload)
+
+
+@router.post("/api/ml/stock-page/actions/refresh")
+async def stock_ml_page_refresh(
+    req: StockMlPageActionRequest,
+    hub: HubDep,
+    stock_ml_page_store: StockMlPageStoreDep,
+) -> JSONResponse:
+    service = _stock_ml_page_service(hub, stock_ml_page_store)
+    payload = await service.refresh_data(
+        prediction_date=req.prediction_date,
+        universe_filter=req.universe_filter,
+        model_family=req.model_family,
+        feature_set=req.feature_set,
+        cost_buffer=req.cost_buffer,
+        run_note=req.run_note,
+    )
+    return ok_json_response(**payload)
+
+
+@router.post("/api/ml/stock-page/actions/run-inference")
+async def stock_ml_page_run_inference(
+    req: StockMlPageActionRequest,
+    hub: HubDep,
+    stock_ml_page_store: StockMlPageStoreDep,
+) -> JSONResponse:
+    service = _stock_ml_page_service(hub, stock_ml_page_store)
+    payload = await service.run_inference(
+        prediction_date=req.prediction_date,
+        universe_filter=req.universe_filter,
+        model_family=req.model_family,
+        feature_set=req.feature_set,
+        cost_buffer=req.cost_buffer,
+        run_note=req.run_note,
+        refresh=req.refresh,
+    )
+    return ok_json_response(**payload)
+
+
+@router.post("/api/ml/stock-page/actions/create-training-job")
+async def stock_ml_page_create_training_job(
+    req: StockMlPageActionRequest,
+    hub: HubDep,
+    stock_ml_page_store: StockMlPageStoreDep,
+) -> JSONResponse:
+    service = _stock_ml_page_service(hub, stock_ml_page_store)
+    payload = await service.create_training_job(
+        prediction_date=req.prediction_date,
+        universe_filter=req.universe_filter,
+        model_family=req.model_family,
+        feature_set=req.feature_set,
+        cost_buffer=req.cost_buffer,
+        run_note=req.run_note,
+        refresh=req.refresh,
+    )
+    return ok_json_response(**payload)
+
+
+@router.post("/api/ml/stock-page/actions/adopt-model")
+async def stock_ml_page_adopt_model(
+    req: StockMlModelAdoptionRequest,
+    hub: HubDep,
+    stock_ml_page_store: StockMlPageStoreDep,
+) -> JSONResponse:
+    service = _stock_ml_page_service(hub, stock_ml_page_store)
+    payload = await service.adopt_model(
+        model_version=req.model_version,
+        prediction_date=req.prediction_date,
+        universe_filter=req.universe_filter,
+        model_family=req.model_family,
+        feature_set=req.feature_set,
+        cost_buffer=req.cost_buffer,
+        run_note=req.run_note,
+        refresh=req.refresh,
+    )
+    return ok_json_response(**payload)
 
 
 @router.get("/api/ml/quantile-lstm")
@@ -176,4 +290,3 @@ async def ml_job_cancel(job_id: str, ml_job_store: MlJobStoreDep) -> JSONRespons
     if payload is None:
         raise HTTPException(status_code=404, detail="Job not found.")
     return ok_json_response(**payload)
-

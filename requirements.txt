@@ -3,6 +3,7 @@ httpx==0.28.1
 matplotlib==3.9.2
 numpy==2.2.2
 pandas==2.2.3
+lightgbm==4.6.0
 python-dotenv==1.1.1
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch==2.5.1+cpu; platform_system != "Darwin"
