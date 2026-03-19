@@ -533,7 +533,9 @@ function applyActionPermissions() {
       : modelEligible
         ? ""
         : selected
-          ? "採用中モデルは切替不要です。"
+          ? selected.status === "adopted"
+            ? "採用中モデルは切替不要です。"
+            : (selected.adopt_blockers || []).join(" / ") || "このモデルは現在採用できません。"
           : "";
   }
 }
@@ -844,7 +846,18 @@ function renderModels() {
         <td>${escapeHtml(row.model_version)}</td>
         <td>${escapeHtml(row.feature_version)}</td>
         <td>${escapeHtml(row.family)}</td>
-        <td>${makeBadge(row.status === "adopted" ? "採用中" : row.status === "candidate" ? "候補" : row.status, row.status === "adopted" ? "normal" : row.status === "candidate" ? "warning" : "unknown")}</td>
+        <td>${makeBadge(
+          row.status === "adopted"
+            ? (row.adoptable ? "採用中" : "採用中要確認")
+            : row.adoptable
+              ? (row.status === "candidate" ? "候補" : row.status)
+              : "採用不可",
+          row.status === "adopted"
+            ? (row.adoptable ? "normal" : "error")
+            : row.adoptable
+              ? (row.status === "candidate" ? "warning" : "unknown")
+              : "error",
+        )}</td>
         <td>${escapeHtml(row.summary_metrics)}</td>
         <td>${escapeHtml((row.warnings || []).join(" / ") || "-")}</td>
       </tr>
@@ -865,7 +878,21 @@ function renderModels() {
       <span class="label">model_version</span>
       <strong>${escapeHtml(selected.model_version)}</strong>
     </div>
-    <div>${makeBadge(selected.status === "adopted" ? "採用中" : "候補", selected.status === "adopted" ? "normal" : "warning")}</div>
+    <div>
+      ${makeBadge(
+        selected.status === "adopted"
+          ? (selected.adoptable ? "採用中" : "採用中要確認")
+          : selected.adoptable
+            ? "候補"
+            : "採用不可",
+        selected.status === "adopted"
+          ? (selected.adoptable ? "normal" : "error")
+          : selected.adoptable
+            ? "warning"
+            : "error",
+      )}
+      ${makeBadge(selected.adoptable ? "ADOPTABLE" : "BLOCKED", selected.adoptable ? "normal" : "error")}
+    </div>
   `;
   modelDetailGridEl.innerHTML = makeKeyValueGrid([...(selected.train_conditions || []), ...(selected.eval_conditions || [])]);
   modelDecisionEl.innerHTML = makeStackList(selected.decision || []);

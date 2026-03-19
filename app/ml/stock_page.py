@@ -499,6 +499,11 @@ class StockMlPageService:
             gap_days=selected_gap_days,
             random_seed=selected_random_seed,
         )
+        quality_gate = self._build_model_quality_gate(
+            dataset=dataset,
+            training=training,
+            gap_days=selected_gap_days,
+        )
         models = self._build_model_registry(
             training=training,
             backtest=backtest,
@@ -508,6 +513,7 @@ class StockMlPageService:
             gap_days=selected_gap_days,
             valid_window_months=selected_valid_window_months,
             random_seed=selected_random_seed,
+            quality_gate=quality_gate,
         )
         selected_model_version = models["default_versions"].get(selected_model_family, _MODEL_PRIMARY_VERSION)
         dashboard = self._build_dashboard_view(
@@ -531,6 +537,7 @@ class StockMlPageService:
             refresh=refresh,
         )
         permissions = self._build_permissions(
+            dataset=dataset,
             dashboard=dashboard,
             training=training,
             models=models,
@@ -686,6 +693,26 @@ class StockMlPageService:
             raise HTTPException(status_code=400, detail="Unknown model_version.")
         current_snapshot = await self.build_snapshot(**kwargs)
         self._ensure_action_allowed(current_snapshot, "adopt_model")
+        selected_model = next(
+            (
+                item
+                for item in (current_snapshot.get("models", {}).get("rows") or [])
+                if isinstance(item, dict) and str(item.get("model_version") or "").strip() == model_version
+            ),
+            None,
+        )
+        if not isinstance(selected_model, dict):
+            raise HTTPException(status_code=404, detail="Model not found.")
+        if not bool(selected_model.get("adoptable")):
+            blockers = [
+                str(item).strip()
+                for item in (selected_model.get("adopt_blockers") or [])
+                if str(item).strip()
+            ]
+            detail = "このモデルは現在採用できません。"
+            if blockers:
+                detail += " " + " / ".join(blockers[:3])
+            raise HTTPException(status_code=409, detail=detail)
         self.page_store.set_adopted_model_version(model_version)
         run_note = str(kwargs.get("run_note") or "").strip()
         self.page_store.add_audit_log(
@@ -1771,11 +1798,27 @@ class StockMlPageService:
         gap_days: int,
         valid_window_months: int,
         random_seed: int,
+        quality_gate: dict[str, Any],
     ) -> dict[str, Any]:
         adopted_model_version = self.page_store.get_adopted_model_version()
         model_results = backtest["model_results"]
         primary_result = model_results[_MODEL_PRIMARY_VERSION]
         baseline_result = model_results[_MODEL_BASELINE_VERSION]
+        leakage_check = bool(quality_gate.get("leakage_check", {}).get("passed"))
+        leakage_detail = str(quality_gate.get("leakage_check", {}).get("detail") or "").strip()
+        data_quality_check = bool(quality_gate.get("data_quality_check", {}).get("passed"))
+        data_quality_detail = str(quality_gate.get("data_quality_check", {}).get("detail") or "").strip()
+        quality_warning_labels = [
+            str(item).strip()
+            for item in (quality_gate.get("warning_labels") or [])
+            if str(item).strip()
+        ]
+        quality_blockers = [
+            str(item).strip()
+            for item in (quality_gate.get("blockers") or [])
+            if str(item).strip()
+        ]
+        adoptable = leakage_check and data_quality_check
         primary_adopt_reason, primary_warnings, primary_decision = self._model_decision_payload(
             current_label=_PRIMARY_MODEL_FAMILY,
             peer_label=_BASELINE_MODEL_FAMILY,
@@ -1794,6 +1837,34 @@ class StockMlPageService:
             peer_result=primary_result,
             is_adopted=adopted_model_version == _MODEL_BASELINE_VERSION,
         )
+        primary_quality_detail = (
+            "leakage_check / data_quality_check を満たしています。"
+            + (f" 監視中: {' / '.join(quality_warning_labels)}。" if quality_warning_labels else "")
+            if adoptable
+            else "採用不可。 " + " / ".join(quality_blockers)
+        )
+        baseline_quality_detail = (
+            "leakage_check / data_quality_check を満たしています。"
+            + (f" 監視中: {' / '.join(quality_warning_labels)}。" if quality_warning_labels else "")
+            if adoptable
+            else "採用不可。 " + " / ".join(quality_blockers)
+        )
+        primary_warnings = list(dict.fromkeys(primary_warnings + quality_warning_labels + ([] if adoptable else ["採用不可"])))
+        baseline_warnings = list(dict.fromkeys(baseline_warnings + quality_warning_labels + ([] if adoptable else ["採用不可"])))
+        primary_decision = primary_decision + [
+            {
+                "level": "normal" if adoptable else "error",
+                "title": "採用可否",
+                "detail": primary_quality_detail,
+            }
+        ]
+        baseline_decision = baseline_decision + [
+            {
+                "level": "normal" if adoptable else "error",
+                "title": "採用可否",
+                "detail": baseline_quality_detail,
+            }
+        ]
 
         primary_row = {
             "model_version": _MODEL_PRIMARY_VERSION,
@@ -1803,9 +1874,12 @@ class StockMlPageService:
             "status": "adopted" if adopted_model_version == _MODEL_PRIMARY_VERSION else "candidate",
             "summary_metrics": f"ROC-AUC {training['primary_summary']['roc_auc']:.3f} / Sharpe {primary_result['metrics']['sharpe']:.2f}" if primary_result["metrics"]["sharpe"] is not None else f"ROC-AUC {training['primary_summary']['roc_auc']:.3f}",
             "warnings": primary_warnings,
-            "adoptable": True,
-            "leakage_check": True,
-            "data_quality_check": True,
+            "adoptable": adoptable,
+            "adopt_blockers": quality_blockers,
+            "leakage_check": leakage_check,
+            "data_quality_check": data_quality_check,
+            "leakage_detail": leakage_detail,
+            "data_quality_detail": data_quality_detail,
             "train_conditions": [
                 {"label": "学習期間", "value": f"{train_window_months}か月 ({_window_days_from_months(train_window_months)}営業日)"},
                 {"label": "gap", "value": f"{gap_days}営業日"},
@@ -1820,6 +1894,8 @@ class StockMlPageService:
                 {"label": "バックテスト", "value": f"CAGR {primary_result['metrics']['cagr_pct']:.1f}% / Sharpe {primary_result['metrics']['sharpe']:.2f}" if primary_result["metrics"]["sharpe"] is not None else "-"},
                 {"label": "計算時間", "value": training["primary_summary"]["train_time"]},
                 {"label": "欠損率", "value": "0.0%"},
+                {"label": "Leakage Check", "value": "PASS" if leakage_check else "FAIL"},
+                {"label": "Data Quality", "value": "PASS" if data_quality_check else "FAIL"},
                 {"label": "期待収益率", "value": "LightGBM regressor で算出"},
             ],
             "adopt_reason": primary_adopt_reason,
@@ -1839,9 +1915,12 @@ class StockMlPageService:
             "status": "adopted" if adopted_model_version == _MODEL_BASELINE_VERSION else "candidate",
             "summary_metrics": f"ROC-AUC {training['baseline_summary']['roc_auc']:.3f} / Sharpe {baseline_result['metrics']['sharpe']:.2f}" if baseline_result["metrics"]["sharpe"] is not None else f"ROC-AUC {training['baseline_summary']['roc_auc']:.3f}",
             "warnings": baseline_warnings,
-            "adoptable": True,
-            "leakage_check": True,
-            "data_quality_check": True,
+            "adoptable": adoptable,
+            "adopt_blockers": quality_blockers,
+            "leakage_check": leakage_check,
+            "data_quality_check": data_quality_check,
+            "leakage_detail": leakage_detail,
+            "data_quality_detail": data_quality_detail,
             "train_conditions": [
                 {"label": "学習期間", "value": f"{train_window_months}か月 ({_window_days_from_months(train_window_months)}営業日)"},
                 {"label": "gap", "value": f"{gap_days}営業日"},
@@ -1856,6 +1935,8 @@ class StockMlPageService:
                 {"label": "バックテスト", "value": f"CAGR {baseline_result['metrics']['cagr_pct']:.1f}% / Sharpe {baseline_result['metrics']['sharpe']:.2f}" if baseline_result["metrics"]["sharpe"] is not None else "-"},
                 {"label": "計算時間", "value": training["baseline_summary"]["train_time"]},
                 {"label": "欠損率", "value": "0.0%"},
+                {"label": "Leakage Check", "value": "PASS" if leakage_check else "FAIL"},
+                {"label": "Data Quality", "value": "PASS" if data_quality_check else "FAIL"},
                 {"label": "警告", "value": "-"},
             ],
             "adopt_reason": baseline_adopt_reason,
@@ -1876,6 +1957,79 @@ class StockMlPageService:
             "rows": rows,
             "adopted_model_version": adopted_model_version,
             "default_versions": default_versions,
+        }
+
+    def _build_model_quality_gate(
+        self,
+        *,
+        dataset: dict[str, Any],
+        training: dict[str, Any],
+        gap_days: int,
+    ) -> dict[str, Any]:
+        count_check = self._ops_count_check(dataset)
+        missing_check = self._ops_missing_rate_check(dataset)
+        prediction_dates: list[str] = dataset.get("prediction_dates") or []
+        latest_prediction_date = prediction_dates[-1] if prediction_dates else ""
+        latest_available = len(dataset.get("by_date", {}).get(latest_prediction_date, [])) if latest_prediction_date else 0
+        total_symbols = len(JP_LARGE_CAP_UNIVERSE)
+        excluded = int(dataset.get("excluded_symbols") or 0)
+        excluded_ratio_pct = (excluded / total_symbols) * 100.0 if total_symbols else 0.0
+        coverage_level = "normal"
+        if latest_available < max(1, math.ceil(total_symbols * 0.60)) or excluded_ratio_pct >= 25.0:
+            coverage_level = "error"
+        elif latest_available < max(1, math.ceil(total_symbols * 0.80)) or excluded > 0:
+            coverage_level = "warning"
+        coverage_detail = f"最新 prediction_date {latest_prediction_date or '-'} は {latest_available}/{total_symbols} 銘柄。"
+        if excluded > 0:
+            coverage_detail += f" 除外 {excluded} 銘柄。"
+        coverage_check = {
+            "label": "銘柄数急減",
+            "value": f"{latest_available}/{total_symbols}",
+            "level": coverage_level,
+            "detail": coverage_detail,
+        }
+        fold_count = len(training.get("folds") or [])
+        leakage_pass = gap_days >= 1 and fold_count > 0
+        leakage_detail = (
+            f"walk-forward {fold_count} folds / gap {gap_days}営業日 / ランダム分割なし。"
+            if leakage_pass
+            else "gap または fold 条件が不足しているため leakage_check に失敗しました。"
+        )
+        quality_checks = [count_check, missing_check, coverage_check]
+        warning_labels = [
+            str(item.get("label") or "").strip()
+            for item in quality_checks
+            if str(item.get("level") or "") == "warning" and str(item.get("label") or "").strip()
+        ]
+        blocker_details = [
+            f"{item['label']}: {item['detail']}"
+            for item in quality_checks
+            if str(item.get("level") or "") == "error"
+        ]
+        if not leakage_pass:
+            blocker_details.insert(0, leakage_detail)
+        data_quality_pass = not any(str(item.get("level") or "") == "error" for item in quality_checks)
+        if data_quality_pass:
+            data_quality_detail = " / ".join(f"{item['label']}={item['value']}" for item in quality_checks)
+            if warning_labels:
+                data_quality_detail += " / 監視中: " + " / ".join(warning_labels)
+        else:
+            data_quality_detail = " / ".join(
+                f"{item['label']}: {item['detail']}"
+                for item in quality_checks
+                if str(item.get("level") or "") == "error"
+            )
+        return {
+            "leakage_check": {
+                "passed": leakage_pass,
+                "detail": leakage_detail,
+            },
+            "data_quality_check": {
+                "passed": data_quality_pass,
+                "detail": data_quality_detail,
+            },
+            "warning_labels": warning_labels,
+            "blockers": blocker_details,
         }
 
     def _build_dashboard_view(
@@ -2337,25 +2491,53 @@ class StockMlPageService:
     def _build_permissions(
         self,
         *,
+        dataset: dict[str, Any],
         dashboard: dict[str, Any],
         training: dict[str, Any],
         models: dict[str, Any],
     ) -> dict[str, Any]:
         role = STOCK_ML_PAGE_ROLE
-        registered_versions = {
-            str(item.get("model_version") or "").strip()
-            for item in (models.get("rows") or [])
-            if isinstance(item, dict)
-        }
         adopted_model_version = str(models.get("adopted_model_version") or "").strip()
-        has_adopted_model = adopted_model_version in registered_versions
+        adopted_model_row = next(
+            (
+                item
+                for item in (models.get("rows") or [])
+                if isinstance(item, dict) and str(item.get("model_version") or "").strip() == adopted_model_version
+            ),
+            None,
+        )
+        has_adopted_model = isinstance(adopted_model_row, dict)
+        adopted_model_ready = bool(adopted_model_row and adopted_model_row.get("adoptable"))
         coverage_ready = int(dashboard.get("coverage_total") or 0) > 0
+        missing_coverage = int(dashboard.get("coverage_excluded") or 0) > 0
         data_is_fresh = str(dashboard.get("freshness", {}).get("level") or "") == "normal"
         training_ready = len(training.get("compare_rows") or []) > 0
 
         inference_reason = ""
         if not has_adopted_model:
             inference_reason = "採用モデルが未設定のため、先にモデル管理タブで採用モデルを選択してください。"
+        elif not adopted_model_ready:
+            blockers = [
+                str(item).strip()
+                for item in (adopted_model_row.get("adopt_blockers") or [])
+                if str(item).strip()
+            ]
+            inference_reason = (
+                "採用中モデルが採用不可状態です。"
+                + (f" {' / '.join(blockers[:2])}" if blockers else " leakage_check または data_quality_check を確認してください。")
+                + " モデル管理タブで状態を確認してください。"
+            )
+        elif missing_coverage:
+            reasons = [
+                str(item.get("label") or "").strip()
+                for item in (dataset.get("excluded_reason_breakdown") or [])
+                if isinstance(item, dict) and int(item.get("count") or 0) > 0 and str(item.get("label") or "").strip()
+            ]
+            reason_text = " / ".join(reasons[:3]) if reasons else "取得失敗またはデータ不足"
+            inference_reason = (
+                "対象日にデータ未取得の銘柄があるため推論を実行できません。"
+                f" 除外理由: {reason_text}。データ更新後に再確認してください。"
+            )
         elif not coverage_ready:
             inference_reason = "推論対象銘柄を構築できていないため、データ更新を先に実行してください。"
         elif not data_is_fresh:
@@ -2415,10 +2597,45 @@ class StockMlPageService:
         permissions: dict[str, Any],
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         adopted_model_version = models["adopted_model_version"]
+        adopted_row = next(
+            (
+                item
+                for item in (models.get("rows") or [])
+                if isinstance(item, dict) and str(item.get("model_version") or "").strip() == adopted_model_version
+            ),
+            None,
+        )
         inference_permission = permissions.get("actions", {}).get("run_inference", {})
         inference_enabled = bool(inference_permission.get("allowed"))
         selected_version = models["default_versions"].get(selected_model_family, _MODEL_PRIMARY_VERSION)
-        if self._staleness_days(dashboard["prediction_date"]) > 3:
+        leakage_ok = bool(adopted_row.get("leakage_check")) if isinstance(adopted_row, dict) else False
+        leakage_detail = (
+            str(adopted_row.get("leakage_detail") or "").strip()
+            if isinstance(adopted_row, dict)
+            else "採用モデルの leakage_check 情報を取得できません。"
+        )
+        data_quality_ok = bool(adopted_row.get("data_quality_check")) if isinstance(adopted_row, dict) else False
+        data_quality_detail = (
+            str(adopted_row.get("data_quality_detail") or "").strip()
+            if isinstance(adopted_row, dict)
+            else "採用モデルの data_quality_check 情報を取得できません。"
+        )
+        adopted_ready = bool(adopted_row and adopted_row.get("adoptable"))
+        adopted_blockers = [
+            str(item).strip()
+            for item in ((adopted_row.get("adopt_blockers") or []) if isinstance(adopted_row, dict) else [])
+            if str(item).strip()
+        ]
+        if not adopted_ready:
+            global_status = {
+                "level": "error",
+                "badge": "BLOCKED",
+                "text": (
+                    "採用中モデルが採用不可状態です。"
+                    + (f" {' / '.join(adopted_blockers[:2])}" if adopted_blockers else " モデル管理タブで原因を確認してください。")
+                ),
+            }
+        elif self._staleness_days(dashboard["prediction_date"]) > 3:
             global_status = {
                 "level": "warning",
                 "badge": "WARNING",
@@ -2434,8 +2651,11 @@ class StockMlPageService:
             {
                 "label": "採用モデル",
                 "value": adopted_model_version,
-                "badge": {"label": "READY", "level": "normal"},
-                "note": f"現在の表示モデルは {selected_version}。",
+                "badge": {"label": "READY" if adopted_ready else "REVIEW", "level": "normal" if adopted_ready else "error"},
+                "note": (
+                    f"現在の表示モデルは {selected_version}。"
+                    + (f" {' / '.join(adopted_blockers[:2])}" if adopted_blockers else "")
+                ),
             },
             {
                 "label": "データ鮮度",
@@ -2445,9 +2665,15 @@ class StockMlPageService:
             },
             {
                 "label": "リークチェック",
-                "value": "PASS",
-                "badge": {"label": "PASS", "level": "normal"},
-                "note": "walk-forward + gap 条件を明示し、ランダム分割は許可しません。",
+                "value": "PASS" if leakage_ok else "FAIL",
+                "badge": {"label": "PASS" if leakage_ok else "FAIL", "level": "normal" if leakage_ok else "error"},
+                "note": leakage_detail or "walk-forward + gap 条件を明示し、ランダム分割は許可しません。",
+            },
+            {
+                "label": "データ品質",
+                "value": "PASS" if data_quality_ok else "FAIL",
+                "badge": {"label": "PASS" if data_quality_ok else "FAIL", "level": "normal" if data_quality_ok else "error"},
+                "note": data_quality_detail or "取得件数・欠損率・銘柄被覆を確認します。",
             },
             {
                 "label": "推論実行可否",
