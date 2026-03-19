@@ -68,6 +68,66 @@ class StockMlPageServiceHelpersTest(unittest.TestCase):
 
         self.assertEqual([item["type"] for item in exceptions[:4]], ["ストップ高疑い", "ストップ安疑い", "売買停止疑い", "データ欠損除外"])
 
+    def test_cross_sectional_backtest_uses_intraday_return_and_excludes_unable_names(self) -> None:
+        service = StockMlPageService(full_daily_history_store=None, page_store=None)
+
+        result = service._run_cross_sectional_backtest(
+            ["2026-03-16"],
+            {
+                "2026-03-16": [
+                    {
+                        "code": "7203",
+                        "lgbm_score": 2.0,
+                        "lgbm_prob": 0.8,
+                        "next_return": 0.20,
+                        "next_intraday_return": 0.05,
+                        "range_pct": 0.02,
+                        "volume_ratio_20": 1.10,
+                    },
+                    {
+                        "code": "6758",
+                        "lgbm_score": 1.0,
+                        "lgbm_prob": 0.7,
+                        "next_return": 0.30,
+                        "next_intraday_return": 0.10,
+                        "range_pct": 0.12,
+                        "volume_ratio_20": 1.00,
+                    },
+                ]
+            },
+            model_kind="lgbm",
+        )
+
+        self.assertAlmostEqual(result["daily_series"][0]["gross_return"], 0.05)
+        self.assertAlmostEqual(result["daily_series"][0]["net_return"], 0.049)
+        self.assertEqual(result["metrics"]["unable_count"], 1)
+        self.assertAlmostEqual(result["metrics"]["unable_rate_pct"], 50.0)
+
+    def test_cross_sectional_backtest_does_not_charge_cost_when_every_pick_is_unable(self) -> None:
+        service = StockMlPageService(full_daily_history_store=None, page_store=None)
+
+        result = service._run_cross_sectional_backtest(
+            ["2026-03-16"],
+            {
+                "2026-03-16": [
+                    {
+                        "code": "9984",
+                        "lgbm_score": 2.0,
+                        "lgbm_prob": 0.9,
+                        "next_return": 0.25,
+                        "next_intraday_return": 0.08,
+                        "range_pct": 0.15,
+                        "volume_ratio_20": 1.20,
+                    },
+                ]
+            },
+            model_kind="lgbm",
+        )
+
+        self.assertAlmostEqual(result["daily_series"][0]["gross_return"], 0.0)
+        self.assertAlmostEqual(result["daily_series"][0]["net_return"], 0.0)
+        self.assertEqual(result["metrics"]["unable_count"], 1)
+
 
 class StockMlPageStoreTest(unittest.TestCase):
     def test_add_audit_log_preserves_structured_context(self) -> None:

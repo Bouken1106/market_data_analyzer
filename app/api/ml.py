@@ -269,8 +269,7 @@ async def _run_stock_page_job(
             }
         elif kind == "stock_backtest_run":
             stage_name = "run_backtest"
-            snapshot = await service.build_snapshot(**kwargs)
-            service._ensure_action_allowed(snapshot, "run_backtest")
+            snapshot = await service.run_backtest(**kwargs)
             result = _backtest_payload(snapshot)
         else:
             raise HTTPException(status_code=400, detail="Unsupported stock ML job kind.")

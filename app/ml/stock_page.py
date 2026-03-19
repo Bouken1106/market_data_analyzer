@@ -731,6 +731,27 @@ class StockMlPageService:
         )
         return await self.build_snapshot(**kwargs)
 
+    async def run_backtest(self, **kwargs: Any) -> dict[str, Any]:
+        current_snapshot = await self.build_snapshot(**kwargs)
+        self._ensure_action_allowed(current_snapshot, "run_backtest")
+        filters = current_snapshot.get("filters", {})
+        run_note = str(kwargs.get("run_note") or "").strip()
+        self._record_audit_log(
+            snapshot=current_snapshot,
+            action="run_backtest",
+            detail=(
+                "Backtest summary refreshed."
+                f" actor={self._audit_actor()}"
+                f" prediction_date={filters.get('prediction_date')}"
+                f" cost_buffer={filters.get('cost_buffer')}"
+                f" config={current_snapshot.get('config_hash') or '-'}"
+                + (f" note={run_note[:80]}" if run_note else "")
+            ),
+            level="warning",
+            job_kind="stock_backtest_run",
+        )
+        return await self.build_snapshot(**kwargs)
+
     async def refresh_data(self, **kwargs: Any) -> dict[str, Any]:
         current_snapshot = await self.build_snapshot(**kwargs)
         self._ensure_action_allowed(current_snapshot, "refresh_data")
@@ -1037,6 +1058,7 @@ class StockMlPageService:
                 volatility_20 = float(np.std(clean_returns, ddof=1)) if clean_returns.size >= 2 else 0.0
                 gap_pct = ((opens[idx] / closes[idx - 1]) - 1.0) if closes[idx - 1] > 0 else 0.0
                 next_return = (closes[idx + 1] / closes[idx]) - 1.0
+                next_intraday_return = ((closes[idx + 1] / opens[idx + 1]) - 1.0) if opens[idx + 1] > 0 else next_return
                 row = {
                     "date": dates[idx],
                     "target_date": dates[idx + 1],
@@ -1045,7 +1067,10 @@ class StockMlPageService:
                     "company_name": meta.company_name,
                     "sector": meta.sector,
                     "close": float(closes[idx]),
+                    "target_open": float(opens[idx + 1]),
+                    "target_close": float(closes[idx + 1]),
                     "next_return": float(next_return),
+                    "next_intraday_return": float(next_intraday_return),
                     "y": 1 if next_return > cost_buffer else 0,
                     "ret_1d": float(ret_1d),
                     "ret_5d": float(ret_5d),
@@ -1671,7 +1696,7 @@ class StockMlPageService:
                 {"label": "上位N銘柄", "value": str(_TOP_N)},
                 {"label": "売買コスト", "value": "10 bps"},
                 {"label": "流動性条件", "value": "大型株ユニバース固定"},
-                {"label": "約定不能処理", "value": "高ボラ / 売買停止疑い / 欠損除外を保守的監視"},
+                {"label": "約定不能処理", "value": "ストップ高/安疑い・売買停止疑いは約定失敗として除外"},
             ],
             "compare_rows": compare_rows,
             "summary_cards": self._backtest_summary_cards(
@@ -1715,23 +1740,46 @@ class StockMlPageService:
             prob_key = "lgbm_prob" if model_kind == "lgbm" else "logreg_prob"
             rows.sort(key=lambda item: float(item.get(score_key) or 0.0), reverse=True)
             selected = rows[: min(_TOP_N, len(rows))]
-            symbols = [item["code"] for item in selected]
-            turnover = 1.0 if not prev_selection else len(set(symbols).symmetric_difference(prev_selection)) / max(len(symbols), 1)
-            turnover_acc += turnover
-            cost = turnover * (10.0 / 10_000.0)
-            gross_ret = float(np.mean([float(item["next_return"]) for item in selected])) if selected else 0.0
-            net_ret = gross_ret - cost
-            gross_equity *= (1.0 + gross_ret)
-            equity *= (1.0 + net_ret)
             unable_candidates = [
                 item
                 for item in selected
                 if float(item["range_pct"]) >= 0.10 or float(item.get("volume_ratio_20") or 0.0) <= 0.05
             ]
+            tradable_selected = [item for item in selected if item not in unable_candidates]
+            symbols = [item["code"] for item in tradable_selected]
+            prev_count = len(prev_selection)
+            current_count = len(symbols)
+            if prev_count == 0 and current_count == 0:
+                turnover = 0.0
+            elif prev_count == 0:
+                turnover = 1.0
+            else:
+                turnover = len(set(symbols).symmetric_difference(prev_selection)) / max(current_count, prev_count, 1)
+            turnover_acc += turnover
+            cost = turnover * (10.0 / 10_000.0)
+            gross_ret = (
+                float(np.mean([float(item.get("next_intraday_return", item["next_return"])) for item in tradable_selected]))
+                if tradable_selected
+                else 0.0
+            )
+            net_ret = gross_ret - cost
+            gross_equity *= (1.0 + gross_ret)
+            equity *= (1.0 + net_ret)
             unable_count += len(unable_candidates)
             selected_symbol_count += len(selected)
             series.append({"date": day, "equity": equity, "equity_norm": equity})
-            daily_series.append({"date": day, "net_return": net_ret, "gross_return": gross_ret, "avg_prob": float(np.mean([float(item.get(prob_key) or 0.5) for item in selected]))})
+            daily_series.append(
+                {
+                    "date": day,
+                    "net_return": net_ret,
+                    "gross_return": gross_ret,
+                    "avg_prob": (
+                        float(np.mean([float(item.get(prob_key) or 0.5) for item in tradable_selected]))
+                        if tradable_selected
+                        else 0.5
+                    ),
+                }
+            )
             daily_returns.append(net_ret)
             gross_daily_returns.append(gross_ret)
             prev_selection = symbols
