@@ -402,6 +402,26 @@
               </label>
               <label>
                 <span class="ml-label-row">
+                  <span>主モデル</span>
+                  <details class="mlops-inline-help">
+                    <summary aria-label="主モデルの説明">?</summary>
+                    <div>初版で比較の中心にする本命モデルです。表形式の日次特徴量に対して LightGBM Classifier を固定で使います。</div>
+                  </details>
+                </span>
+                <input type="text" value="LightGBM Classifier" readonly />
+              </label>
+              <label>
+                <span class="ml-label-row">
+                  <span>比較モデル</span>
+                  <details class="mlops-inline-help">
+                    <summary aria-label="比較モデルの説明">?</summary>
+                    <div>本命モデルの優位性を確認するための基準モデルです。初版は Logistic Regression 固定で同一 fold 条件にそろえます。</div>
+                  </details>
+                </span>
+                <input type="text" value="Logistic Regression" readonly />
+              </label>
+              <label>
+                <span class="ml-label-row">
                   <span>学習期間</span>
                   <details class="mlops-inline-help">
                     <summary aria-label="学習期間の説明">?</summary>

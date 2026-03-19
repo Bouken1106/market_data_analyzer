@@ -7,6 +7,48 @@ from app.stores.stock_ml_page import StockMlPageStore
 
 
 class StockMlPageServiceHelpersTest(unittest.TestCase):
+    def test_audit_settings_include_train_and_run_notes(self) -> None:
+        settings = StockMlPageService._audit_settings(
+            {
+                "prediction_date": "2026-03-18",
+                "universe_filter": "jp_large_cap_stooq_v1",
+                "model_family": "LightGBM Classifier",
+                "feature_set": "base_v1",
+                "cost_buffer": "0.0",
+                "train_window_months": "12",
+                "gap_days": "5",
+                "valid_window_months": "1",
+                "random_seed": "42",
+                "train_note": "walk-forward を再確認",
+                "run_note": "営業日確定後に手動実行",
+            }
+        )
+
+        self.assertEqual(settings["train_note"], "walk-forward を再確認")
+        self.assertEqual(settings["run_note"], "営業日確定後に手動実行")
+
+    def test_missing_source_summary_mentions_stooq_daily_cache(self) -> None:
+        summary = StockMlPageService._missing_source_summary(
+            [
+                {"reason": "fetch_failed", "count": 2},
+                {"reason": "history_short", "count": 1},
+            ]
+        )
+
+        self.assertIn("Stooq daily cache 取得失敗 2件", summary)
+        self.assertIn("Stooq daily cache 履歴不足 1件", summary)
+
+    def test_runtime_logs_expand_predictor_pipeline(self) -> None:
+        service = StockMlPageService(full_daily_history_store=None, page_store=None)
+
+        logs = service._runtime_logs(action="predictor", latest_market_date="2026-03-18")
+
+        self.assertEqual(
+            [item["stage"] for item in logs],
+            ["collector", "normalizer", "feature_builder", "predictor", "reporter"],
+        )
+        self.assertTrue(all(item["status"] == "SUCCEEDED" for item in logs))
+
     def test_backtest_summary_cards_follow_focus_result(self) -> None:
         result = {
             "metrics": {

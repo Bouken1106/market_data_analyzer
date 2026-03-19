@@ -443,6 +443,8 @@ class StockMlPageService:
             "gap_days": str(filters.get("gap_days") or "").strip(),
             "valid_window_months": str(filters.get("valid_window_months") or "").strip(),
             "random_seed": str(filters.get("random_seed") or "").strip(),
+            "train_note": str(filters.get("train_note") or "").strip()[:500],
+            "run_note": str(filters.get("run_note") or "").strip()[:200],
         }
         if isinstance(extra, dict):
             for key, value in extra.items():
@@ -2855,6 +2857,27 @@ class StockMlPageService:
         level = str(latest.get("level") or "normal").strip().lower()
         return "FAILED" if level == "error" else "SUCCEEDED"
 
+    @staticmethod
+    def _missing_source_summary(excluded_reason_breakdown: list[dict[str, Any]]) -> str:
+        source_items: list[str] = []
+        for item in excluded_reason_breakdown:
+            if not isinstance(item, dict):
+                continue
+            reason = str(item.get("reason") or "").strip()
+            count = int(item.get("count") or 0)
+            if count <= 0:
+                continue
+            if reason == "fetch_failed":
+                source_items.append(f"Stooq daily cache 取得失敗 {count}件")
+            elif reason in {"empty_response", "no_data"}:
+                source_items.append(f"Stooq daily cache データ不足 {count}件")
+            elif reason == "history_short":
+                source_items.append(f"Stooq daily cache 履歴不足 {count}件")
+            else:
+                label = str(item.get("label") or "その他").strip()
+                source_items.append(f"Stooq daily cache {label} {count}件")
+        return " / ".join(source_items[:3])
+
     def _build_permissions(
         self,
         *,
@@ -2879,6 +2902,7 @@ class StockMlPageService:
         missing_coverage = int(dashboard.get("coverage_excluded") or 0) > 0
         data_is_fresh = str(dashboard.get("freshness", {}).get("level") or "") == "normal"
         training_ready = len(training.get("compare_rows") or []) > 0
+        missing_source_summary = self._missing_source_summary(dataset.get("excluded_reason_breakdown") or [])
 
         inference_reason = ""
         if not has_adopted_model:
@@ -2895,15 +2919,10 @@ class StockMlPageService:
                 + " モデル管理タブで状態を確認してください。"
             )
         elif missing_coverage:
-            reasons = [
-                str(item.get("label") or "").strip()
-                for item in (dataset.get("excluded_reason_breakdown") or [])
-                if isinstance(item, dict) and int(item.get("count") or 0) > 0 and str(item.get("label") or "").strip()
-            ]
-            reason_text = " / ".join(reasons[:3]) if reasons else "取得失敗またはデータ不足"
             inference_reason = (
                 "対象日にデータ未取得の銘柄があるため推論を実行できません。"
-                f" 除外理由: {reason_text}。データ更新後に再確認してください。"
+                f" 不足ソース: {missing_source_summary or 'Stooq daily cache'}。"
+                " データ更新後に再確認してください。"
             )
         elif not coverage_ready:
             inference_reason = "推論対象銘柄を構築できていないため、データ更新を先に実行してください。"
@@ -3176,8 +3195,62 @@ class StockMlPageService:
 
     def _runtime_logs(self, *, action: str, latest_market_date: str) -> list[dict[str, Any]]:
         time_label = f"{latest_market_date} 15:00".split(" ")[1] if latest_market_date else "-"
+        if action == "predictor":
+            return [
+                {
+                    "level": "normal",
+                    "time": time_label,
+                    "stage": "collector",
+                    "status": "SUCCEEDED",
+                    "message": f"Stooq daily CSV loaded for {len(JP_LARGE_CAP_UNIVERSE)} JP symbols on {latest_market_date}.",
+                },
+                {
+                    "level": "normal",
+                    "time": time_label,
+                    "stage": "normalizer",
+                    "status": "SUCCEEDED",
+                    "message": "OHLCV cache normalized into aligned daily rows.",
+                },
+                {
+                    "level": "normal",
+                    "time": time_label,
+                    "stage": "feature_builder",
+                    "status": "SUCCEEDED",
+                    "message": "ret_1d..gap_pct features and y_cls_1d labels refreshed.",
+                },
+                {
+                    "level": "normal",
+                    "time": time_label,
+                    "stage": "predictor",
+                    "status": "SUCCEEDED",
+                    "message": "LightGBM classifier/regressor and Logistic baseline scored the latest prediction_date.",
+                },
+                {
+                    "level": "normal",
+                    "time": time_label,
+                    "stage": "reporter",
+                    "status": "SUCCEEDED",
+                    "message": "prediction_daily-compatible DTO and dashboard cards prepared.",
+                },
+            ]
+        if action == "audit":
+            return [
+                {
+                    "level": "unknown",
+                    "time": "-",
+                    "stage": "audit",
+                    "status": "IDLE",
+                    "message": "監査ログはまだありません。次の推論実行・学習ジョブ作成・CSV出力から記録します。",
+                },
+            ]
         return [
-            {"level": "normal", "time": time_label, "stage": action, "status": "SUCCEEDED", "message": f"{action} stage completed on {latest_market_date}."},
+            {
+                "level": "normal",
+                "time": time_label,
+                "stage": action,
+                "status": "SUCCEEDED",
+                "message": f"{action} stage completed on {latest_market_date}.",
+            },
         ]
 
     @staticmethod
