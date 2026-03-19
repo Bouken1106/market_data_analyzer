@@ -20,7 +20,7 @@ try:
 except Exception:  # pragma: no cover - import guard for incomplete local envs
     lgb = None
 
-from ..config import HISTORICAL_CACHE_TTL_SEC, LOGGER
+from ..config import HISTORICAL_CACHE_TTL_SEC, LOGGER, STOCK_ML_PAGE_ROLE
 from ..stores import FullDailyHistoryStore, StockMlPageStore
 
 _TOP_N = 10
@@ -300,11 +300,17 @@ class StockMlPageService:
             models=models,
             refresh=refresh,
         )
+        permissions = self._build_permissions(
+            dashboard=dashboard,
+            training=training,
+            models=models,
+        )
         global_status, sidebar_status = self._build_status_views(
             dashboard=dashboard,
             training=training,
             models=models,
             selected_model_family=selected_model_family,
+            permissions=permissions,
         )
 
         return {
@@ -334,6 +340,7 @@ class StockMlPageService:
                 "cost_buffer": f"{cost_buffer:.3f}".rstrip("0").rstrip(".") if cost_buffer else "0.0",
                 "run_note": str(run_note or "").strip()[:200],
             },
+            "permissions": permissions,
             "global_status": global_status,
             "sidebar_status": sidebar_status,
             "dashboard": dashboard,
@@ -344,6 +351,8 @@ class StockMlPageService:
         }
 
     async def run_inference(self, **kwargs: Any) -> dict[str, Any]:
+        current_snapshot = await self.build_snapshot(**kwargs)
+        self._ensure_action_allowed(current_snapshot, "run_inference")
         self.page_store.mark_inference_run()
         self.page_store.add_audit_log(
             action="run_inference",
@@ -352,6 +361,8 @@ class StockMlPageService:
         return await self.build_snapshot(**kwargs)
 
     async def create_training_job(self, **kwargs: Any) -> dict[str, Any]:
+        current_snapshot = await self.build_snapshot(**kwargs)
+        self._ensure_action_allowed(current_snapshot, "create_training_job")
         self.page_store.mark_training_run()
         self.page_store.add_audit_log(
             action="create_training_job",
@@ -361,15 +372,21 @@ class StockMlPageService:
         return await self.build_snapshot(**kwargs)
 
     async def refresh_data(self, **kwargs: Any) -> dict[str, Any]:
+        current_snapshot = await self.build_snapshot(**kwargs)
+        self._ensure_action_allowed(current_snapshot, "refresh_data")
         self.page_store.add_audit_log(
             action="refresh_data",
             detail="Universe daily cache refreshed from Stooq.",
         )
-        return await self.build_snapshot(refresh=True, **kwargs)
+        refreshed_kwargs = dict(kwargs)
+        refreshed_kwargs["refresh"] = True
+        return await self.build_snapshot(**refreshed_kwargs)
 
     async def adopt_model(self, *, model_version: str, **kwargs: Any) -> dict[str, Any]:
         if model_version not in {_MODEL_PRIMARY_VERSION, _MODEL_BASELINE_VERSION}:
             raise HTTPException(status_code=400, detail="Unknown model_version.")
+        current_snapshot = await self.build_snapshot(**kwargs)
+        self._ensure_action_allowed(current_snapshot, "adopt_model")
         self.page_store.set_adopted_model_version(model_version)
         self.page_store.add_audit_log(
             action="adopt_model",
@@ -1501,6 +1518,77 @@ class StockMlPageService:
             "logs": logs,
         }
 
+    def _build_permissions(
+        self,
+        *,
+        dashboard: dict[str, Any],
+        training: dict[str, Any],
+        models: dict[str, Any],
+    ) -> dict[str, Any]:
+        role = STOCK_ML_PAGE_ROLE
+        registered_versions = {
+            str(item.get("model_version") or "").strip()
+            for item in (models.get("rows") or [])
+            if isinstance(item, dict)
+        }
+        adopted_model_version = str(models.get("adopted_model_version") or "").strip()
+        has_adopted_model = adopted_model_version in registered_versions
+        coverage_ready = int(dashboard.get("coverage_total") or 0) > 0
+        data_is_fresh = str(dashboard.get("freshness", {}).get("level") or "") == "normal"
+        training_ready = len(training.get("compare_rows") or []) > 0
+
+        inference_reason = ""
+        if not has_adopted_model:
+            inference_reason = "採用モデルが未設定のため、先にモデル管理タブで採用モデルを選択してください。"
+        elif not coverage_ready:
+            inference_reason = "推論対象銘柄を構築できていないため、データ更新を先に実行してください。"
+        elif not data_is_fresh:
+            inference_reason = "最新日付が古いため、データ更新後に推論を再実行してください。"
+
+        training_reason = ""
+        if not training_ready:
+            training_reason = "学習・検証データが不足しているため、ジョブを作成できません。"
+
+        def permission_item(*, allowed: bool, reason: str = "") -> dict[str, Any]:
+            return {
+                "allowed": bool(allowed),
+                "reason": "" if allowed else reason,
+            }
+
+        return {
+            "role": role,
+            "actions": {
+                "refresh_data": permission_item(
+                    allowed=role == "admin",
+                    reason="データ更新は admin ロールのみ実行できます。",
+                ),
+                "run_inference": permission_item(
+                    allowed=(role == "admin" and not inference_reason),
+                    reason=inference_reason or "推論実行は admin ロールのみ実行できます。",
+                ),
+                "create_training_job": permission_item(
+                    allowed=(role in {"analyst", "admin"} and not training_reason),
+                    reason=training_reason or "学習ジョブ作成は analyst 以上のロールが必要です。",
+                ),
+                "run_backtest": permission_item(
+                    allowed=role in {"analyst", "admin"},
+                    reason="バックテスト実行は analyst 以上のロールが必要です。",
+                ),
+                "export_report": permission_item(
+                    allowed=role in {"analyst", "admin"},
+                    reason="レポート出力は analyst 以上のロールが必要です。",
+                ),
+                "adopt_model": permission_item(
+                    allowed=role == "admin",
+                    reason="採用モデル変更は admin ロールのみ実行できます。",
+                ),
+                "export_csv": permission_item(
+                    allowed=True,
+                    reason="",
+                ),
+            },
+        }
+
     def _build_status_views(
         self,
         *,
@@ -1508,9 +1596,11 @@ class StockMlPageService:
         training: dict[str, Any],
         models: dict[str, Any],
         selected_model_family: str,
+        permissions: dict[str, Any],
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         adopted_model_version = models["adopted_model_version"]
-        inference_enabled = True
+        inference_permission = permissions.get("actions", {}).get("run_inference", {})
+        inference_enabled = bool(inference_permission.get("allowed"))
         selected_version = models["default_versions"].get(selected_model_family, _MODEL_PRIMARY_VERSION)
         if self._staleness_days(dashboard["prediction_date"]) > 3:
             global_status = {
@@ -1547,10 +1637,25 @@ class StockMlPageService:
                 "label": "推論実行可否",
                 "value": "実行可能" if inference_enabled else "実行不可",
                 "badge": {"label": "ENABLED" if inference_enabled else "BLOCKED", "level": "normal" if inference_enabled else "error"},
-                "note": f"学習比較 rows: {len(training['compare_rows'])}",
+                "note": str(inference_permission.get("reason") or f"学習比較 rows: {len(training['compare_rows'])}"),
+            },
+            {
+                "label": "操作ロール",
+                "value": str(permissions.get("role") or "viewer"),
+                "badge": {"label": str(permissions.get("role") or "viewer").upper(), "level": "normal"},
+                "note": "viewer は閲覧のみ、analyst は学習/レポート、admin は推論/採用切替まで可能です。",
             },
         ]
         return global_status, sidebar_status
+
+    @staticmethod
+    def _ensure_action_allowed(snapshot: dict[str, Any], action: str) -> None:
+        permissions = snapshot.get("permissions", {})
+        action_permission = permissions.get("actions", {}).get(action, {})
+        if bool(action_permission.get("allowed")):
+            return
+        reason = str(action_permission.get("reason") or "この操作は現在の条件では実行できません。").strip()
+        raise HTTPException(status_code=403, detail=reason)
 
     def _model_audit_lines(self, *, model_version: str) -> list[str]:
         state = self.page_store.get_state()

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
-from ..config import ML_HISTORY_DEFAULT_MONTHS
+from ..config import LOGGER, ML_HISTORY_DEFAULT_MONTHS
 from ..ml.catalog import ML_MODEL_CATALOG
 from ..ml.stock_page import StockMlPageService
 from ..ml.pipelines import (
@@ -24,7 +27,7 @@ from ..models import (
     StockMlModelAdoptionRequest,
     StockMlPageActionRequest,
 )
-from ..utils import normalize_ml_history_months, normalize_symbols, ok_json_response
+from ..utils import normalize_ml_history_months, normalize_symbols, ok_json_response, utc_now_iso
 from .deps import HubDep, MlJobStoreDep, StockMlPageStoreDep
 
 router = APIRouter()
@@ -44,9 +47,368 @@ def _normalize_job_symbol(raw_symbol: str) -> str:
     return symbols[0]
 
 
+def _stock_page_kwargs(
+    *,
+    prediction_date: str | None,
+    universe_filter: str,
+    model_family: str,
+    feature_set: str,
+    cost_buffer: float,
+    run_note: str,
+    refresh: bool = False,
+) -> dict[str, Any]:
+    return {
+        "prediction_date": prediction_date,
+        "universe_filter": universe_filter,
+        "model_family": model_family,
+        "feature_set": feature_set,
+        "cost_buffer": cost_buffer,
+        "run_note": run_note,
+        "refresh": refresh,
+    }
+
+
+def _prediction_daily_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
+    dashboard = snapshot.get("dashboard", {})
+    filters = snapshot.get("filters", {})
+    models = snapshot.get("models", {})
+    default_versions = models.get("default_versions", {})
+    model_version = default_versions.get(filters.get("model_family"), "")
+    rows = []
+    for item in dashboard.get("rows", []):
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            {
+                "prediction_date": dashboard.get("prediction_date"),
+                "target_date": dashboard.get("target_date"),
+                "code": item.get("code"),
+                "score_cls": item.get("score_cls"),
+                "prob_up": item.get("prob_up"),
+                "score_rank": item.get("score_rank"),
+                "expected_return": item.get("expected_return"),
+                "model_version": model_version,
+                "feature_version": dashboard.get("feature_version"),
+                "data_version": dashboard.get("data_version"),
+                "warnings": item.get("warnings", []),
+            }
+        )
+    return {
+        "prediction_date": dashboard.get("prediction_date"),
+        "target_date": dashboard.get("target_date"),
+        "model_version": model_version,
+        "feature_version": dashboard.get("feature_version"),
+        "data_version": dashboard.get("data_version"),
+        "rows": rows,
+    }
+
+
+def _training_job_status_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    result = payload.get("result") or {}
+    return {
+        "job_id": payload.get("job_id"),
+        "status": payload.get("status"),
+        "progress": payload.get("progress"),
+        "message": payload.get("message"),
+        "metrics": result.get("metrics"),
+        "summary": result.get("summary"),
+        "folds": result.get("folds"),
+        "logs": result.get("logs"),
+        "error": payload.get("error"),
+        "updated_at": payload.get("updated_at"),
+    }
+
+
+def _backtest_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
+    backtest = snapshot.get("backtest", {})
+    return {
+        "summary": backtest.get("summary_cards", []),
+        "compare": backtest.get("compare_rows", []),
+        "curve": {
+            "labels": backtest.get("equity_labels", []),
+            "series": backtest.get("equity_series", []),
+        },
+        "monthly_returns": backtest.get("monthly_returns", []),
+        "exceptions": backtest.get("exceptions", []),
+    }
+
+
+def _ops_status_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
+    ops = snapshot.get("ops", {})
+    return {
+        "pipeline_states": ops.get("pipeline", []),
+        "summary": ops.get("summary_cards", []),
+        "alerts": ops.get("alerts", []),
+        "logs": ops.get("logs", []),
+    }
+
+
+def _stock_model_registry_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
+    models = snapshot.get("models", {})
+    return {
+        "models": models.get("rows", []),
+        "adopted_model_version": models.get("adopted_model_version"),
+        "default_versions": models.get("default_versions", {}),
+    }
+
+
+def _stock_page_config_hash(req: StockMlPageActionRequest) -> str:
+    payload = {
+        "prediction_date": req.prediction_date,
+        "universe_filter": req.universe_filter,
+        "model_family": req.model_family,
+        "feature_set": req.feature_set,
+        "cost_buffer": req.cost_buffer,
+    }
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+    return digest[:12]
+
+
+async def _run_stock_page_job(
+    *,
+    job_id: str,
+    kind: str,
+    req: StockMlPageActionRequest,
+    hub: HubDep,
+    stock_ml_page_store: StockMlPageStoreDep,
+    ml_job_store: MlJobStoreDep,
+) -> None:
+    service = _stock_ml_page_service(hub, stock_ml_page_store)
+    ml_job_store.update(job_id, status="running", progress=15, message="ジョブを実行しています。")
+    kwargs = _stock_page_kwargs(
+        prediction_date=req.prediction_date,
+        universe_filter=req.universe_filter,
+        model_family=req.model_family,
+        feature_set=req.feature_set,
+        cost_buffer=req.cost_buffer,
+        run_note=req.run_note,
+        refresh=req.refresh,
+    )
+    try:
+        if kind == "stock_prediction_run":
+            snapshot = await service.run_inference(**kwargs)
+            result = _prediction_daily_payload(snapshot)
+        elif kind == "stock_training_job":
+            snapshot = await service.create_training_job(**kwargs)
+            result = {
+                "metrics": snapshot.get("train", {}).get("compare_rows", []),
+                "summary": snapshot.get("train", {}).get("summary_cards", []),
+                "folds": snapshot.get("train", {}).get("folds", []),
+                "logs": snapshot.get("ops", {}).get("logs", []),
+            }
+        elif kind == "stock_backtest_run":
+            snapshot = await service.build_snapshot(**kwargs)
+            service._ensure_action_allowed(snapshot, "run_backtest")
+            result = _backtest_payload(snapshot)
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported stock ML job kind.")
+        ml_job_store.complete(job_id, result)
+    except HTTPException as exc:
+        ml_job_store.fail(job_id, str(exc.detail))
+    except Exception as exc:  # pragma: no cover - defensive background task guard
+        LOGGER.exception("Stock ML page job failed: %s", exc)
+        ml_job_store.fail(job_id, str(exc))
+
+
 @router.get("/api/ml/models")
-async def ml_models() -> JSONResponse:
-    return ok_json_response(models=ML_MODEL_CATALOG)
+async def ml_models(
+    hub: HubDep,
+    stock_ml_page_store: StockMlPageStoreDep,
+    scope: str | None = None,
+    prediction_date: str | None = None,
+    universe_filter: str = "jp_large_cap_stooq_v1",
+    model_family: str = "LightGBM Classifier",
+    feature_set: str = "base_v1",
+    cost_buffer: float = 0.0,
+    run_note: str = "",
+    refresh: bool = False,
+) -> JSONResponse:
+    normalized_scope = str(scope or "").strip().lower()
+    if normalized_scope not in {"stock", "stock-page", "registry"}:
+        return ok_json_response(models=ML_MODEL_CATALOG)
+
+    service = _stock_ml_page_service(hub, stock_ml_page_store)
+    snapshot = await service.build_snapshot(
+        prediction_date=prediction_date,
+        universe_filter=universe_filter,
+        model_family=model_family,
+        feature_set=feature_set,
+        cost_buffer=cost_buffer,
+        run_note=run_note,
+        refresh=refresh,
+    )
+    return ok_json_response(**_stock_model_registry_payload(snapshot))
+
+
+@router.get("/api/ml/predictions/daily")
+async def stock_ml_prediction_daily(
+    hub: HubDep,
+    stock_ml_page_store: StockMlPageStoreDep,
+    prediction_date: str | None = None,
+    universe_filter: str = "jp_large_cap_stooq_v1",
+    model_family: str = "LightGBM Classifier",
+    feature_set: str = "base_v1",
+    cost_buffer: float = 0.0,
+    run_note: str = "",
+    refresh: bool = False,
+) -> JSONResponse:
+    service = _stock_ml_page_service(hub, stock_ml_page_store)
+    snapshot = await service.build_snapshot(
+        prediction_date=prediction_date,
+        universe_filter=universe_filter,
+        model_family=model_family,
+        feature_set=feature_set,
+        cost_buffer=cost_buffer,
+        run_note=run_note,
+        refresh=refresh,
+    )
+    return ok_json_response(**_prediction_daily_payload(snapshot))
+
+
+@router.post("/api/ml/predictions/run")
+async def stock_ml_prediction_run(
+    req: StockMlPageActionRequest,
+    hub: HubDep,
+    stock_ml_page_store: StockMlPageStoreDep,
+    ml_job_store: MlJobStoreDep,
+) -> JSONResponse:
+    job_id = ml_job_store.create(kind="stock_prediction_run", symbol="JP")
+    asyncio.create_task(
+        _run_stock_page_job(
+            job_id=job_id,
+            kind="stock_prediction_run",
+            req=req,
+            hub=hub,
+            stock_ml_page_store=stock_ml_page_store,
+            ml_job_store=ml_job_store,
+        )
+    )
+    return ok_json_response(job_id=job_id, accepted_at=utc_now_iso())
+
+
+@router.post("/api/ml/training/jobs")
+async def stock_ml_training_job_create(
+    req: StockMlPageActionRequest,
+    hub: HubDep,
+    stock_ml_page_store: StockMlPageStoreDep,
+    ml_job_store: MlJobStoreDep,
+) -> JSONResponse:
+    job_id = ml_job_store.create(kind="stock_training_job", symbol="JP")
+    asyncio.create_task(
+        _run_stock_page_job(
+            job_id=job_id,
+            kind="stock_training_job",
+            req=req,
+            hub=hub,
+            stock_ml_page_store=stock_ml_page_store,
+            ml_job_store=ml_job_store,
+        )
+    )
+    return ok_json_response(job_id=job_id, config_hash=_stock_page_config_hash(req))
+
+
+@router.get("/api/ml/training/jobs/{job_id}")
+async def stock_ml_training_job_status(job_id: str, ml_job_store: MlJobStoreDep) -> JSONResponse:
+    payload = ml_job_store.get(job_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return ok_json_response(**_training_job_status_payload(payload))
+
+
+@router.get("/api/ml/backtests")
+async def stock_ml_backtests(
+    hub: HubDep,
+    stock_ml_page_store: StockMlPageStoreDep,
+    prediction_date: str | None = None,
+    universe_filter: str = "jp_large_cap_stooq_v1",
+    model_family: str = "LightGBM Classifier",
+    feature_set: str = "base_v1",
+    cost_buffer: float = 0.0,
+    run_note: str = "",
+    refresh: bool = False,
+) -> JSONResponse:
+    service = _stock_ml_page_service(hub, stock_ml_page_store)
+    snapshot = await service.build_snapshot(
+        prediction_date=prediction_date,
+        universe_filter=universe_filter,
+        model_family=model_family,
+        feature_set=feature_set,
+        cost_buffer=cost_buffer,
+        run_note=run_note,
+        refresh=refresh,
+    )
+    return ok_json_response(**_backtest_payload(snapshot))
+
+
+@router.post("/api/ml/backtests/run")
+async def stock_ml_backtests_run(
+    req: StockMlPageActionRequest,
+    hub: HubDep,
+    stock_ml_page_store: StockMlPageStoreDep,
+    ml_job_store: MlJobStoreDep,
+) -> JSONResponse:
+    job_id = ml_job_store.create(kind="stock_backtest_run", symbol="JP")
+    asyncio.create_task(
+        _run_stock_page_job(
+            job_id=job_id,
+            kind="stock_backtest_run",
+            req=req,
+            hub=hub,
+            stock_ml_page_store=stock_ml_page_store,
+            ml_job_store=ml_job_store,
+        )
+    )
+    return ok_json_response(job_id=job_id, accepted_at=utc_now_iso())
+
+
+@router.post("/api/ml/models/{model_version}/adopt")
+async def stock_ml_model_adopt_alias(
+    model_version: str,
+    req: StockMlPageActionRequest,
+    hub: HubDep,
+    stock_ml_page_store: StockMlPageStoreDep,
+) -> JSONResponse:
+    service = _stock_ml_page_service(hub, stock_ml_page_store)
+    payload = await service.adopt_model(
+        model_version=model_version,
+        prediction_date=req.prediction_date,
+        universe_filter=req.universe_filter,
+        model_family=req.model_family,
+        feature_set=req.feature_set,
+        cost_buffer=req.cost_buffer,
+        run_note=req.run_note,
+        refresh=req.refresh,
+    )
+    return ok_json_response(
+        result="adopted",
+        adopted_version=model_version,
+        models=payload.get("models", {}).get("rows", []),
+    )
+
+
+@router.get("/api/ml/ops/status")
+async def stock_ml_ops_status(
+    hub: HubDep,
+    stock_ml_page_store: StockMlPageStoreDep,
+    prediction_date: str | None = None,
+    universe_filter: str = "jp_large_cap_stooq_v1",
+    model_family: str = "LightGBM Classifier",
+    feature_set: str = "base_v1",
+    cost_buffer: float = 0.0,
+    run_note: str = "",
+    refresh: bool = False,
+) -> JSONResponse:
+    service = _stock_ml_page_service(hub, stock_ml_page_store)
+    snapshot = await service.build_snapshot(
+        prediction_date=prediction_date,
+        universe_filter=universe_filter,
+        model_family=model_family,
+        feature_set=feature_set,
+        cost_buffer=cost_buffer,
+        run_note=run_note,
+        refresh=refresh,
+    )
+    return ok_json_response(**_ops_status_payload(snapshot))
 
 
 @router.get("/api/ml/stock-page")

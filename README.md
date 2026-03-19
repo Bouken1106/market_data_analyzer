@@ -80,6 +80,7 @@ LMSTUDIO_CHAT_COMPLETIONS_URL=http://127.0.0.1:1234/v1/chat/completions
 LMSTUDIO_MODEL=ministral-3-3b
 LMSTUDIO_API_KEY=
 LMSTUDIO_TIMEOUT_SEC=25
+STOCK_ML_PAGE_ROLE=admin
 ```
 
 プロバイダー切替:
@@ -107,6 +108,12 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `/strategy-lab`: Strategy Lab（配分ルール + リバランス提案 + コスト込みバックテスト）
 - `/compare-lab`: Model Compare Lab（複数銘柄 × 複数モデルの一括比較）
 - `/` には Paper Portfolio（仮想資産）パネルを搭載し、実注文なしで売買シミュレーション可能
+
+`/ml-lab` の stock ML 画面は `STOCK_ML_PAGE_ROLE` で操作権限を切り替えます。
+
+- `viewer`: 閲覧 + CSV 出力のみ
+- `analyst`: 閲覧 + 学習ジョブ作成 + レポート出力 + バックテスト実行
+- `admin`: 上記に加えてデータ更新、推論実行、採用モデル切替
 
 ## 使い方
 
@@ -201,6 +208,15 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `POST /api/fmp-reference/{symbol}/clear-cache`: FMP reference キャッシュを削除
 - `GET /api/watchlist-commentary?symbols=AAPL,AMZN,...`: 監視銘柄の前日比/30日リターン/30日ボラを計算し、LM Studioで短評を生成
 - `GET /api/ml/models`: ML Forecast Lab のモデル一覧（Ready / Coming Soon）
+- `GET /api/ml/models?scope=stock-page`: 次営業日株価予測ページのモデルレジストリ
+- `GET /api/ml/predictions/daily`: prediction_daily 互換レスポンス
+- `POST /api/ml/predictions/run`: 次営業日株価予測の推論ジョブを起動
+- `POST /api/ml/training/jobs`: 学習・検証ジョブを起動
+- `GET /api/ml/training/jobs/{job_id}`: 学習・検証ジョブ状態取得
+- `GET /api/ml/backtests`: バックテスト結果取得
+- `POST /api/ml/backtests/run`: バックテスト再計算ジョブを起動
+- `POST /api/ml/models/{model_version}/adopt`: 採用モデル切替
+- `GET /api/ml/ops/status`: 運用・監視ステータス取得
 - `GET /api/ml/quantile-lstm?...`: Quantile LSTM を学習・推論し、分位点/評価/描画データを返却（`months=3..60`, デフォルト `60`）
 - `GET /api/ml/patchtst?...`: PatchTST Quantile を学習・推論し、分位点/評価/描画データを返却（`months=3..60`, デフォルト `60`）
 - `POST /api/ml/quantile-lstm/jobs`: Quantile LSTM 非同期ジョブを開始

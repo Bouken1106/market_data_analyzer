@@ -11,6 +11,7 @@ const runInferenceBtn = document.getElementById("mlops-run-inference");
 const createTrainingBtn = document.getElementById("mlops-create-training");
 const exportReportBtn = document.getElementById("mlops-export-report");
 const exportCsvBtn = document.getElementById("mlops-export-csv");
+const roleBadgeEl = document.getElementById("mlops-role-badge");
 const globalBadgeEl = document.getElementById("mlops-global-badge");
 const globalStatusEl = document.getElementById("mlops-global-status");
 const sidebarStatusEl = document.getElementById("mlops-sidebar-status");
@@ -263,13 +264,14 @@ function heatColor(value) {
 function setBusyAction(action) {
   appState.busyAction = action || "";
   const isBusy = Boolean(appState.busyAction);
-  refreshDataBtn.disabled = isBusy;
-  runInferenceBtn.disabled = isBusy;
-  createTrainingBtn.disabled = isBusy;
-  adoptModelBtn.disabled = isBusy;
   refreshDataBtn.textContent = appState.busyAction === "refresh" ? "更新中..." : "データ更新";
   runInferenceBtn.textContent = appState.busyAction === "run-inference" ? "推論実行中..." : "推論実行";
   createTrainingBtn.textContent = appState.busyAction === "training" ? "集計中..." : "学習ジョブ作成";
+  exportReportBtn.textContent = appState.busyAction === "export-report" ? "出力中..." : "レポート出力";
+  if (!isBusy) {
+    exportReportBtn.textContent = "レポート出力";
+  }
+  applyActionPermissions();
 }
 
 function syncStateFromSnapshot() {
@@ -356,6 +358,40 @@ function renderHeader() {
   headerEnvEl.textContent = snapshot.header?.env || "dev";
 }
 
+function actionPermission(actionKey) {
+  return appState.snapshot?.permissions?.actions?.[actionKey] || { allowed: true, reason: "" };
+}
+
+function applyActionPermissions() {
+  const isBusy = Boolean(appState.busyAction);
+  const buttonSpecs = [
+    { button: refreshDataBtn, actionKey: "refresh_data" },
+    { button: runInferenceBtn, actionKey: "run_inference" },
+    { button: createTrainingBtn, actionKey: "create_training_job" },
+    { button: exportReportBtn, actionKey: "export_report" },
+    { button: exportCsvBtn, actionKey: "export_csv" },
+  ];
+  buttonSpecs.forEach(({ button, actionKey }) => {
+    if (!button) return;
+    const permission = actionPermission(actionKey);
+    button.disabled = isBusy || !permission.allowed;
+    button.title = !permission.allowed ? permission.reason || "" : "";
+  });
+  if (adoptModelBtn) {
+    const selected = getSelectedModelRow();
+    const permission = actionPermission("adopt_model");
+    const modelEligible = Boolean(selected && selected.adoptable && selected.status !== "adopted");
+    adoptModelBtn.disabled = isBusy || !permission.allowed || !modelEligible;
+    adoptModelBtn.title = !permission.allowed
+      ? permission.reason || ""
+      : modelEligible
+        ? ""
+        : selected
+          ? "採用中モデルは切替不要です。"
+          : "";
+  }
+}
+
 function renderFilters() {
   const snapshot = appState.snapshot;
   if (!snapshot) return;
@@ -380,6 +416,17 @@ function renderGlobalStatus() {
   globalBadgeEl.className = `mlops-badge ${levelClass(status.level)}`;
   globalBadgeEl.textContent = status.badge || "INFO";
   globalStatusEl.textContent = status.text || "";
+  const role = snapshot.permissions?.role || "-";
+  if (roleBadgeEl) {
+    roleBadgeEl.textContent = `role: ${role}`;
+    roleBadgeEl.className = `pill ${role === "admin" ? "chip-green" : role === "analyst" ? "chip-amber" : "chip-cyan"}`;
+    roleBadgeEl.title = role === "admin"
+      ? "推論実行・データ更新・採用モデル切替が可能です。"
+      : role === "analyst"
+        ? "学習ジョブ作成・バックテスト・レポート出力が可能です。"
+        : "viewer は閲覧と CSV 出力のみ可能です。";
+  }
+  applyActionPermissions();
 }
 
 function renderSidebarStatus() {
@@ -637,6 +684,7 @@ function renderModels() {
     modelExplainabilityEl.innerHTML = "";
     modelAuditEl.innerHTML = "";
     adoptModelBtn.disabled = true;
+    adoptModelBtn.title = "";
     return;
   }
   modelDetailHeadEl.innerHTML = `
@@ -649,7 +697,7 @@ function renderModels() {
   modelDetailGridEl.innerHTML = makeKeyValueGrid([...(selected.train_conditions || []), ...(selected.eval_conditions || [])]);
   modelExplainabilityEl.innerHTML = makeStackList(selected.explainability || []);
   modelAuditEl.innerHTML = (selected.audit || []).map((item) => `<p>${escapeHtml(item)}</p>`).join("");
-  adoptModelBtn.disabled = !(selected.adoptable && selected.status !== "adopted");
+  applyActionPermissions();
 }
 
 function renderOps() {

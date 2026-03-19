@@ -189,6 +189,14 @@ ML_HISTORY_MAX_MONTHS = 60
 ML_EVAL_MONTHS = 2
 ML_SPLIT_EVAL_DAYS = ML_EVAL_MONTHS * 31
 ML_SPLIT_TRAIN_VAL_RATIO = 0.8
+STOCK_ML_PAGE_SUPPORTED_ROLES = {"viewer", "analyst", "admin"}
+STOCK_ML_PAGE_ROLE = os.getenv("STOCK_ML_PAGE_ROLE", "admin").strip().lower() or "admin"
+if STOCK_ML_PAGE_ROLE not in STOCK_ML_PAGE_SUPPORTED_ROLES:
+    LOGGER.warning(
+        "Unsupported STOCK_ML_PAGE_ROLE=%s. Falling back to admin.",
+        STOCK_ML_PAGE_ROLE,
+    )
+    STOCK_ML_PAGE_ROLE = "admin"
 
 # ---------------------------------------------------------------------------
 # Default symbols
