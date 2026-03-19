@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,8 +18,8 @@ from ..config import (
     STOCKS_LIST_URL,
     SYMBOL_CATALOG_COUNTRY,
     SYMBOL_CATALOG_MAX_ITEMS,
-    SYMBOL_PATTERN,
 )
+from ..utils import is_valid_symbol, normalize_symbol, read_json_file, write_json_file
 
 
 class SymbolCatalogStore:
@@ -104,6 +103,24 @@ class SymbolCatalogStore:
             "symbols": self._symbols,
         }
 
+    @staticmethod
+    def _catalog_row(
+        *,
+        symbol: Any,
+        name: Any = "",
+        exchange: Any = "",
+        security_type: Any = "",
+    ) -> dict[str, str] | None:
+        normalized_symbol = normalize_symbol(symbol)
+        if not is_valid_symbol(normalized_symbol):
+            return None
+        return {
+            "symbol": normalized_symbol,
+            "name": str(name or "").strip(),
+            "exchange": str(exchange or "").strip(),
+            "type": str(security_type or "").strip(),
+        }
+
     async def _fetch_from_api(self) -> list[dict[str, str]]:
         if self.provider == "both":
             td_task = self._fetch_from_twelvedata_api()
@@ -154,21 +171,16 @@ class SymbolCatalogStore:
         for item in rows:
             if not isinstance(item, dict):
                 continue
-            symbol = str(item.get("symbol", "")).strip().upper()
-            if not symbol or symbol in seen:
-                continue
-            if not SYMBOL_PATTERN.match(symbol):
-                continue
-
-            seen.add(symbol)
-            symbols.append(
-                {
-                    "symbol": symbol,
-                    "name": str(item.get("name", "")).strip(),
-                    "exchange": str(item.get("exchange", "")).strip(),
-                    "type": str(item.get("type", "")).strip(),
-                }
+            row = self._catalog_row(
+                symbol=item.get("symbol"),
+                name=item.get("name"),
+                exchange=item.get("exchange"),
+                security_type=item.get("type"),
             )
+            if row is None or row["symbol"] in seen:
+                continue
+            seen.add(row["symbol"])
+            symbols.append(row)
 
         symbols.sort(key=lambda value: value["symbol"])
         return symbols[:SYMBOL_CATALOG_MAX_ITEMS]
@@ -192,25 +204,19 @@ class SymbolCatalogStore:
             if not isinstance(item, dict):
                 continue
 
-            symbol = str(item.get("symbol", "")).strip().upper()
-            if not symbol or symbol in seen:
-                continue
-            if not SYMBOL_PATTERN.match(symbol):
-                continue
-
-            exchange = str(item.get("exchangeShortName") or item.get("exchange") or "").strip()
-            if not self._is_us_equity_exchange(exchange):
-                continue
-
-            seen.add(symbol)
-            symbols.append(
-                {
-                    "symbol": symbol,
-                    "name": str(item.get("name", "")).strip(),
-                    "exchange": exchange,
-                    "type": str(item.get("type", "")).strip(),
-                }
+            row = self._catalog_row(
+                symbol=item.get("symbol"),
+                name=item.get("name"),
+                exchange=item.get("exchangeShortName") or item.get("exchange"),
+                security_type=item.get("type"),
             )
+            if row is None or row["symbol"] in seen:
+                continue
+            if not self._is_us_equity_exchange(row["exchange"]):
+                continue
+
+            seen.add(row["symbol"])
+            symbols.append(row)
 
         symbols.sort(key=lambda value: value["symbol"])
         return symbols[:SYMBOL_CATALOG_MAX_ITEMS]
@@ -238,30 +244,35 @@ class SymbolCatalogStore:
     ) -> list[dict[str, str]]:
         merged: dict[str, dict[str, str]] = {}
         for row in secondary_rows:
-            symbol = str(row.get("symbol", "")).strip().upper()
-            if not symbol:
+            normalized_row = SymbolCatalogStore._catalog_row(
+                symbol=row.get("symbol"),
+                name=row.get("name"),
+                exchange=row.get("exchange"),
+                security_type=row.get("type"),
+            )
+            if normalized_row is None:
                 continue
-            merged[symbol] = dict(row)
+            merged[normalized_row["symbol"]] = normalized_row
         for row in primary_rows:
-            symbol = str(row.get("symbol", "")).strip().upper()
+            symbol = normalize_symbol(row.get("symbol"))
             if not symbol:
                 continue
             base = merged.get(symbol, {})
-            merged[symbol] = {
-                "symbol": symbol,
-                "name": str(row.get("name") or base.get("name") or "").strip(),
-                "exchange": str(row.get("exchange") or base.get("exchange") or "").strip(),
-                "type": str(row.get("type") or base.get("type") or "").strip(),
-            }
+            normalized_row = SymbolCatalogStore._catalog_row(
+                symbol=symbol,
+                name=row.get("name") or base.get("name"),
+                exchange=row.get("exchange") or base.get("exchange"),
+                security_type=row.get("type") or base.get("type"),
+            )
+            if normalized_row is None:
+                continue
+            merged[symbol] = normalized_row
         out = [merged[key] for key in sorted(merged.keys())]
         return out
 
     def _load_from_cache(self, require_fresh: bool) -> dict[str, Any] | None:
-        if not self.cache_path.exists():
-            return None
-        try:
-            raw = json.loads(self.cache_path.read_text(encoding="utf-8"))
-        except Exception:
+        raw = read_json_file(self.cache_path)
+        if not isinstance(raw, dict):
             return None
 
         symbols = raw.get("symbols")
@@ -280,17 +291,15 @@ class SymbolCatalogStore:
         for item in symbols:
             if not isinstance(item, dict):
                 continue
-            symbol = str(item.get("symbol", "")).strip().upper()
-            if not symbol:
-                continue
-            normalized.append(
-                {
-                    "symbol": symbol,
-                    "name": str(item.get("name", "")).strip(),
-                    "exchange": str(item.get("exchange", "")).strip(),
-                    "type": str(item.get("type", "")).strip(),
-                }
+            row = self._catalog_row(
+                symbol=item.get("symbol"),
+                name=item.get("name"),
+                exchange=item.get("exchange"),
+                security_type=item.get("type"),
             )
+            if row is None:
+                continue
+            normalized.append(row)
 
         if not normalized:
             return None
@@ -302,12 +311,11 @@ class SymbolCatalogStore:
 
     def _write_cache(self) -> None:
         try:
-            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
                 "updated_at": self._updated_at,
                 "cached_epoch": time.time(),
                 "symbols": self._symbols,
             }
-            self.cache_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            write_json_file(self.cache_path, payload)
         except Exception as exc:
             LOGGER.warning("Failed to write symbol catalog cache: %s", exc)

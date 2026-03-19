@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..config import LOGGER, MAX_BASIC_SYMBOLS, SYMBOL_PATTERN
+from ..config import LOGGER, MAX_BASIC_SYMBOLS
+from ..utils import normalize_symbols, read_json_file, utc_now_iso, write_json_file
 
 
 class UiStateStore:
@@ -24,34 +23,10 @@ class UiStateStore:
         raw = self._state.get("symbols")
         if not isinstance(raw, list):
             return []
-        out: list[str] = []
-        seen: set[str] = set()
-        for item in raw:
-            symbol = str(item or "").upper().strip()
-            if not symbol or symbol in seen:
-                continue
-            if not SYMBOL_PATTERN.match(symbol):
-                continue
-            seen.add(symbol)
-            out.append(symbol)
-            if len(out) >= MAX_BASIC_SYMBOLS:
-                break
-        return out
+        return normalize_symbols(raw, max_items=MAX_BASIC_SYMBOLS)
 
     def set_symbols(self, symbols: list[str]) -> None:
-        cleaned: list[str] = []
-        seen: set[str] = set()
-        for item in symbols:
-            symbol = str(item or "").upper().strip()
-            if not symbol or symbol in seen:
-                continue
-            if not SYMBOL_PATTERN.match(symbol):
-                continue
-            seen.add(symbol)
-            cleaned.append(symbol)
-            if len(cleaned) >= MAX_BASIC_SYMBOLS:
-                break
-        self._state["symbols"] = cleaned
+        self._state["symbols"] = normalize_symbols(symbols, max_items=MAX_BASIC_SYMBOLS)
         self._touch_and_write()
 
     def get_watchlist_commentary(self) -> dict[str, Any] | None:
@@ -65,12 +40,7 @@ class UiStateStore:
         self._touch_and_write()
 
     def _load_from_disk(self) -> None:
-        if not self.cache_path.exists():
-            return
-        try:
-            payload = json.loads(self.cache_path.read_text(encoding="utf-8"))
-        except Exception:
-            return
+        payload = read_json_file(self.cache_path)
         if not isinstance(payload, dict):
             return
         symbols = payload.get("symbols")
@@ -84,15 +54,11 @@ class UiStateStore:
             self._state["updated_at"] = updated_at
 
     def _touch_and_write(self) -> None:
-        self._state["updated_at"] = datetime.now(timezone.utc).isoformat()
+        self._state["updated_at"] = utc_now_iso()
         self._write_to_disk()
 
     def _write_to_disk(self) -> None:
         try:
-            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-            self.cache_path.write_text(
-                json.dumps(self._state, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            write_json_file(self.cache_path, self._state)
         except Exception as exc:
             LOGGER.warning("Failed to write UI state cache: %s", exc)

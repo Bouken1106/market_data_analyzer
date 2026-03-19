@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..config import LOGGER, SYMBOL_PATTERN
+from ..config import LOGGER
 from ..ohlcv import normalize_ohlcv_points
+from ..utils import is_valid_symbol, normalize_symbol, read_json_file, write_json_file
 
 
 class FullDailyHistoryStore:
@@ -19,10 +19,6 @@ class FullDailyHistoryStore:
         self._memory: dict[str, list[dict[str, Any]]] = {}
         self._updated_at_epoch: dict[str, float] = {}
         self._lock = asyncio.Lock()
-
-    @staticmethod
-    def _normalize_symbol(symbol: str) -> str:
-        return str(symbol or "").upper().strip()
 
     def _path_for(self, symbol: str) -> Path:
         return self.cache_dir / f"{symbol}.json"
@@ -33,11 +29,8 @@ class FullDailyHistoryStore:
 
     def _load_from_disk_no_lock(self, symbol: str) -> list[dict[str, Any]]:
         path = self._path_for(symbol)
-        if not path.exists():
-            return []
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+        payload = read_json_file(path)
+        if not isinstance(payload, dict):
             return []
         updated_raw = payload.get("updated_at") if isinstance(payload, dict) else None
         if isinstance(updated_raw, str):
@@ -62,8 +55,8 @@ class FullDailyHistoryStore:
         )
 
     async def get(self, symbol: str, *, copy: bool = True) -> list[dict[str, Any]]:
-        normalized_symbol = self._normalize_symbol(symbol)
-        if not normalized_symbol or not SYMBOL_PATTERN.match(normalized_symbol):
+        normalized_symbol = normalize_symbol(symbol)
+        if not is_valid_symbol(normalized_symbol):
             return []
         async with self._lock:
             cached = self._memory.get(normalized_symbol)
@@ -74,8 +67,8 @@ class FullDailyHistoryStore:
             return self._clone_points(loaded) if copy else loaded
 
     async def upsert(self, symbol: str, points: list[dict[str, Any]]) -> None:
-        normalized_symbol = self._normalize_symbol(symbol)
-        if not normalized_symbol or not SYMBOL_PATTERN.match(normalized_symbol):
+        normalized_symbol = normalize_symbol(symbol)
+        if not is_valid_symbol(normalized_symbol):
             return
         safe_points = normalize_ohlcv_points(
             points,
@@ -91,24 +84,22 @@ class FullDailyHistoryStore:
             try:
                 now_epoch = time.time()
                 self._updated_at_epoch[normalized_symbol] = now_epoch
-                self.cache_dir.mkdir(parents=True, exist_ok=True)
                 payload = {
                     "symbol": normalized_symbol,
                     "updated_at": datetime.fromtimestamp(now_epoch, tz=timezone.utc).isoformat(),
                     "count": len(safe_points),
                     "points": safe_points,
                 }
-                self._path_for(normalized_symbol).write_text(
-                    json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-                    encoding="utf-8",
-                )
+                write_json_file(self._path_for(normalized_symbol), payload, compact=True)
             except Exception as exc:
                 LOGGER.warning("Failed to write full daily history cache for %s: %s", normalized_symbol, exc)
 
     async def clear(self, symbol: str | None = None) -> int:
         async with self._lock:
             if symbol:
-                normalized_symbol = self._normalize_symbol(symbol)
+                normalized_symbol = normalize_symbol(symbol)
+                if not is_valid_symbol(normalized_symbol):
+                    return 0
                 self._memory.pop(normalized_symbol, None)
                 self._updated_at_epoch.pop(normalized_symbol, None)
                 removed = 0
@@ -135,8 +126,8 @@ class FullDailyHistoryStore:
             return removed
 
     async def last_updated_epoch(self, symbol: str) -> float | None:
-        normalized_symbol = self._normalize_symbol(symbol)
-        if not normalized_symbol or not SYMBOL_PATTERN.match(normalized_symbol):
+        normalized_symbol = normalize_symbol(symbol)
+        if not is_valid_symbol(normalized_symbol):
             return None
         async with self._lock:
             value = self._updated_at_epoch.get(normalized_symbol)

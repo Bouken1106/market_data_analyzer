@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from ..config import LOGGER
+from ..utils import clone_json_like, read_json_file, utc_now_iso, write_json_file
 
 _PRIMARY_MODEL_VERSION = "lgbm_cls_jp_v1.0.0"
 _LEGACY_PRIMARY_MODEL_VERSION = "lgbm_cls_jp_v0.1.0_proxy"
@@ -27,7 +26,7 @@ class StockMlPageStore:
         self._load_from_disk()
 
     def get_state(self) -> dict[str, Any]:
-        return json.loads(json.dumps(self._state, ensure_ascii=False))
+        return clone_json_like(self._state)
 
     def get_adopted_model_version(self) -> str:
         value = str(self._state.get("adopted_model_version") or "").strip()
@@ -43,15 +42,15 @@ class StockMlPageStore:
         self._touch_and_write()
 
     def mark_inference_run(self) -> None:
-        self._state["last_inference_run_at"] = datetime.now(timezone.utc).isoformat()
+        self._state["last_inference_run_at"] = utc_now_iso()
         self._touch_and_write()
 
     def mark_training_run(self) -> None:
-        self._state["last_training_run_at"] = datetime.now(timezone.utc).isoformat()
+        self._state["last_training_run_at"] = utc_now_iso()
         self._touch_and_write()
 
     def add_audit_log(self, *, action: str, detail: str, level: str = "normal") -> None:
-        timestamp = datetime.now(timezone.utc).isoformat()
+        timestamp = utc_now_iso()
         logs = self._state.setdefault("audit_log", [])
         if not isinstance(logs, list):
             logs = []
@@ -69,12 +68,7 @@ class StockMlPageStore:
         self._touch_and_write()
 
     def _load_from_disk(self) -> None:
-        if not self.cache_path.exists():
-            return
-        try:
-            payload = json.loads(self.cache_path.read_text(encoding="utf-8"))
-        except Exception:
-            return
+        payload = read_json_file(self.cache_path)
         if not isinstance(payload, dict):
             return
         adopted_model_version = str(payload.get("adopted_model_version") or "").strip()
@@ -103,15 +97,11 @@ class StockMlPageStore:
             self._state["audit_log"] = cleaned
 
     def _touch_and_write(self) -> None:
-        self._state["updated_at"] = datetime.now(timezone.utc).isoformat()
+        self._state["updated_at"] = utc_now_iso()
         self._write_to_disk()
 
     def _write_to_disk(self) -> None:
         try:
-            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-            self.cache_path.write_text(
-                json.dumps(self._state, ensure_ascii=False, separators=(",", ":")),
-                encoding="utf-8",
-            )
+            write_json_file(self.cache_path, self._state, compact=True)
         except Exception as exc:
             LOGGER.warning("Failed to write stock ML page state cache: %s", exc)

@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..config import LOGGER, SYMBOL_PATTERN
-from ..utils import to_iso8601
+from ..config import LOGGER
+from ..utils import is_valid_symbol, normalize_symbol, read_json_file, to_iso8601, utc_now_iso, write_json_file
 
 
 class LastPriceStore:
@@ -23,13 +21,13 @@ class LastPriceStore:
         self._load_from_disk()
 
     def get(self, symbol: str) -> dict[str, Any] | None:
-        item = self._data.get(symbol.upper())
+        item = self._data.get(normalize_symbol(symbol))
         if not item:
             return None
         return dict(item)
 
     async def upsert(self, record: dict[str, Any]) -> None:
-        symbol = str(record.get("symbol", "")).upper().strip()
+        symbol = normalize_symbol(record.get("symbol"))
         if not symbol:
             return
 
@@ -55,11 +53,8 @@ class LastPriceStore:
                 self._last_flush_at = now
 
     def _load_from_disk(self) -> None:
-        if not self.cache_path.exists():
-            return
-        try:
-            payload = json.loads(self.cache_path.read_text(encoding="utf-8"))
-        except Exception:
+        payload = read_json_file(self.cache_path)
+        if not isinstance(payload, dict):
             return
 
         rows = payload.get("prices") if isinstance(payload, dict) else None
@@ -70,8 +65,8 @@ class LastPriceStore:
         for item in rows:
             if not isinstance(item, dict):
                 continue
-            symbol = str(item.get("symbol", "")).upper().strip()
-            if not symbol or not SYMBOL_PATTERN.match(symbol):
+            symbol = normalize_symbol(item.get("symbol"))
+            if not is_valid_symbol(symbol):
                 continue
             price = item.get("price")
             timestamp = item.get("timestamp")
@@ -89,11 +84,10 @@ class LastPriceStore:
 
     def _write_no_lock(self) -> None:
         try:
-            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": utc_now_iso(),
                 "prices": sorted(self._data.values(), key=lambda item: item["symbol"]),
             }
-            self.cache_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            write_json_file(self.cache_path, payload)
         except Exception as exc:
             LOGGER.warning("Failed to write last price cache: %s", exc)

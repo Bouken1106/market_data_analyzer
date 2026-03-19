@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import json
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..config import LOGGER, SYMBOL_PATTERN
+from ..config import LOGGER
+from ..utils import is_valid_symbol, normalize_symbol, read_json_file, utc_now_iso, write_json_file
 
 
 class PaperPortfolioStore:
@@ -24,15 +23,12 @@ class PaperPortfolioStore:
             "cash": self.default_initial_cash,
             "positions": {},
             "trades": [],
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": utc_now_iso(),
         }
 
     def _load_from_disk(self) -> dict[str, Any]:
-        if not self.cache_path.exists():
-            return self._empty_state()
-        try:
-            payload = json.loads(self.cache_path.read_text(encoding="utf-8"))
-        except Exception:
+        payload = read_json_file(self.cache_path)
+        if payload is None:
             return self._empty_state()
 
         if not isinstance(payload, dict):
@@ -42,7 +38,7 @@ class PaperPortfolioStore:
         cash = self._to_non_negative_float(payload.get("cash"), fallback=initial_cash)
         positions = self._normalize_positions(payload.get("positions"))
         trades = self._normalize_trades(payload.get("trades"))
-        updated_at = str(payload.get("updated_at") or datetime.now(timezone.utc).isoformat())
+        updated_at = str(payload.get("updated_at") or utc_now_iso())
         return {
             "initial_cash": initial_cash,
             "cash": cash,
@@ -76,8 +72,8 @@ class PaperPortfolioStore:
             return {}
         out: dict[str, dict[str, float]] = {}
         for symbol_raw, item in raw.items():
-            symbol = str(symbol_raw or "").upper().strip()
-            if not symbol or not SYMBOL_PATTERN.match(symbol):
+            symbol = normalize_symbol(symbol_raw)
+            if not is_valid_symbol(symbol):
                 continue
             if not isinstance(item, dict):
                 continue
@@ -100,9 +96,9 @@ class PaperPortfolioStore:
         for item in raw:
             if not isinstance(item, dict):
                 continue
-            symbol = str(item.get("symbol") or "").upper().strip()
+            symbol = normalize_symbol(item.get("symbol"))
             side = str(item.get("side") or "").lower().strip()
-            if not symbol or not SYMBOL_PATTERN.match(symbol):
+            if not is_valid_symbol(symbol):
                 continue
             if side not in {"buy", "sell", "short", "cover"}:
                 continue
@@ -112,7 +108,7 @@ class PaperPortfolioStore:
                 continue
             out.append(
                 {
-                    "timestamp": str(item.get("timestamp") or datetime.now(timezone.utc).isoformat()),
+                    "timestamp": str(item.get("timestamp") or utc_now_iso()),
                     "symbol": symbol,
                     "side": side,
                     "quantity": qty,
@@ -142,8 +138,7 @@ class PaperPortfolioStore:
             "updated_at": self._state["updated_at"],
         }
         try:
-            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-            self.cache_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            write_json_file(self.cache_path, payload)
         except Exception as exc:
             LOGGER.warning("Failed to write paper portfolio cache: %s", exc)
 
@@ -164,12 +159,12 @@ class PaperPortfolioStore:
             }
 
     async def apply_trade(self, symbol: str, side: str, quantity: float, price: float) -> dict[str, Any]:
-        normalized_symbol = str(symbol or "").upper().strip()
+        normalized_symbol = normalize_symbol(symbol)
         normalized_side = str(side or "").lower().strip()
         qty = float(quantity)
         px = float(price)
 
-        if not normalized_symbol or not SYMBOL_PATTERN.match(normalized_symbol):
+        if not is_valid_symbol(normalized_symbol):
             raise ValueError("Invalid symbol format.")
         if normalized_side not in {"buy", "sell", "short", "cover"}:
             raise ValueError("side must be buy, sell, short, or cover.")
@@ -251,7 +246,7 @@ class PaperPortfolioStore:
                         "avg_cost": current_avg_cost,
                     }
 
-            timestamp = datetime.now(timezone.utc).isoformat()
+            timestamp = utc_now_iso()
             trade = {
                 "timestamp": timestamp,
                 "symbol": normalized_symbol,
@@ -283,7 +278,7 @@ class PaperPortfolioStore:
                 "cash": next_initial_cash,
                 "positions": {},
                 "trades": [],
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": utc_now_iso(),
             }
             self._write_no_lock()
             return {

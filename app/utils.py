@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import math
+from copy import deepcopy
 from datetime import datetime, timezone
-from typing import Any
+from pathlib import Path
+from typing import Any, Iterable
 
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
@@ -25,15 +28,24 @@ from .config import (
 # Symbol handling
 # ---------------------------------------------------------------------------
 
-def normalize_symbols(raw: str | list[str]) -> list[str]:
-    if isinstance(raw, str):
-        tokens = [item.strip().upper() for item in raw.split(",")]
-    else:
-        tokens = [str(item).strip().upper() for item in raw]
+def normalize_symbol(value: Any) -> str:
+    return str(value or "").strip().upper()
+
+
+def is_valid_symbol(value: Any) -> bool:
+    symbol = normalize_symbol(value)
+    return bool(symbol and SYMBOL_PATTERN.match(symbol))
+
+
+def normalize_symbols(raw: str | Iterable[Any], *, max_items: int | None = None) -> list[str]:
+    if max_items is not None and int(max_items) <= 0:
+        return []
+    tokens = raw.split(",") if isinstance(raw, str) else raw
 
     normalized: list[str] = []
     seen: set[str] = set()
-    for symbol in tokens:
+    for item in tokens:
+        symbol = normalize_symbol(item)
         if not symbol:
             continue
         if not SYMBOL_PATTERN.match(symbol):
@@ -42,6 +54,8 @@ def normalize_symbols(raw: str | list[str]) -> list[str]:
             continue
         seen.add(symbol)
         normalized.append(symbol)
+        if max_items is not None and len(normalized) >= int(max_items):
+            break
 
     return normalized
 
@@ -50,6 +64,10 @@ def normalize_symbols(raw: str | list[str]) -> list[str]:
 # Timestamp helpers
 # ---------------------------------------------------------------------------
 
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 def to_iso8601(value: Any) -> str:
     if isinstance(value, (int, float)):
         parsed = _datetime_from_unix(value)
@@ -57,7 +75,7 @@ def to_iso8601(value: Any) -> str:
             return parsed.isoformat()
     if isinstance(value, str) and value:
         return value
-    return datetime.now(timezone.utc).isoformat()
+    return utc_now_iso()
 
 
 def _datetime_from_unix(value: Any) -> datetime | None:
@@ -81,6 +99,32 @@ def _datetime_from_unix(value: Any) -> datetime | None:
         return datetime.fromtimestamp(numeric, tz=timezone.utc)
     except (OverflowError, OSError, ValueError):
         return None
+
+
+# ---------------------------------------------------------------------------
+# JSON helpers
+# ---------------------------------------------------------------------------
+
+def clone_json_like(value: Any) -> Any:
+    return deepcopy(value)
+
+
+def read_json_file(path: Path) -> Any | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def write_json_file(path: Path, payload: Any, *, compact: bool = False) -> None:
+    dump_kwargs: dict[str, Any] = {"ensure_ascii": False}
+    if compact:
+        dump_kwargs["separators"] = (",", ":")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, **dump_kwargs),
+        encoding="utf-8",
+    )
 
 
 # ---------------------------------------------------------------------------
