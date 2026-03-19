@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from ..models import StrategyEvaluationRequest
+from ..services.paper_portfolio import paper_portfolio_payload, to_valid_price
 from ..strategy_engine import (
     buy_and_hold_backtest,
     build_price_matrix,
@@ -21,7 +22,6 @@ from ..strategy_engine import (
 )
 from ..utils import normalize_symbols, ok_json_response
 from .deps import HubDep, PaperPortfolioStoreDep
-from .portfolio import paper_portfolio_payload, to_valid_price
 
 router = APIRouter()
 
