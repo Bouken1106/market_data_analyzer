@@ -710,6 +710,16 @@
           <section class="mlops-subcard">
             <div class="mlops-subcard-head">
               <div>
+                <h3>日次勝敗分布</h3>
+                <p class="hint">日次 net return の件数分布を、現行採用モデルと候補モデルで比較。</p>
+              </div>
+            </div>
+            <div id="mlops-backtest-daily-distribution" class="mlops-chart-shell"></div>
+          </section>
+
+          <section class="mlops-subcard">
+            <div class="mlops-subcard-head">
+              <div>
                 <h3>例外表示</h3>
                 <p class="hint">ストップ高/安、売買停止、データ欠損による除外を明示。</p>
               </div>
@@ -853,6 +863,29 @@
                 </div>
               </div>
               <div id="mlops-ops-logs" class="mlops-log-list"></div>
+            </section>
+          </div>
+
+          <div class="mlops-split-grid">
+            <section class="mlops-subcard">
+              <div class="mlops-subcard-head">
+                <div>
+                  <h3>除外理由内訳</h3>
+                  <p class="hint">ユニバースから外れた銘柄の主因を件数つきで表示。</p>
+                </div>
+              </div>
+              <div id="mlops-ops-coverage-breakdown" class="mlops-key-value-grid"></div>
+            </section>
+
+            <section class="mlops-subcard">
+              <div class="mlops-subcard-head">
+                <div>
+                  <h3>スコア分布比較</h3>
+                  <p class="hint">直近5営業日と、その前20営業日の primary score 構成比を比較。</p>
+                </div>
+              </div>
+              <div id="mlops-ops-drift-chart" class="mlops-chart-shell"></div>
+              <p id="mlops-ops-drift-note" class="hint">-</p>
             </section>
           </div>
         </section>

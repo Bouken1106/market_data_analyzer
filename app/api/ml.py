@@ -139,6 +139,7 @@ def _backtest_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
             "series": backtest.get("equity_series", []),
         },
         "monthly_returns": backtest.get("monthly_returns", []),
+        "daily_return_distribution": backtest.get("daily_return_distribution", {}),
         "exceptions": backtest.get("exceptions", []),
     }
 
@@ -148,6 +149,8 @@ def _ops_status_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
     return {
         "pipeline_states": ops.get("pipeline", []),
         "summary": ops.get("summary_cards", []),
+        "coverage_breakdown": ops.get("coverage_breakdown", []),
+        "score_drift_distribution": ops.get("score_drift_distribution", {}),
         "alerts": ops.get("alerts", []),
         "logs": ops.get("logs", []),
     }

@@ -39,12 +39,19 @@ _DEFAULT_GAP_DAYS = 5
 _ALLOWED_GAP_DAYS = tuple(range(1, 11))
 _DEFAULT_VALID_WINDOW_MONTHS = 1
 _ALLOWED_VALID_WINDOW_MONTHS = (1, 2, 3)
+_ALLOWED_COST_BUFFERS = (0.0, 0.002)
 _BACKTEST_WINDOW_DAYS = 120
 _MAX_PREDICTION_DATES = 24
 _STOOQ_TIMEOUT_SEC = 25.0
 _STOOQ_FETCH_CONCURRENCY = 4
 _DEFAULT_MODEL_SEED = 42
 _RETURN_ABS_CLIP = 0.2
+_EXCLUSION_REASON_LABELS = {
+    "history_short": "履歴不足",
+    "fetch_failed": "取得失敗",
+    "empty_response": "データなし",
+    "no_data": "データなし",
+}
 
 _PRIMARY_FEATURE_ORDER = (
     "ret_1d",
@@ -205,6 +212,20 @@ def _normalize_random_seed(value: Any) -> int:
     return normalized if normalized > 0 else _DEFAULT_MODEL_SEED
 
 
+def _normalize_cost_buffer(value: Any) -> float:
+    normalized = _safe_float(value)
+    if normalized is None:
+        return _ALLOWED_COST_BUFFERS[0]
+    for allowed in _ALLOWED_COST_BUFFERS:
+        if abs(normalized - allowed) <= 1e-9:
+            return allowed
+    return _ALLOWED_COST_BUFFERS[0]
+
+
+def _format_cost_buffer(value: float) -> str:
+    return f"{value:.3f}".rstrip("0").rstrip(".") if value else "0.0"
+
+
 def _window_days_from_months(months: int) -> int:
     return int(months) * 21
 
@@ -339,6 +360,58 @@ def _population_stability_index(
     return float(psi)
 
 
+def _excluded_reason_label(reason: str) -> str:
+    return _EXCLUSION_REASON_LABELS.get(str(reason or "").strip(), "その他")
+
+
+def _summarize_excluded_symbols(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not items:
+        return [
+            {
+                "reason": "none",
+                "label": "除外なし",
+                "count": 0,
+                "detail": "全ユニバース銘柄を利用できています。",
+            }
+        ]
+    buckets: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        reason = str(item.get("reason") or "no_data").strip() or "no_data"
+        buckets.setdefault(reason, []).append(item)
+    ordered_reasons = ("history_short", "fetch_failed", "empty_response", "no_data")
+    ordered_reasons += tuple(reason for reason in buckets.keys() if reason not in ordered_reasons)
+    summary: list[dict[str, Any]] = []
+    for reason in ordered_reasons:
+        grouped = buckets.get(reason)
+        if not grouped:
+            continue
+        sample = ", ".join(str(item.get("code") or "-") for item in grouped[:3])
+        detail = f"例: {sample}" if sample else ""
+        if reason == "history_short":
+            min_points = min(
+                int(item.get("points") or 0)
+                for item in grouped
+                if str(item.get("points") or "").strip()
+            ) if any(str(item.get("points") or "").strip() for item in grouped) else 0
+            detail = (
+                f"260営業日未満のため除外。最小 {min_points} 日。"
+                + (f" 例: {sample}" if sample else "")
+            )
+        elif reason == "fetch_failed":
+            detail = "Stooq 取得失敗またはキャッシュ未整備。" + (f" 例: {sample}" if sample else "")
+        elif reason in {"empty_response", "no_data"}:
+            detail = "公開ソースから十分な日足を返却できませんでした。" + (f" 例: {sample}" if sample else "")
+        summary.append(
+            {
+                "reason": reason,
+                "label": _excluded_reason_label(reason),
+                "count": len(grouped),
+                "detail": detail,
+            }
+        )
+    return summary
+
+
 class StockMlPageService:
     def __init__(
         self,
@@ -381,9 +454,14 @@ class StockMlPageService:
             default=_DEFAULT_VALID_WINDOW_MONTHS,
         )
         selected_random_seed = _normalize_random_seed(random_seed)
+        selected_cost_buffer = _normalize_cost_buffer(cost_buffer)
         normalized_train_note = str(train_note or "").strip()[:500]
-        histories = await self._load_histories(refresh=refresh)
-        dataset = self._build_dataset(histories=histories, cost_buffer=cost_buffer)
+        histories, excluded_symbols = await self._load_histories(refresh=refresh)
+        dataset = self._build_dataset(
+            histories=histories,
+            excluded_symbols=excluded_symbols,
+            cost_buffer=selected_cost_buffer,
+        )
         if not dataset["rows"]:
             raise HTTPException(status_code=502, detail="日本株の日足データを構築できませんでした。")
 
@@ -400,7 +478,7 @@ class StockMlPageService:
             universe_filter=selected_universe,
             model_family=selected_model_family,
             feature_set=selected_feature_set,
-            cost_buffer=cost_buffer,
+            cost_buffer=selected_cost_buffer,
             train_window_months=selected_train_window_months,
             gap_days=selected_gap_days,
             valid_window_months=selected_valid_window_months,
@@ -409,7 +487,7 @@ class StockMlPageService:
 
         training = self._build_training_view(
             dataset=dataset,
-            cost_buffer=cost_buffer,
+            cost_buffer=selected_cost_buffer,
             train_window_months=selected_train_window_months,
             gap_days=selected_gap_days,
             valid_window_months=selected_valid_window_months,
@@ -425,7 +503,7 @@ class StockMlPageService:
             training=training,
             backtest=backtest,
             config_hash=config_hash,
-            cost_buffer=cost_buffer,
+            cost_buffer=selected_cost_buffer,
             train_window_months=selected_train_window_months,
             gap_days=selected_gap_days,
             valid_window_months=selected_valid_window_months,
@@ -439,7 +517,7 @@ class StockMlPageService:
             selected_model_version=selected_model_version,
             adopted_model_version=models["adopted_model_version"],
             feature_set=selected_feature_set,
-            cost_buffer=cost_buffer,
+            cost_buffer=selected_cost_buffer,
             latest_market_date=latest_market_date,
             train_window_months=selected_train_window_months,
             random_seed=selected_random_seed,
@@ -483,7 +561,10 @@ class StockMlPageService:
                     {"value": _BASELINE_MODEL_FAMILY, "label": _BASELINE_MODEL_FAMILY},
                 ],
                 "feature_sets": [{"value": _FEATURE_VERSION, "label": _FEATURE_VERSION}],
-                "cost_buffers": [{"value": "0.0", "label": "0.0"}, {"value": "0.002", "label": "0.002"}],
+                "cost_buffers": [
+                    {"value": _format_cost_buffer(item), "label": _format_cost_buffer(item)}
+                    for item in _ALLOWED_COST_BUFFERS
+                ],
                 "train_window_months": [
                     {"value": str(item), "label": f"{item}か月"}
                     for item in _ALLOWED_TRAIN_WINDOW_MONTHS
@@ -502,7 +583,7 @@ class StockMlPageService:
                 "universe_filter": selected_universe,
                 "model_family": selected_model_family,
                 "feature_set": selected_feature_set,
-                "cost_buffer": f"{cost_buffer:.3f}".rstrip("0").rstrip(".") if cost_buffer else "0.0",
+                "cost_buffer": _format_cost_buffer(selected_cost_buffer),
                 "train_window_months": str(selected_train_window_months),
                 "gap_days": str(selected_gap_days),
                 "valid_window_months": str(selected_valid_window_months),
@@ -696,28 +777,38 @@ class StockMlPageService:
             "snapshot": updated_snapshot,
         }
 
-    async def _load_histories(self, *, refresh: bool) -> dict[str, dict[str, Any]]:
+    async def _load_histories(self, *, refresh: bool) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
         semaphore = asyncio.Semaphore(_STOOQ_FETCH_CONCURRENCY)
 
-        async def load_one(symbol_meta: UniverseSymbol) -> tuple[str, dict[str, Any] | None]:
+        async def load_one(symbol_meta: UniverseSymbol) -> tuple[str, dict[str, Any] | None, dict[str, Any] | None]:
             async with semaphore:
-                points = await self._get_stooq_history(symbol_meta, refresh=refresh)
+                points, issue = await self._get_stooq_history(symbol_meta, refresh=refresh)
             if len(points) < 260:
-                return symbol_meta.code, None
+                return symbol_meta.code, None, {
+                    "code": symbol_meta.code,
+                    "symbol": symbol_meta.symbol,
+                    "company_name": symbol_meta.company_name,
+                    "reason": "history_short" if points else (issue or "no_data"),
+                    "points": len(points),
+                }
             return symbol_meta.code, {
                 "meta": symbol_meta,
                 "points": points,
                 "last_date": str(points[-1].get("t") or "").split(" ")[0],
-            }
+            }, None
 
         results = await asyncio.gather(*(load_one(item) for item in JP_LARGE_CAP_UNIVERSE))
         out: dict[str, dict[str, Any]] = {}
-        for code, payload in results:
+        excluded: list[dict[str, Any]] = []
+        for code, payload, exclusion in results:
             if payload is not None:
                 out[code] = payload
-        return out
+                continue
+            if exclusion is not None:
+                excluded.append(exclusion)
+        return out, excluded
 
-    async def _get_stooq_history(self, symbol_meta: UniverseSymbol, *, refresh: bool) -> list[dict[str, Any]]:
+    async def _get_stooq_history(self, symbol_meta: UniverseSymbol, *, refresh: bool) -> tuple[list[dict[str, Any]], str | None]:
         normalized_symbol = symbol_meta.symbol.upper()
         cached = await self.full_daily_history_store.get(normalized_symbol)
         updated_epoch = await self.full_daily_history_store.last_updated_epoch(normalized_symbol)
@@ -728,19 +819,19 @@ class StockMlPageService:
             and ((now_epoch - float(updated_epoch)) <= HISTORICAL_CACHE_TTL_SEC)
         )
         if cached and not refresh and is_fresh:
-            return cached
+            return cached, None
 
         try:
             points = await asyncio.to_thread(self._fetch_stooq_csv, symbol_meta.code)
         except Exception as exc:
             LOGGER.warning("Failed to fetch Stooq CSV for %s: %s", normalized_symbol, exc)
-            return cached
+            return (cached, None) if cached else ([], "fetch_failed")
         if points:
             await self.full_daily_history_store.upsert(normalized_symbol, points)
-            return points
+            return points, None
         if cached:
-            return cached
-        return []
+            return cached, None
+        return [], "empty_response"
 
     @staticmethod
     def _fetch_stooq_csv(code: str) -> list[dict[str, Any]]:
@@ -781,12 +872,18 @@ class StockMlPageService:
         points.sort(key=lambda item: str(item["t"]))
         return points
 
-    def _build_dataset(self, *, histories: dict[str, dict[str, Any]], cost_buffer: float) -> dict[str, Any]:
+    def _build_dataset(
+        self,
+        *,
+        histories: dict[str, dict[str, Any]],
+        excluded_symbols: list[dict[str, Any]],
+        cost_buffer: float,
+    ) -> dict[str, Any]:
         rows: list[dict[str, Any]] = []
         per_date: dict[str, list[dict[str, Any]]] = {}
         target_date_by_prediction: dict[str, str] = {}
         latest_market_date = ""
-        excluded_symbols = len(JP_LARGE_CAP_UNIVERSE) - len(histories)
+        excluded_reason_breakdown = _summarize_excluded_symbols(excluded_symbols)
         for payload in histories.values():
             meta: UniverseSymbol = payload["meta"]
             points = payload["points"]
@@ -850,7 +947,9 @@ class StockMlPageService:
             "by_date": per_date,
             "prediction_dates": prediction_dates,
             "target_date_by_prediction": target_date_by_prediction,
-            "excluded_symbols": excluded_symbols,
+            "excluded_symbols": len(excluded_symbols),
+            "excluded_reason_breakdown": excluded_reason_breakdown,
+            "excluded_symbol_details": excluded_symbols[:12],
             "latest_market_date": latest_market_date,
         }
 
@@ -1302,7 +1401,7 @@ class StockMlPageService:
                 {"label": "学習期間", "value": f"{train_window_months}か月 ({train_window_days}営業日)"},
                 {"label": "gap", "value": f"{gap_days}営業日"},
                 {"label": "valid期間", "value": f"{valid_window_months}か月 ({valid_window_days}営業日)"},
-                {"label": "cost_buffer", "value": f"{cost_buffer:.3f}".rstrip("0").rstrip(".") if cost_buffer else "0.0"},
+                {"label": "cost_buffer", "value": _format_cost_buffer(cost_buffer)},
                 {"label": "feature_set", "value": _FEATURE_VERSION},
                 {"label": "seed", "value": str(random_seed)},
             ],
@@ -1432,6 +1531,12 @@ class StockMlPageService:
             },
         ]
         monthly_returns = self._monthly_returns(candidate_result["daily_series"])
+        daily_return_distribution = self._daily_return_distribution(
+            adopted_label=adopted_label,
+            adopted_daily_series=adopted_result["daily_series"],
+            candidate_label=candidate_label,
+            candidate_daily_series=candidate_result["daily_series"],
+        )
         exceptions = self._build_backtest_exceptions(backtest_dates, date_to_rows)
         return {
             "settings": [
@@ -1456,6 +1561,7 @@ class StockMlPageService:
             "equity_labels": equity_labels,
             "equity_series": equity_series,
             "monthly_returns": monthly_returns,
+            "daily_return_distribution": daily_return_distribution,
             "exceptions": exceptions,
             "adopted_model_version": adopted_model_version,
             "model_results": {
@@ -1532,6 +1638,32 @@ class StockMlPageService:
             monthly.setdefault(month_key, 1.0)
             monthly[month_key] *= (1.0 + float(item["net_return"]))
         return [{"month": month, "value": (value - 1.0) * 100.0} for month, value in sorted(monthly.items())[-12:]]
+
+    @staticmethod
+    def _daily_return_distribution(
+        *,
+        adopted_label: str,
+        adopted_daily_series: list[dict[str, Any]],
+        candidate_label: str,
+        candidate_daily_series: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        bins = [-10.0, -2.0, -1.0, 0.0, 1.0, 2.0, 10.0]
+        labels = ["< -2%", "-2% ~ -1%", "-1% ~ 0%", "0% ~ 1%", "1% ~ 2%", "> 2%"]
+
+        def distribution_values(items: list[dict[str, Any]]) -> list[float]:
+            returns_pct = np.array([float(item.get("net_return") or 0.0) * 100.0 for item in items], dtype=np.float64)
+            if returns_pct.size == 0:
+                return [0.0 for _ in labels]
+            counts, _ = np.histogram(returns_pct, bins=bins)
+            return [float(item) for item in counts.tolist()]
+
+        return {
+            "labels": labels,
+            "series": [
+                {"label": adopted_label, "color": "#39d2c0", "values": distribution_values(adopted_daily_series)},
+                {"label": candidate_label, "color": "#58a6ff", "values": distribution_values(candidate_daily_series)},
+            ],
+        }
 
     @staticmethod
     def _build_backtest_exceptions(dates: list[str], by_date: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
@@ -1678,7 +1810,7 @@ class StockMlPageService:
                 {"label": "学習期間", "value": f"{train_window_months}か月 ({_window_days_from_months(train_window_months)}営業日)"},
                 {"label": "gap", "value": f"{gap_days}営業日"},
                 {"label": "valid期間", "value": f"{valid_window_months}か月 ({_window_days_from_months(valid_window_months)}営業日)"},
-                {"label": "cost_buffer", "value": f"{cost_buffer:.3f}".rstrip("0").rstrip(".") if cost_buffer else "0.0"},
+                {"label": "cost_buffer", "value": _format_cost_buffer(cost_buffer)},
                 {"label": "seed", "value": str(random_seed)},
                 {"label": "特徴量セット", "value": _FEATURE_VERSION},
                 {"label": "採用理由", "value": primary_adopt_reason},
@@ -1714,7 +1846,7 @@ class StockMlPageService:
                 {"label": "学習期間", "value": f"{train_window_months}か月 ({_window_days_from_months(train_window_months)}営業日)"},
                 {"label": "gap", "value": f"{gap_days}営業日"},
                 {"label": "valid期間", "value": f"{valid_window_months}か月 ({_window_days_from_months(valid_window_months)}営業日)"},
-                {"label": "cost_buffer", "value": f"{cost_buffer:.3f}".rstrip("0").rstrip(".") if cost_buffer else "0.0"},
+                {"label": "cost_buffer", "value": _format_cost_buffer(cost_buffer)},
                 {"label": "seed", "value": str(random_seed)},
                 {"label": "特徴量セット", "value": _FEATURE_VERSION},
                 {"label": "採用理由", "value": baseline_adopt_reason},
@@ -1900,7 +2032,7 @@ class StockMlPageService:
             "freshness": {"level": freshness_level, "label": "最新" if freshness_level == "normal" else "遅延あり"},
             "run_state": "推論完了",
             "summary_cards": summary_cards,
-            "caption": f"{coverage_total} 件表示 / selected={model_family} / ranking=score_cls / cost_buffer={cost_buffer}",
+            "caption": f"{coverage_total} 件表示 / selected={model_family} / ranking=score_cls / cost_buffer={_format_cost_buffer(cost_buffer)}",
             "footnote": f"score_rank を算出済み。{expected_return_note}",
             "rows": display_rows,
             "sector_scores": sector_items,
@@ -1972,20 +2104,26 @@ class StockMlPageService:
         total_symbols = len(JP_LARGE_CAP_UNIVERSE)
         available = int(dashboard.get("coverage_total") or 0)
         excluded = int(dashboard.get("coverage_excluded") or 0)
+        breakdown = [
+            item for item in (dataset.get("excluded_reason_breakdown") or [])
+            if isinstance(item, dict) and int(item.get("count") or 0) > 0
+        ]
         excluded_ratio_pct = (excluded / total_symbols) * 100.0 if total_symbols else 0.0
         level = "normal"
         if excluded_ratio_pct >= 25.0:
             level = "error"
         elif excluded > 0:
             level = "warning"
+        detail = f"利用可能 {available} 銘柄 / 除外 {excluded} 銘柄。"
+        if breakdown:
+            detail += " 除外理由: " + " / ".join(f"{item['label']} {item['count']}件" for item in breakdown[:3]) + "。"
+        else:
+            detail += " 除外は発生していません。"
         return {
             "label": "銘柄数急減",
             "value": f"{available}/{total_symbols}",
             "level": level,
-            "detail": (
-                f"利用可能 {available} 銘柄 / 除外 {excluded} 銘柄。"
-                " 除外理由は取得失敗または履歴不足として扱います。"
-            ),
+            "detail": detail,
         }
 
     @staticmethod
@@ -2019,6 +2157,54 @@ class StockMlPageService:
                 "直近5営業日 vs その前20営業日で比較。"
                 f" PSI {_safe_number_label(psi)} / 平均スコア差 {mean_shift:+.3f}。"
             ),
+        }
+
+    @staticmethod
+    def _ops_score_drift_distribution(dataset: dict[str, Any]) -> dict[str, Any]:
+        prediction_dates: list[str] = dataset["prediction_dates"]
+        if len(prediction_dates) < 25:
+            return {
+                "labels": [],
+                "series": [],
+                "psi": None,
+                "mean_shift": None,
+                "note": "比較対象の営業日数が不足しているため、分布比較を表示していません。",
+            }
+        recent_dates = set(prediction_dates[-5:])
+        prior_dates = set(prediction_dates[-25:-5])
+        recent_scores = np.array(
+            [float(row["primary_score"]) for row in dataset["rows"] if row["date"] in recent_dates],
+            dtype=np.float64,
+        )
+        prior_scores = np.array(
+            [float(row["primary_score"]) for row in dataset["rows"] if row["date"] in prior_dates],
+            dtype=np.float64,
+        )
+        bins = [-10.0, -1.5, -0.5, 0.0, 0.5, 1.5, 10.0]
+        labels = ["< -1.5", "-1.5 ~ -0.5", "-0.5 ~ 0", "0 ~ 0.5", "0.5 ~ 1.5", "> 1.5"]
+        prior_counts, _ = np.histogram(prior_scores, bins=bins)
+        recent_counts, _ = np.histogram(recent_scores, bins=bins)
+        prior_total = max(int(np.sum(prior_counts)), 1)
+        recent_total = max(int(np.sum(recent_counts)), 1)
+        psi = _population_stability_index(prior_scores.tolist(), recent_scores.tolist())
+        mean_shift = (float(np.mean(recent_scores)) - float(np.mean(prior_scores))) if recent_scores.size and prior_scores.size else None
+        return {
+            "labels": labels,
+            "series": [
+                {
+                    "label": "前20営業日",
+                    "color": "#58a6ff",
+                    "values": [float(count / prior_total * 100.0) for count in prior_counts.tolist()],
+                },
+                {
+                    "label": "直近5営業日",
+                    "color": "#39d2c0",
+                    "values": [float(count / recent_total * 100.0) for count in recent_counts.tolist()],
+                },
+            ],
+            "psi": psi,
+            "mean_shift": mean_shift,
+            "note": "各ビンの構成比(%)。直近5営業日と、その前20営業日を比較しています。",
         }
 
     @staticmethod
@@ -2142,6 +2328,8 @@ class StockMlPageService:
                 {"label": "ジョブ状態", "value": "SUCCEEDED" if not refresh else "REFRESHED"},
             ],
             "monitor_checks": monitor_checks,
+            "coverage_breakdown": dataset.get("excluded_reason_breakdown") or [],
+            "score_drift_distribution": self._ops_score_drift_distribution(dataset),
             "alerts": alerts,
             "logs": logs,
         }

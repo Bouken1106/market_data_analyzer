@@ -51,6 +51,7 @@ const backtestCompareBodyEl = document.getElementById("mlops-backtest-compare-bo
 const backtestSummaryEl = document.getElementById("mlops-backtest-summary");
 const equityChartEl = document.getElementById("mlops-equity-chart");
 const monthlyHeatmapEl = document.getElementById("mlops-monthly-heatmap");
+const backtestDailyDistributionEl = document.getElementById("mlops-backtest-daily-distribution");
 const backtestExceptionBodyEl = document.getElementById("mlops-backtest-exception-body");
 
 const modelBodyEl = document.getElementById("mlops-model-body");
@@ -65,6 +66,9 @@ const pipelineGridEl = document.getElementById("mlops-pipeline-grid");
 const opsSummaryEl = document.getElementById("mlops-ops-summary");
 const opsAlertsEl = document.getElementById("mlops-ops-alerts");
 const opsLogsEl = document.getElementById("mlops-ops-logs");
+const opsCoverageBreakdownEl = document.getElementById("mlops-ops-coverage-breakdown");
+const opsDriftChartEl = document.getElementById("mlops-ops-drift-chart");
+const opsDriftNoteEl = document.getElementById("mlops-ops-drift-note");
 
 const appState = {
   activeTab: "dashboard",
@@ -257,6 +261,69 @@ function buildLineChartSvg(labels, seriesList) {
       ${gridLines}
       ${paths}
       ${xLabels}
+      ${legends}
+    </svg>
+  `;
+}
+
+function buildGroupedBarChartSvg(labels, seriesList) {
+  const width = 640;
+  const height = 260;
+  const padLeft = 28;
+  const padRight = 18;
+  const padTop = 18;
+  const padBottom = 42;
+  const groups = Array.isArray(labels) ? labels : [];
+  const series = Array.isArray(seriesList) ? seriesList : [];
+  const values = series.flatMap((item) => Array.isArray(item.values) ? item.values : []);
+  if (groups.length === 0 || values.length === 0) {
+    return `<div class="pf-empty">No chart data</div>`;
+  }
+  const maxValue = Math.max(...values.map((value) => Number(value) || 0), 1);
+  const innerWidth = width - padLeft - padRight;
+  const groupWidth = innerWidth / Math.max(groups.length, 1);
+  const barGap = 6;
+  const seriesWidth = Math.min(groupWidth - 10, Math.max(18, groupWidth - 22));
+  const barWidth = Math.max(12, Math.min(30, (seriesWidth - (Math.max(series.length - 1, 0) * barGap)) / Math.max(series.length, 1)));
+  const yFor = (value) => padTop + ((maxValue - value) / maxValue) * (height - padTop - padBottom);
+  const gridLines = [0, 0.25, 0.5, 0.75, 1]
+    .map((ratio) => {
+      const y = padTop + ((height - padTop - padBottom) * ratio);
+      return `<line x1="${padLeft}" y1="${y}" x2="${width - padRight}" y2="${y}" class="mlops-chart-gridline"></line>`;
+    })
+    .join("");
+  const bars = groups
+    .map((label, groupIndex) => {
+      const startX = padLeft + (groupIndex * groupWidth) + ((groupWidth - ((barWidth * series.length) + (barGap * Math.max(series.length - 1, 0)))) / 2);
+      const rects = series
+        .map((item, seriesIndex) => {
+          const value = Number(item.values?.[groupIndex]) || 0;
+          const x = startX + (seriesIndex * (barWidth + barGap));
+          const y = yFor(value);
+          const h = Math.max(1, (height - padBottom) - y);
+          return `
+            <rect x="${x}" y="${y}" width="${barWidth}" height="${h}" rx="4" fill="${item.color || "#58a6ff"}">
+              <title>${escapeHtml(item.label || "-")} / ${escapeHtml(label)} / ${escapeHtml(String(value))}</title>
+            </rect>
+          `;
+        })
+        .join("");
+      const labelX = padLeft + (groupIndex * groupWidth) + (groupWidth / 2);
+      return `${rects}<text x="${labelX}" y="${height - 12}" text-anchor="middle" class="mlops-chart-label">${escapeHtml(label)}</text>`;
+    })
+    .join("");
+  const legends = series
+    .map((item, index) => `
+      <g transform="translate(${padLeft + (index * 150)}, 10)">
+        <rect width="12" height="12" rx="3" fill="${item.color || "#58a6ff"}"></rect>
+        <text x="18" y="8" class="mlops-chart-label" dominant-baseline="middle">${escapeHtml(item.label || "-")}</text>
+      </g>
+    `)
+    .join("");
+  return `
+    <svg viewBox="0 0 ${width} ${height}" class="mlops-line-chart" role="img" aria-label="grouped bar chart">
+      ${gridLines}
+      ${bars}
       ${legends}
     </svg>
   `;
@@ -744,6 +811,10 @@ function renderBacktest() {
       </div>
     `)
     .join("");
+  backtestDailyDistributionEl.innerHTML = buildGroupedBarChartSvg(
+    backtest.daily_return_distribution?.labels || [],
+    backtest.daily_return_distribution?.series || [],
+  );
   backtestExceptionBodyEl.innerHTML = (backtest.exceptions || [])
     .map((item) => `
       <tr>
@@ -822,6 +893,30 @@ function renderOps() {
   opsSummaryEl.innerHTML = makeSummaryCards(ops.summary_cards || []);
   opsAlertsEl.innerHTML = makeStackList(ops.alerts || []);
   opsLogsEl.innerHTML = makeLogList(ops.logs || []);
+  const coverageBreakdown = Array.isArray(ops.coverage_breakdown) ? ops.coverage_breakdown : [];
+  opsCoverageBreakdownEl.innerHTML = coverageBreakdown.length
+    ? coverageBreakdown
+      .map((item) => `
+        <div class="mlops-kv-item">
+          <span class="label">${escapeHtml(item.label || "-")}</span>
+          <span>${escapeHtml(`${Number(item.count) || 0}件`)}</span>
+          <span class="hint">${escapeHtml(item.detail || "")}</span>
+        </div>
+      `)
+      .join("")
+    : `<div class="pf-empty">除外理由はありません。</div>`;
+  const drift = ops.score_drift_distribution || {};
+  opsDriftChartEl.innerHTML = buildGroupedBarChartSvg(drift.labels || [], drift.series || []);
+  const psi = Number(drift.psi);
+  const meanShift = Number(drift.mean_shift);
+  const references = [];
+  if (Number.isFinite(psi)) {
+    references.push(`PSI ${psi.toFixed(3)}`);
+  }
+  if (Number.isFinite(meanShift)) {
+    references.push(`平均スコア差 ${meanShift >= 0 ? "+" : ""}${meanShift.toFixed(3)}`);
+  }
+  opsDriftNoteEl.textContent = [drift.note || "", references.join(" / ")].filter(Boolean).join(" ");
 }
 
 function renderAll() {
