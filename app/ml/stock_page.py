@@ -1575,16 +1575,10 @@ class StockMlPageService:
                 {"label": "約定不能処理", "value": "高ボラ銘柄を例外監視"},
             ],
             "compare_rows": compare_rows,
-            "summary_cards": [
-                {"label": "CAGR (gross)", "value": f"{candidate_result['metrics']['gross_cagr_pct']:.1f}%"},
-                {"label": "CAGR (net)", "value": f"{candidate_result['metrics']['cagr_pct']:.1f}%"},
-                {"label": "Sharpe", "value": f"{candidate_result['metrics']['sharpe']:.2f}" if candidate_result["metrics"]["sharpe"] is not None else "-"},
-                {"label": "Max Drawdown", "value": f"{candidate_result['metrics']['max_drawdown_pct']:.1f}%"},
-                {"label": "Turnover", "value": f"{candidate_result['metrics']['turnover_pct']:.1f}%"},
-                {"label": "平均保有損益", "value": f"{candidate_result['metrics']['avg_holding_pnl_pct']:.2f}%"},
-                {"label": "勝率", "value": f"{candidate_result['metrics']['win_rate_pct']:.1f}%"},
-                {"label": "約定不能影響率", "value": f"{candidate_result['metrics']['unable_rate_pct']:.2f}%"},
-            ],
+            "summary_cards": self._backtest_summary_cards(
+                focus_label=adopted_label,
+                result=adopted_result,
+            ),
             "equity_labels": equity_labels,
             "equity_series": equity_series,
             "monthly_returns": monthly_returns,
@@ -1656,6 +1650,24 @@ class StockMlPageService:
             "win_rate": f"{metrics['win_rate_pct']:.1f}%",
             "unable": f"{metrics['unable_count']}件",
         }
+
+    @staticmethod
+    def _backtest_summary_cards(*, focus_label: str, result: dict[str, Any]) -> list[dict[str, str]]:
+        metrics = result["metrics"]
+        return [
+            {"label": "CAGR (gross)", "value": f"{metrics['gross_cagr_pct']:.1f}%", "sub": focus_label},
+            {"label": "CAGR (net)", "value": f"{metrics['cagr_pct']:.1f}%", "sub": focus_label},
+            {
+                "label": "Sharpe",
+                "value": f"{metrics['sharpe']:.2f}" if metrics["sharpe"] is not None else "-",
+                "sub": focus_label,
+            },
+            {"label": "Max Drawdown", "value": f"{metrics['max_drawdown_pct']:.1f}%", "sub": focus_label},
+            {"label": "Turnover", "value": f"{metrics['turnover_pct']:.1f}%", "sub": focus_label},
+            {"label": "平均保有損益", "value": f"{metrics['avg_holding_pnl_pct']:.2f}%", "sub": focus_label},
+            {"label": "勝率", "value": f"{metrics['win_rate_pct']:.1f}%", "sub": focus_label},
+            {"label": "約定不能影響率", "value": f"{metrics['unable_rate_pct']:.2f}%", "sub": focus_label},
+        ]
 
     @staticmethod
     def _monthly_returns(daily_series: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -2472,21 +2484,62 @@ class StockMlPageService:
             )
         if not logs:
             logs = self._runtime_logs(action="audit", latest_market_date=dataset["latest_market_date"])
+        adopted_model_version = str(models.get("adopted_model_version") or _MODEL_PRIMARY_VERSION).strip()
+        adopted_row = next(
+            (
+                item
+                for item in (models.get("rows") or [])
+                if isinstance(item, dict) and str(item.get("model_version") or "").strip() == adopted_model_version
+            ),
+            None,
+        )
+        leakage_ok = bool(adopted_row.get("leakage_check")) if isinstance(adopted_row, dict) else False
         return {
             "pipeline": pipeline,
-            "summary_cards": [
-                {"label": item["label"], "value": item["value"]}
-                for item in monitor_checks
-            ] + [
-                {"label": "リークチェック", "value": "PASS"},
-                {"label": "ジョブ状態", "value": "SUCCEEDED" if not refresh else "REFRESHED"},
-            ],
+            "summary_cards": self._ops_summary_cards(
+                monitor_checks=monitor_checks,
+                leakage_ok=leakage_ok,
+                state=state,
+                refresh=refresh,
+            ),
             "monitor_checks": monitor_checks,
             "coverage_breakdown": dataset.get("excluded_reason_breakdown") or [],
             "score_drift_distribution": self._ops_score_drift_distribution(dataset),
             "alerts": alerts,
             "logs": logs,
         }
+
+    @staticmethod
+    def _ops_summary_cards(
+        *,
+        monitor_checks: list[dict[str, Any]],
+        leakage_ok: bool,
+        state: dict[str, Any],
+        refresh: bool,
+    ) -> list[dict[str, str]]:
+        summary_cards = [
+            {"label": str(item.get("label") or "-"), "value": str(item.get("value") or "-")}
+            for item in monitor_checks
+        ]
+        summary_cards.append({"label": "リークチェック", "value": "PASS" if leakage_ok else "FAIL"})
+        summary_cards.append(
+            {
+                "label": "ジョブ状態",
+                "value": StockMlPageService._ops_job_status_label(state=state, refresh=refresh),
+            }
+        )
+        return summary_cards
+
+    @staticmethod
+    def _ops_job_status_label(*, state: dict[str, Any], refresh: bool) -> str:
+        if refresh:
+            return "REFRESHED"
+        logs = state.get("audit_log") or []
+        if not logs:
+            return "IDLE"
+        latest = logs[0] if isinstance(logs[0], dict) else {}
+        level = str(latest.get("level") or "normal").strip().lower()
+        return "FAILED" if level == "error" else "SUCCEEDED"
 
     def _build_permissions(
         self,
