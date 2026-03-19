@@ -1,6 +1,9 @@
+import tempfile
 import unittest
+from pathlib import Path
 
 from app.ml.stock_page import StockMlPageService
+from app.stores.stock_ml_page import StockMlPageStore
 
 
 class StockMlPageServiceHelpersTest(unittest.TestCase):
@@ -45,6 +48,52 @@ class StockMlPageServiceHelpersTest(unittest.TestCase):
         )
 
         self.assertEqual(label, "FAILED")
+
+    def test_backtest_exceptions_include_multiple_exception_types(self) -> None:
+        exceptions = StockMlPageService._build_backtest_exceptions(
+            dates=["2026-03-16", "2026-03-17"],
+            by_date={
+                "2026-03-16": [
+                    {"code": "7203", "range_pct": 0.12, "ret_1d": 0.09, "volume_ratio_20": 1.10},
+                    {"code": "6758", "range_pct": 0.11, "ret_1d": -0.09, "volume_ratio_20": 1.00},
+                ],
+                "2026-03-17": [
+                    {"code": "9984", "range_pct": 0.001, "ret_1d": 0.00, "volume_ratio_20": 0.01},
+                ],
+            },
+            excluded_reason_breakdown=[
+                {"label": "取得失敗", "count": 2, "detail": "Stooq 取得失敗またはキャッシュ未整備。 例: 8306, 9432"}
+            ],
+        )
+
+        self.assertEqual([item["type"] for item in exceptions[:4]], ["ストップ高疑い", "ストップ安疑い", "売買停止疑い", "データ欠損除外"])
+
+
+class StockMlPageStoreTest(unittest.TestCase):
+    def test_add_audit_log_preserves_structured_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = StockMlPageStore(Path(tmpdir) / "stock_ml_page_state.json")
+            store.add_audit_log(
+                action="adopt_model",
+                detail="Adopted model changed a -> b.",
+                level="warning",
+                actor="role:admin",
+                config_hash="abc123def456",
+                job_kind="adopt_model",
+                settings={"prediction_date": "2026-03-17", "model_family": "LightGBM Classifier"},
+                before_model_version="model_a",
+                after_model_version="model_b",
+                compare_metrics={"before_summary": "ROC-AUC 0.51", "after_summary": "ROC-AUC 0.58"},
+            )
+
+            entry = store.get_state()["audit_log"][0]
+            self.assertEqual(entry["actor"], "role:admin")
+            self.assertEqual(entry["config_hash"], "abc123def456")
+            self.assertEqual(entry["job_kind"], "adopt_model")
+            self.assertEqual(entry["before_model_version"], "model_a")
+            self.assertEqual(entry["after_model_version"], "model_b")
+            self.assertEqual(entry["settings"]["prediction_date"], "2026-03-17")
+            self.assertEqual(entry["compare_metrics"]["after_summary"], "ROC-AUC 0.58")
 
 
 if __name__ == "__main__":

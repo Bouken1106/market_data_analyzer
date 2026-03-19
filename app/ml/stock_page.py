@@ -422,6 +422,60 @@ class StockMlPageService:
         self.full_daily_history_store = full_daily_history_store
         self.page_store = page_store
 
+    @staticmethod
+    def _audit_actor() -> str:
+        return f"role:{STOCK_ML_PAGE_ROLE}"
+
+    @staticmethod
+    def _audit_settings(
+        filters: dict[str, Any],
+        *,
+        extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        settings = {
+            "prediction_date": str(filters.get("prediction_date") or "").strip(),
+            "universe_filter": str(filters.get("universe_filter") or "").strip(),
+            "model_family": str(filters.get("model_family") or "").strip(),
+            "feature_set": str(filters.get("feature_set") or "").strip(),
+            "cost_buffer": str(filters.get("cost_buffer") or "").strip(),
+            "train_window_months": str(filters.get("train_window_months") or "").strip(),
+            "gap_days": str(filters.get("gap_days") or "").strip(),
+            "valid_window_months": str(filters.get("valid_window_months") or "").strip(),
+            "random_seed": str(filters.get("random_seed") or "").strip(),
+        }
+        if isinstance(extra, dict):
+            for key, value in extra.items():
+                if value is None:
+                    continue
+                settings[str(key)] = value
+        return settings
+
+    def _record_audit_log(
+        self,
+        *,
+        snapshot: dict[str, Any],
+        action: str,
+        detail: str,
+        level: str = "normal",
+        job_kind: str = "",
+        before_model_version: str = "",
+        after_model_version: str = "",
+        compare_metrics: dict[str, Any] | None = None,
+        extra_settings: dict[str, Any] | None = None,
+    ) -> None:
+        self.page_store.add_audit_log(
+            action=action,
+            detail=detail,
+            level=level,
+            actor=self._audit_actor(),
+            config_hash=str(snapshot.get("config_hash") or "").strip(),
+            job_kind=job_kind,
+            settings=self._audit_settings(snapshot.get("filters", {}) or {}, extra=extra_settings),
+            before_model_version=before_model_version,
+            after_model_version=after_model_version,
+            compare_metrics=compare_metrics,
+        )
+
     async def build_snapshot(
         self,
         *,
@@ -635,10 +689,12 @@ class StockMlPageService:
         )
         regenerate_label = "Regenerated" if existing is not None else "Generated"
         run_note = str(kwargs.get("run_note") or "").strip()
-        self.page_store.add_audit_log(
+        self._record_audit_log(
+            snapshot=current_snapshot,
             action="run_inference",
             detail=(
                 f"{regenerate_label} prediction_daily."
+                f" actor={self._audit_actor()}"
                 f" prediction_date={generation['prediction_date']}"
                 f" target_date={generation['target_date']}"
                 f" model_version={generation['model_version']}"
@@ -646,6 +702,8 @@ class StockMlPageService:
                 + (f" note={run_note[:80]}" if run_note else "")
             ),
             level="warning" if existing is not None else "normal",
+            job_kind="stock_prediction_run",
+            after_model_version=generation["model_version"],
         )
         return await self.build_snapshot(**kwargs)
 
@@ -656,10 +714,12 @@ class StockMlPageService:
         filters = current_snapshot.get("filters", {})
         run_note = str(kwargs.get("run_note") or "").strip()
         train_note = str(kwargs.get("train_note") or "").strip()
-        self.page_store.add_audit_log(
+        self._record_audit_log(
+            snapshot=current_snapshot,
             action="create_training_job",
             detail=(
                 "Training summary refreshed."
+                f" actor={self._audit_actor()}"
                 f" prediction_date={filters.get('prediction_date')}"
                 f" cost_buffer={filters.get('cost_buffer')}"
                 f" config={current_snapshot.get('config_hash') or '-'}"
@@ -667,6 +727,7 @@ class StockMlPageService:
                 + (f" note={run_note[:80]}" if run_note else "")
             ),
             level="warning",
+            job_kind="stock_training_job",
         )
         return await self.build_snapshot(**kwargs)
 
@@ -675,14 +736,17 @@ class StockMlPageService:
         self._ensure_action_allowed(current_snapshot, "refresh_data")
         filters = current_snapshot.get("filters", {})
         run_note = str(kwargs.get("run_note") or "").strip()
-        self.page_store.add_audit_log(
+        self._record_audit_log(
+            snapshot=current_snapshot,
             action="refresh_data",
             detail=(
                 "Universe daily cache refreshed from Stooq."
+                f" actor={self._audit_actor()}"
                 f" prediction_date={filters.get('prediction_date')}"
                 f" config={current_snapshot.get('config_hash') or '-'}"
                 + (f" note={run_note[:80]}" if run_note else "")
             ),
+            job_kind="stock_page_refresh",
         )
         refreshed_kwargs = dict(kwargs)
         refreshed_kwargs["refresh"] = True
@@ -713,16 +777,36 @@ class StockMlPageService:
             if blockers:
                 detail += " " + " / ".join(blockers[:3])
             raise HTTPException(status_code=409, detail=detail)
+        previous_model_version = str(current_snapshot.get("models", {}).get("adopted_model_version") or "").strip()
+        previous_model = next(
+            (
+                item
+                for item in (current_snapshot.get("models", {}).get("rows") or [])
+                if isinstance(item, dict) and str(item.get("model_version") or "").strip() == previous_model_version
+            ),
+            None,
+        )
         self.page_store.set_adopted_model_version(model_version)
         run_note = str(kwargs.get("run_note") or "").strip()
-        self.page_store.add_audit_log(
+        self._record_audit_log(
+            snapshot=current_snapshot,
             action="adopt_model",
             detail=(
-                f"Adopted model changed to {model_version}."
+                f"Adopted model changed {previous_model_version or '-'} -> {model_version}."
+                f" actor={self._audit_actor()}"
+                f" compare={str(previous_model.get('summary_metrics') or '-') if isinstance(previous_model, dict) else '-'}"
+                f" => {str(selected_model.get('summary_metrics') or '-')}"
                 f" config={current_snapshot.get('config_hash') or '-'}"
                 + (f" note={run_note[:80]}" if run_note else "")
             ),
             level="warning",
+            job_kind="adopt_model",
+            before_model_version=previous_model_version,
+            after_model_version=model_version,
+            compare_metrics={
+                "before_summary": str(previous_model.get("summary_metrics") or "-") if isinstance(previous_model, dict) else "-",
+                "after_summary": str(selected_model.get("summary_metrics") or "-"),
+            },
         )
         return await self.build_snapshot(**kwargs)
 
@@ -767,13 +851,20 @@ class StockMlPageService:
                 ]
             )
         trimmed_query = str(search_query or "").strip()
-        self.page_store.add_audit_log(
+        self._record_audit_log(
+            snapshot=current_snapshot,
             action="export_csv",
             detail=(
                 f"CSV exported. rows={len(filtered_rows)}"
+                f" actor={self._audit_actor()}"
                 f" query={trimmed_query[:80] or '-'}"
                 f" config={current_snapshot.get('config_hash') or '-'}"
             ),
+            job_kind="export_csv",
+            extra_settings={
+                "search_query": trimmed_query[:80],
+                "row_count": len(filtered_rows),
+            },
         )
         updated_snapshot = await self.build_snapshot(**kwargs)
         filename = f"prediction_daily_{str(dashboard.get('prediction_date') or '').replace('-', '')}.csv"
@@ -788,13 +879,17 @@ class StockMlPageService:
         current_snapshot = await self.build_snapshot(**kwargs)
         self._ensure_action_allowed(current_snapshot, "export_report")
         trimmed_query = str(search_query or "").strip()
-        self.page_store.add_audit_log(
+        self._record_audit_log(
+            snapshot=current_snapshot,
             action="export_report",
             detail=(
                 "Report exported."
+                f" actor={self._audit_actor()}"
                 f" query={trimmed_query[:80] or '-'}"
                 f" config={current_snapshot.get('config_hash') or '-'}"
             ),
+            job_kind="export_report",
+            extra_settings={"search_query": trimmed_query[:80]},
         )
         updated_snapshot = await self.build_snapshot(**kwargs)
         filename = f"stock_ml_report_{str(updated_snapshot.get('dashboard', {}).get('prediction_date') or '').replace('-', '')}.json"
@@ -1564,7 +1659,11 @@ class StockMlPageService:
             candidate_label=candidate_label,
             candidate_daily_series=candidate_result["daily_series"],
         )
-        exceptions = self._build_backtest_exceptions(backtest_dates, date_to_rows)
+        exceptions = self._build_backtest_exceptions(
+            dates=backtest_dates,
+            by_date=date_to_rows,
+            excluded_reason_breakdown=dataset.get("excluded_reason_breakdown") or [],
+        )
         return {
             "settings": [
                 {"label": "エントリー", "value": "D+1 寄り"},
@@ -1572,7 +1671,7 @@ class StockMlPageService:
                 {"label": "上位N銘柄", "value": str(_TOP_N)},
                 {"label": "売買コスト", "value": "10 bps"},
                 {"label": "流動性条件", "value": "大型株ユニバース固定"},
-                {"label": "約定不能処理", "value": "高ボラ銘柄を例外監視"},
+                {"label": "約定不能処理", "value": "高ボラ / 売買停止疑い / 欠損除外を保守的監視"},
             ],
             "compare_rows": compare_rows,
             "summary_cards": self._backtest_summary_cards(
@@ -1606,7 +1705,8 @@ class StockMlPageService:
         daily_returns: list[float] = []
         gross_daily_returns: list[float] = []
         turnover_acc = 0.0
-        unable_days = 0
+        unable_count = 0
+        selected_symbol_count = 0
         for day in dates:
             rows = [dict(item) for item in by_date.get(day, [])]
             if not rows:
@@ -1623,8 +1723,13 @@ class StockMlPageService:
             net_ret = gross_ret - cost
             gross_equity *= (1.0 + gross_ret)
             equity *= (1.0 + net_ret)
-            if any(float(item["range_pct"]) > 0.10 for item in selected):
-                unable_days += 1
+            unable_candidates = [
+                item
+                for item in selected
+                if float(item["range_pct"]) >= 0.10 or float(item.get("volume_ratio_20") or 0.0) <= 0.05
+            ]
+            unable_count += len(unable_candidates)
+            selected_symbol_count += len(selected)
             series.append({"date": day, "equity": equity, "equity_norm": equity})
             daily_series.append({"date": day, "net_return": net_ret, "gross_return": gross_ret, "avg_prob": float(np.mean([float(item.get(prob_key) or 0.5) for item in selected]))})
             daily_returns.append(net_ret)
@@ -1634,8 +1739,8 @@ class StockMlPageService:
         gross_metrics = _series_metrics(gross_daily_returns)
         metrics["gross_cagr_pct"] = gross_metrics["cagr_pct"] or 0.0
         metrics["turnover_pct"] = (turnover_acc / max(len(daily_returns), 1)) * 252.0 * 100.0
-        metrics["unable_count"] = unable_days
-        metrics["unable_rate_pct"] = (unable_days / max(len(daily_returns), 1)) * 100.0
+        metrics["unable_count"] = unable_count
+        metrics["unable_rate_pct"] = (unable_count / max(selected_symbol_count, 1)) * 100.0
         return {"metrics": metrics, "series": series, "daily_series": daily_series}
 
     @staticmethod
@@ -1705,23 +1810,81 @@ class StockMlPageService:
         }
 
     @staticmethod
-    def _build_backtest_exceptions(dates: list[str], by_date: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    def _build_backtest_exceptions(
+        *,
+        dates: list[str],
+        by_date: dict[str, list[dict[str, Any]]],
+        excluded_reason_breakdown: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        def sample_codes(items: list[dict[str, Any]]) -> str:
+            codes = [str(item.get("code") or "").strip() for item in items if str(item.get("code") or "").strip()]
+            return ", ".join(codes[:3])
+
         out: list[dict[str, Any]] = []
         for day in dates[-12:]:
             rows = by_date.get(day, [])
-            high_range = [row for row in rows if float(row["range_pct"]) >= 0.10]
-            if high_range:
-                impact = float(np.mean([float(item["next_return"]) for item in high_range])) * 100.0
+            row_count = max(len(rows), 1)
+            stop_high_like = [
+                row for row in rows
+                if float(row.get("range_pct") or 0.0) >= 0.10 and float(row.get("ret_1d") or 0.0) >= 0.08
+            ]
+            stop_low_like = [
+                row for row in rows
+                if float(row.get("range_pct") or 0.0) >= 0.10 and float(row.get("ret_1d") or 0.0) <= -0.08
+            ]
+            halted_like = [
+                row for row in rows
+                if float(row.get("volume_ratio_20") or 0.0) <= 0.05 and float(row.get("range_pct") or 0.0) <= 0.002
+            ]
+            exception_specs = [
+                ("ストップ高疑い", stop_high_like, "大値幅 + 大幅高をストップ高近辺の疑いとして監視。"),
+                ("ストップ安疑い", stop_low_like, "大値幅 + 大幅安をストップ安近辺の疑いとして監視。"),
+                ("売買停止疑い", halted_like, "出来高極小 + 値幅極小を売買停止疑いとして監視。"),
+            ]
+            for label, flagged_rows, description in exception_specs:
+                if not flagged_rows:
+                    continue
+                impact_pct = (len(flagged_rows) / row_count) * 100.0
+                sample = sample_codes(flagged_rows)
                 out.append(
                     {
                         "date": day,
-                        "type": "高ボラ例外",
-                        "count": str(len(high_range)),
-                        "impact": f"{impact:.2f}%",
-                        "note": "日中値幅10%以上の銘柄を検出。",
+                        "type": label,
+                        "count": str(len(flagged_rows)),
+                        "impact": f"{impact_pct:.1f}%",
+                        "note": description + (f" 例: {sample}" if sample else ""),
                     }
                 )
-        return out[:8]
+
+        latest_day = dates[-1] if dates else "-"
+        total_symbols = max(len(JP_LARGE_CAP_UNIVERSE), 1)
+        for item in excluded_reason_breakdown[:3]:
+            if not isinstance(item, dict):
+                continue
+            count = int(item.get("count") or 0)
+            if count <= 0:
+                continue
+            out.append(
+                {
+                    "date": latest_day,
+                    "type": "データ欠損除外",
+                    "count": str(count),
+                    "impact": f"{(count / total_symbols) * 100.0:.1f}%",
+                    "note": str(item.get("detail") or item.get("label") or "除外理由を確認してください。").strip(),
+                }
+            )
+
+        if out:
+            return out[:8]
+        return [
+            {
+                "date": latest_day,
+                "type": "例外なし",
+                "count": "0",
+                "impact": "0.0%",
+                "note": "ストップ高/安疑い・売買停止疑い・データ欠損除外は検出なし。",
+            }
+        ]
 
     @staticmethod
     def _model_decision_payload(
@@ -2777,6 +2940,33 @@ class StockMlPageService:
                 f" -> {latest_prediction_run.get('target_date')}"
                 f" / {_to_jst_timestamp(latest_prediction_run.get('generated_at'))}"
             )
+        adopt_audit = next(
+            (
+                item
+                for item in (state.get("audit_log") or [])
+                if isinstance(item, dict)
+                and str(item.get("action") or "").strip() == "adopt_model"
+                and model_version in {
+                    str(item.get("before_model_version") or "").strip(),
+                    str(item.get("after_model_version") or "").strip(),
+                }
+            ),
+            None,
+        )
+        if isinstance(adopt_audit, dict):
+            before_version = str(adopt_audit.get("before_model_version") or "-").strip() or "-"
+            after_version = str(adopt_audit.get("after_model_version") or "-").strip() or "-"
+            actor = str(adopt_audit.get("actor") or "-").strip() or "-"
+            compare_metrics = adopt_audit.get("compare_metrics") or {}
+            before_summary = str(compare_metrics.get("before_summary") or "-").strip() or "-"
+            after_summary = str(compare_metrics.get("after_summary") or "-").strip() or "-"
+            lines.append(
+                "直近採用変更: "
+                f"{before_version} -> {after_version}"
+                f" / actor={actor}"
+                f" / {_to_jst_timestamp(adopt_audit.get('time'))}"
+            )
+            lines.append(f"採用変更比較: {before_summary} => {after_summary}")
         latest_audit = state.get("audit_log") or []
         if latest_audit:
             first = latest_audit[0]

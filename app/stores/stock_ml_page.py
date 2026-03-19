@@ -50,7 +50,20 @@ class StockMlPageStore(JsonStateStore):
         self._state["last_training_run_at"] = utc_now_iso()
         self._touch_and_write()
 
-    def add_audit_log(self, *, action: str, detail: str, level: str = "normal") -> None:
+    def add_audit_log(
+        self,
+        *,
+        action: str,
+        detail: str,
+        level: str = "normal",
+        actor: str = "",
+        config_hash: str = "",
+        job_kind: str = "",
+        settings: dict[str, Any] | None = None,
+        before_model_version: str = "",
+        after_model_version: str = "",
+        compare_metrics: dict[str, Any] | None = None,
+    ) -> None:
         timestamp = utc_now_iso()
         logs = self._state.setdefault("audit_log", [])
         if not isinstance(logs, list):
@@ -63,6 +76,13 @@ class StockMlPageStore(JsonStateStore):
                 "action": str(action or "").strip() or "unknown",
                 "detail": str(detail or "").strip(),
                 "level": str(level or "normal").strip() or "normal",
+                "actor": str(actor or "").strip(),
+                "config_hash": str(config_hash or "").strip(),
+                "job_kind": str(job_kind or "").strip(),
+                "settings": clone_json_like(settings) if isinstance(settings, dict) else {},
+                "before_model_version": str(before_model_version or "").strip(),
+                "after_model_version": str(after_model_version or "").strip(),
+                "compare_metrics": clone_json_like(compare_metrics) if isinstance(compare_metrics, dict) else {},
             },
         )
         del logs[self.max_logs:]
@@ -147,6 +167,13 @@ class StockMlPageStore(JsonStateStore):
                         "action": str(item.get("action") or "").strip(),
                         "detail": str(item.get("detail") or "").strip(),
                         "level": str(item.get("level") or "normal").strip() or "normal",
+                        "actor": str(item.get("actor") or "").strip(),
+                        "config_hash": str(item.get("config_hash") or "").strip(),
+                        "job_kind": str(item.get("job_kind") or "").strip(),
+                        "settings": clone_json_like(item.get("settings")) if isinstance(item.get("settings"), dict) else {},
+                        "before_model_version": str(item.get("before_model_version") or "").strip(),
+                        "after_model_version": str(item.get("after_model_version") or "").strip(),
+                        "compare_metrics": clone_json_like(item.get("compare_metrics")) if isinstance(item.get("compare_metrics"), dict) else {},
                     }
                 )
             self._state["audit_log"] = cleaned
