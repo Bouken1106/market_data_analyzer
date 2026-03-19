@@ -4040,6 +4040,17 @@ body.chart-panning {
   gap: 6px;
 }
 
+.mlops-metric-card.is-actionable {
+  cursor: pointer;
+}
+
+.mlops-metric-card.is-actionable:hover,
+.mlops-metric-card.is-actionable:focus {
+  outline: none;
+  border-color: rgba(57, 210, 192, 0.45);
+  box-shadow: 0 0 0 1px rgba(57, 210, 192, 0.22);
+}
+
 .mlops-metric-card strong {
   font-size: 0.96rem;
 }

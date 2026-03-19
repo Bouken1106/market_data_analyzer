@@ -57,6 +57,7 @@ const modelBodyEl = document.getElementById("mlops-model-body");
 const adoptModelBtn = document.getElementById("mlops-adopt-model");
 const modelDetailHeadEl = document.getElementById("mlops-model-detail-head");
 const modelDetailGridEl = document.getElementById("mlops-model-detail-grid");
+const modelDecisionEl = document.getElementById("mlops-model-decision");
 const modelExplainabilityEl = document.getElementById("mlops-model-explainability");
 const modelAuditEl = document.getElementById("mlops-model-audit");
 
@@ -137,7 +138,7 @@ function formatNullableValue(value) {
 function makeSummaryCards(cards) {
   return (Array.isArray(cards) ? cards : [])
     .map((item) => `
-      <article class="mlops-metric-card">
+      <article class="mlops-metric-card${item.action_tab ? " is-actionable" : ""}"${item.action_tab ? ` data-action-tab="${escapeHtml(item.action_tab)}" tabindex="0" role="button"` : ""}>
         <span class="label">${escapeHtml(item.label)}</span>
         <strong>${escapeHtml(item.value)}</strong>
         ${item.sub ? `<span class="hint">${escapeHtml(item.sub)}</span>` : ""}
@@ -781,6 +782,7 @@ function renderModels() {
   if (!selected) {
     modelDetailHeadEl.innerHTML = "<strong>モデル未選択</strong>";
     modelDetailGridEl.innerHTML = "";
+    modelDecisionEl.innerHTML = "";
     modelExplainabilityEl.innerHTML = "";
     modelAuditEl.innerHTML = "";
     adoptModelBtn.disabled = true;
@@ -795,6 +797,7 @@ function renderModels() {
     <div>${makeBadge(selected.status === "adopted" ? "採用中" : "候補", selected.status === "adopted" ? "normal" : "warning")}</div>
   `;
   modelDetailGridEl.innerHTML = makeKeyValueGrid([...(selected.train_conditions || []), ...(selected.eval_conditions || [])]);
+  modelDecisionEl.innerHTML = makeStackList(selected.decision || []);
   modelExplainabilityEl.innerHTML = makeStackList(selected.explainability || []);
   modelAuditEl.innerHTML = (selected.audit || []).map((item) => `<p>${escapeHtml(item)}</p>`).join("");
   applyActionPermissions();
@@ -997,6 +1000,24 @@ function bindEvents() {
     if (!row) return;
     appState.selectedCode = row.dataset.code || "";
     renderDashboard();
+  });
+
+  dashboardSummaryEl?.addEventListener("click", (event) => {
+    const card = event.target instanceof Element ? event.target.closest("[data-action-tab]") : null;
+    if (!card) return;
+    appState.activeTab = card.dataset.actionTab || "dashboard";
+    renderTabs();
+    document.getElementById("mlops-tabs")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
+  dashboardSummaryEl?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const card = event.target instanceof Element ? event.target.closest("[data-action-tab]") : null;
+    if (!card) return;
+    event.preventDefault();
+    appState.activeTab = card.dataset.actionTab || "dashboard";
+    renderTabs();
+    document.getElementById("mlops-tabs")?.scrollIntoView({ behavior: "smooth", block: "start" });
   });
 
   modelBodyEl?.addEventListener("click", (event) => {

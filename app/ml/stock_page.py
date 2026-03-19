@@ -296,6 +296,49 @@ def _series_metrics(daily_returns: list[float]) -> dict[str, float | None]:
     }
 
 
+def _safe_pct_label(value: float | None, digits: int = 1) -> str:
+    if value is None or not math.isfinite(value):
+        return "-"
+    return f"{value:.{digits}f}%"
+
+
+def _safe_signed_pct_label(value: float | None, digits: int = 1) -> str:
+    if value is None or not math.isfinite(value):
+        return "-"
+    return f"{value:+.{digits}f}%"
+
+
+def _safe_number_label(value: float | None, digits: int = 3) -> str:
+    if value is None or not math.isfinite(value):
+        return "-"
+    return f"{value:.{digits}f}"
+
+
+def _population_stability_index(
+    reference_values: list[float],
+    current_values: list[float],
+    *,
+    bucket_count: int = 10,
+) -> float | None:
+    if len(reference_values) < bucket_count or len(current_values) < bucket_count:
+        return None
+    reference_arr = np.array(reference_values, dtype=np.float64)
+    current_arr = np.array(current_values, dtype=np.float64)
+    quantiles = np.quantile(reference_arr, np.linspace(0.0, 1.0, bucket_count + 1))
+    edges = np.unique(quantiles)
+    if edges.size < 3:
+        return 0.0
+    edges = edges.astype(np.float64, copy=True)
+    edges[0] = -np.inf
+    edges[-1] = np.inf
+    ref_counts, _ = np.histogram(reference_arr, bins=edges)
+    cur_counts, _ = np.histogram(current_arr, bins=edges)
+    ref_ratio = np.clip(ref_counts / max(int(np.sum(ref_counts)), 1), 1e-6, None)
+    cur_ratio = np.clip(cur_counts / max(int(np.sum(cur_counts)), 1), 1e-6, None)
+    psi = np.sum((cur_ratio - ref_ratio) * np.log(cur_ratio / ref_ratio))
+    return float(psi)
+
+
 class StockMlPageService:
     def __init__(
         self,
@@ -405,6 +448,7 @@ class StockMlPageService:
             dataset=dataset,
             dashboard=dashboard,
             training=training,
+            backtest=backtest,
             models=models,
             refresh=refresh,
         )
@@ -1508,6 +1552,82 @@ class StockMlPageService:
                 )
         return out[:8]
 
+    @staticmethod
+    def _model_decision_payload(
+        *,
+        current_label: str,
+        peer_label: str,
+        current_summary: dict[str, Any],
+        peer_summary: dict[str, Any],
+        current_result: dict[str, Any],
+        peer_result: dict[str, Any],
+        is_adopted: bool,
+    ) -> tuple[str, list[str], list[dict[str, Any]]]:
+        current_metrics = current_result["metrics"]
+        peer_metrics = peer_result["metrics"]
+        roc_auc = float(current_summary.get("roc_auc") or 0.0)
+        peer_roc_auc = float(peer_summary.get("roc_auc") or 0.0)
+        roc_diff = roc_auc - peer_roc_auc
+        cagr = float(current_metrics.get("cagr_pct") or 0.0)
+        peer_cagr = float(peer_metrics.get("cagr_pct") or 0.0)
+        sharpe = current_metrics.get("sharpe")
+        peer_sharpe = peer_metrics.get("sharpe")
+        sharpe_diff = (
+            float(sharpe) - float(peer_sharpe)
+            if sharpe is not None and peer_sharpe is not None
+            else None
+        )
+        turnover_pct = float(current_metrics.get("turnover_pct") or 0.0)
+        unable_rate_pct = float(current_metrics.get("unable_rate_pct") or 0.0)
+        outperform_stat = roc_diff >= 0.0
+        outperform_trade = cagr >= peer_cagr
+        decision_level = "normal" if (outperform_stat and outperform_trade) else "warning"
+        adopt_reason = (
+            f"{current_label} は 直近 fold平均 ROC-AUC {roc_auc:.3f}"
+            f" ({peer_label} 比 {roc_diff:+.3f})"
+            f" / net CAGR {cagr:.1f}% ({peer_label} 比 {cagr - peer_cagr:+.1f}pt)"
+            " を確認対象にしています。"
+        )
+        warnings: list[str] = []
+        if not outperform_stat:
+            warnings.append(f"ROC-AUC が {peer_label} を下回る")
+        if not outperform_trade:
+            warnings.append(f"net CAGR が {peer_label} を下回る")
+        if unable_rate_pct >= 20.0:
+            warnings.append("約定不能率が高め")
+        if turnover_pct >= 400.0:
+            warnings.append("売買回転が高め")
+        if not warnings:
+            warnings.append("-")
+
+        decision_items = [
+            {
+                "level": "normal",
+                "title": "採用理由",
+                "detail": adopt_reason,
+            },
+            {
+                "level": "normal" if sharpe_diff is None or sharpe_diff >= 0.0 else "warning",
+                "title": "比較指標",
+                "detail": (
+                    f"Sharpe {_safe_number_label(float(sharpe) if sharpe is not None else None, 2)}"
+                    f" / {peer_label} 比 {_safe_number_label(sharpe_diff, 2)}"
+                    f" / Turnover {_safe_pct_label(turnover_pct, 1)}"
+                    f" / 約定不能率 {_safe_pct_label(unable_rate_pct, 2)}"
+                ),
+            },
+            {
+                "level": decision_level,
+                "title": "採用判定",
+                "detail": (
+                    f"{'採用中モデルとして維持' if is_adopted else '候補モデルとして比較継続'}。"
+                    if decision_level == "normal"
+                    else f"統計指標または net 成績が {peer_label} に劣後しているため、採用前に再確認が必要です。"
+                ),
+            },
+        ]
+        return adopt_reason, [] if warnings == ["-"] else warnings, decision_items
+
     def _build_model_registry(
         self,
         *,
@@ -1524,6 +1644,24 @@ class StockMlPageService:
         model_results = backtest["model_results"]
         primary_result = model_results[_MODEL_PRIMARY_VERSION]
         baseline_result = model_results[_MODEL_BASELINE_VERSION]
+        primary_adopt_reason, primary_warnings, primary_decision = self._model_decision_payload(
+            current_label=_PRIMARY_MODEL_FAMILY,
+            peer_label=_BASELINE_MODEL_FAMILY,
+            current_summary=training["primary_summary"],
+            peer_summary=training["baseline_summary"],
+            current_result=primary_result,
+            peer_result=baseline_result,
+            is_adopted=adopted_model_version == _MODEL_PRIMARY_VERSION,
+        )
+        baseline_adopt_reason, baseline_warnings, baseline_decision = self._model_decision_payload(
+            current_label=_BASELINE_MODEL_FAMILY,
+            peer_label=_PRIMARY_MODEL_FAMILY,
+            current_summary=training["baseline_summary"],
+            peer_summary=training["primary_summary"],
+            current_result=baseline_result,
+            peer_result=primary_result,
+            is_adopted=adopted_model_version == _MODEL_BASELINE_VERSION,
+        )
 
         primary_row = {
             "model_version": _MODEL_PRIMARY_VERSION,
@@ -1532,7 +1670,7 @@ class StockMlPageService:
             "task_type": "分類",
             "status": "adopted" if adopted_model_version == _MODEL_PRIMARY_VERSION else "candidate",
             "summary_metrics": f"ROC-AUC {training['primary_summary']['roc_auc']:.3f} / Sharpe {primary_result['metrics']['sharpe']:.2f}" if primary_result["metrics"]["sharpe"] is not None else f"ROC-AUC {training['primary_summary']['roc_auc']:.3f}",
-            "warnings": [],
+            "warnings": primary_warnings,
             "adoptable": True,
             "leakage_check": True,
             "data_quality_check": True,
@@ -1543,6 +1681,7 @@ class StockMlPageService:
                 {"label": "cost_buffer", "value": f"{cost_buffer:.3f}".rstrip("0").rstrip(".") if cost_buffer else "0.0"},
                 {"label": "seed", "value": str(random_seed)},
                 {"label": "特徴量セット", "value": _FEATURE_VERSION},
+                {"label": "採用理由", "value": primary_adopt_reason},
             ],
             "eval_conditions": [
                 {"label": "統計指標平均", "value": f"ROC-AUC {training['primary_summary']['roc_auc']:.3f} / PR-AUC {training['primary_summary']['pr_auc']:.3f}"},
@@ -1551,6 +1690,8 @@ class StockMlPageService:
                 {"label": "欠損率", "value": "0.0%"},
                 {"label": "期待収益率", "value": "LightGBM regressor で算出"},
             ],
+            "adopt_reason": primary_adopt_reason,
+            "decision": primary_decision,
             "explainability": [
                 {"level": "normal", "title": "全体重要特徴量", "detail": training.get("primary_feature_importance") or "importance unavailable"},
                 {"level": "normal", "title": "説明可能性の注記", "detail": "pred_contrib による tree contribution を各銘柄で表示します。"},
@@ -1565,7 +1706,7 @@ class StockMlPageService:
             "task_type": "分類",
             "status": "adopted" if adopted_model_version == _MODEL_BASELINE_VERSION else "candidate",
             "summary_metrics": f"ROC-AUC {training['baseline_summary']['roc_auc']:.3f} / Sharpe {baseline_result['metrics']['sharpe']:.2f}" if baseline_result["metrics"]["sharpe"] is not None else f"ROC-AUC {training['baseline_summary']['roc_auc']:.3f}",
-            "warnings": [],
+            "warnings": baseline_warnings,
             "adoptable": True,
             "leakage_check": True,
             "data_quality_check": True,
@@ -1576,6 +1717,7 @@ class StockMlPageService:
                 {"label": "cost_buffer", "value": f"{cost_buffer:.3f}".rstrip("0").rstrip(".") if cost_buffer else "0.0"},
                 {"label": "seed", "value": str(random_seed)},
                 {"label": "特徴量セット", "value": _FEATURE_VERSION},
+                {"label": "採用理由", "value": baseline_adopt_reason},
             ],
             "eval_conditions": [
                 {"label": "統計指標平均", "value": f"ROC-AUC {training['baseline_summary']['roc_auc']:.3f} / PR-AUC {training['baseline_summary']['pr_auc']:.3f}"},
@@ -1584,6 +1726,8 @@ class StockMlPageService:
                 {"label": "欠損率", "value": "0.0%"},
                 {"label": "警告", "value": "-"},
             ],
+            "adopt_reason": baseline_adopt_reason,
+            "decision": baseline_decision,
             "explainability": [
                 {"level": "normal", "title": "係数上位特徴量", "detail": "ret_20d / ma_gap_20 / volatility_20"},
                 {"level": "normal", "title": "セクター別傾向", "detail": "価格・出来高特徴量のみのためセクター説明は限定的です。"},
@@ -1739,7 +1883,7 @@ class StockMlPageService:
         summary_cards = [
             {"label": "prediction_date", "value": _to_jst_label(prediction_date)},
             {"label": "target_date", "value": _to_jst_label(target_date)},
-            {"label": "model_version", "value": selected_model_version, "sub": adopted_label},
+            {"label": "model_version", "value": selected_model_version, "sub": adopted_label, "action_tab": "models"},
             {"label": "data_version", "value": f"stooq_jp_{prediction_date.replace('-', '')}", "sub": feature_set},
             {"label": "coverage", "value": f"{coverage_total}/{coverage_total + coverage_excluded}", "sub": f"除外 {coverage_excluded}銘柄"},
             {"label": "data freshness", "value": "最新" if freshness_level == "normal" else "遅延あり", "sub": latest_update},
@@ -1764,41 +1908,215 @@ class StockMlPageService:
             "logs": logs,
         }
 
+    @staticmethod
+    def _ops_count_check(dataset: dict[str, Any]) -> dict[str, Any]:
+        prediction_dates: list[str] = dataset["prediction_dates"]
+        if not prediction_dates:
+            return {
+                "label": "取得件数異常",
+                "value": "-",
+                "level": "error",
+                "detail": "prediction_date を構築できていないため件数監視を実施できません。",
+            }
+        counts = [len(dataset["by_date"].get(day, [])) for day in prediction_dates]
+        latest_count = counts[-1]
+        prev_count = counts[-2] if len(counts) >= 2 else latest_count
+        baseline_window = counts[-11:-1] if len(counts) >= 3 else counts[:-1]
+        baseline_mean = float(sum(baseline_window) / len(baseline_window)) if baseline_window else float(latest_count)
+        deviation_pct = 0.0 if baseline_mean <= 1e-9 else ((latest_count - baseline_mean) / baseline_mean) * 100.0
+        total_symbols = len(JP_LARGE_CAP_UNIVERSE)
+        level = "normal"
+        if latest_count < max(1, math.ceil(total_symbols * 0.60)) or deviation_pct <= -20.0:
+            level = "error"
+        elif latest_count < max(1, math.ceil(total_symbols * 0.80)) or deviation_pct <= -10.0 or abs(latest_count - prev_count) >= 3:
+            level = "warning"
+        return {
+            "label": "取得件数異常",
+            "value": f"{latest_count}/{total_symbols}",
+            "level": level,
+            "detail": f"最新 {latest_count} 銘柄 / 前営業日差 {latest_count - prev_count:+d} / 10営業日平均 {baseline_mean:.1f}。",
+        }
+
+    @staticmethod
+    def _ops_missing_rate_check(dataset: dict[str, Any]) -> dict[str, Any]:
+        total_cells = len(dataset["rows"]) * len(_PRIMARY_FEATURE_ORDER)
+        feature_missing_counts = {name: 0 for name in _PRIMARY_FEATURE_ORDER}
+        missing_cells = 0
+        for row in dataset["rows"]:
+            for feature_name in _PRIMARY_FEATURE_ORDER:
+                value = _safe_float(row.get(feature_name))
+                if value is None:
+                    missing_cells += 1
+                    feature_missing_counts[feature_name] += 1
+        missing_rate_pct = (missing_cells / total_cells) * 100.0 if total_cells else 0.0
+        worst_feature = max(feature_missing_counts.items(), key=lambda item: item[1], default=("", 0))
+        level = "normal"
+        if missing_rate_pct >= 5.0:
+            level = "error"
+        elif missing_rate_pct >= 1.0:
+            level = "warning"
+        detail = f"欠損セル {missing_cells} / {total_cells}。"
+        if worst_feature[1] > 0:
+            detail += f" 最大欠損列は {worst_feature[0]} ({worst_feature[1]}件)。"
+        else:
+            detail += " 主要特徴量は全列で欠損なしです。"
+        return {
+            "label": "欠損率上昇",
+            "value": _safe_pct_label(missing_rate_pct, 2),
+            "level": level,
+            "detail": detail,
+        }
+
+    @staticmethod
+    def _ops_coverage_check(dataset: dict[str, Any], dashboard: dict[str, Any]) -> dict[str, Any]:
+        total_symbols = len(JP_LARGE_CAP_UNIVERSE)
+        available = int(dashboard.get("coverage_total") or 0)
+        excluded = int(dashboard.get("coverage_excluded") or 0)
+        excluded_ratio_pct = (excluded / total_symbols) * 100.0 if total_symbols else 0.0
+        level = "normal"
+        if excluded_ratio_pct >= 25.0:
+            level = "error"
+        elif excluded > 0:
+            level = "warning"
+        return {
+            "label": "銘柄数急減",
+            "value": f"{available}/{total_symbols}",
+            "level": level,
+            "detail": (
+                f"利用可能 {available} 銘柄 / 除外 {excluded} 銘柄。"
+                " 除外理由は取得失敗または履歴不足として扱います。"
+            ),
+        }
+
+    @staticmethod
+    def _ops_score_drift_check(dataset: dict[str, Any]) -> dict[str, Any]:
+        prediction_dates: list[str] = dataset["prediction_dates"]
+        if len(prediction_dates) < 25:
+            return {
+                "label": "スコア分布ドリフト",
+                "value": "-",
+                "level": "unknown",
+                "detail": "比較対象の営業日数が不足しているため、PSI を算出していません。",
+            }
+        recent_dates = set(prediction_dates[-5:])
+        prior_dates = set(prediction_dates[-25:-5])
+        recent_scores = [float(row["primary_score"]) for row in dataset["rows"] if row["date"] in recent_dates]
+        prior_scores = [float(row["primary_score"]) for row in dataset["rows"] if row["date"] in prior_dates]
+        psi = _population_stability_index(prior_scores, recent_scores)
+        recent_mean = float(np.mean(recent_scores)) if recent_scores else 0.0
+        prior_mean = float(np.mean(prior_scores)) if prior_scores else 0.0
+        mean_shift = recent_mean - prior_mean
+        level = "normal"
+        if psi is not None and psi >= 0.25:
+            level = "error"
+        elif (psi is not None and psi >= 0.10) or abs(mean_shift) >= 0.20:
+            level = "warning"
+        return {
+            "label": "スコア分布ドリフト",
+            "value": f"PSI {_safe_number_label(psi)}",
+            "level": level,
+            "detail": (
+                "直近5営業日 vs その前20営業日で比較。"
+                f" PSI {_safe_number_label(psi)} / 平均スコア差 {mean_shift:+.3f}。"
+            ),
+        }
+
+    @staticmethod
+    def _ops_pnl_drift_check(backtest: dict[str, Any], models: dict[str, Any]) -> dict[str, Any]:
+        adopted_model_version = str(models.get("adopted_model_version") or _MODEL_PRIMARY_VERSION)
+        model_results = backtest.get("model_results", {})
+        adopted_result = model_results.get(adopted_model_version)
+        if not isinstance(adopted_result, dict):
+            return {
+                "label": "実績損益ドリフト",
+                "value": "-",
+                "level": "unknown",
+                "detail": "採用モデルのバックテスト結果を参照できません。",
+            }
+        daily_series = adopted_result.get("daily_series") or []
+        if len(daily_series) < 40:
+            return {
+                "label": "実績損益ドリフト",
+                "value": "-",
+                "level": "unknown",
+                "detail": "最近20営業日と前20営業日を比較するには履歴が不足しています。",
+            }
+        recent_returns = [float(item.get("net_return") or 0.0) for item in daily_series[-20:]]
+        prior_returns = [float(item.get("net_return") or 0.0) for item in daily_series[-40:-20]]
+        recent_cum = (float(np.prod([1.0 + value for value in recent_returns])) - 1.0) * 100.0
+        prior_cum = (float(np.prod([1.0 + value for value in prior_returns])) - 1.0) * 100.0
+        recent_mean = float(np.mean(recent_returns))
+        prior_mean = float(np.mean(prior_returns))
+        level = "normal"
+        if recent_cum <= -3.0 and recent_mean < prior_mean - 0.001:
+            level = "error"
+        elif recent_cum < 0.0 or recent_mean < prior_mean:
+            level = "warning"
+        return {
+            "label": "実績損益ドリフト",
+            "value": _safe_signed_pct_label(recent_cum, 1),
+            "level": level,
+            "detail": (
+                f"{adopted_model_version} の直近20営業日 net {recent_cum:+.2f}%"
+                f" / 前20営業日 {prior_cum:+.2f}%。"
+                + (" モデル再学習候補として監視します。" if level != "normal" else " 直近成績は安定圏です。")
+            ),
+        }
+
     def _build_ops_view(
         self,
         *,
         dataset: dict[str, Any],
         dashboard: dict[str, Any],
         training: dict[str, Any],
+        backtest: dict[str, Any],
         models: dict[str, Any],
         refresh: bool,
     ) -> dict[str, Any]:
         state = self.page_store.get_state()
         collector_level = "normal" if self._staleness_days(dataset["latest_market_date"]) <= 1 else "warning"
+        monitor_checks = [
+            self._ops_count_check(dataset),
+            self._ops_missing_rate_check(dataset),
+            self._ops_coverage_check(dataset, dashboard),
+            self._ops_score_drift_check(dataset),
+            self._ops_pnl_drift_check(backtest, models),
+        ]
+        predictor_level = "error" if any(item["level"] == "error" for item in monitor_checks) else "warning" if any(item["level"] == "warning" for item in monitor_checks) else "normal"
         pipeline = [
             {"name": "collector", "title": "データ取得", "level": collector_level, "updated": dashboard["latest_update"], "detail": f"Stooq daily CSV ({len(JP_LARGE_CAP_UNIVERSE)} symbols)"},
             {"name": "normalizer", "title": "正規化", "level": "normal", "updated": dashboard["latest_update"], "detail": "CSV -> OHLCV cache -> feature rows"},
             {"name": "feature_builder", "title": "特徴量更新", "level": "normal", "updated": dashboard["latest_update"], "detail": f"{len(dataset['rows'])} rows の特徴量を構築"},
-            {"name": "predictor", "title": "推論", "level": "normal", "updated": _to_jst_timestamp(state.get("last_inference_run_at")) if state.get("last_inference_run_at") else dashboard["latest_update"], "detail": "LightGBM classifier/regressor と Logistic baseline を生成"},
+            {"name": "predictor", "title": "推論", "level": predictor_level, "updated": _to_jst_timestamp(state.get("last_inference_run_at")) if state.get("last_inference_run_at") else dashboard["latest_update"], "detail": "LightGBM classifier/regressor と Logistic baseline を生成"},
             {"name": "reporter", "title": "レポート出力", "level": "normal", "updated": dashboard["latest_update"], "detail": "prediction_daily 互換 DTO を返却"},
         ]
         alerts = [
             {
-                "level": collector_level,
-                "title": "公開ソース利用",
-                "detail": "日本株日足は Stooq 公開CSV を使用しています。",
-            },
-            {
-                "level": "normal",
-                "title": "モデル実装差分",
-                "detail": "Primary は LightGBM 本実装、Baseline は Logistic Regression です。",
-            },
-            {
-                "level": "normal",
-                "title": "監査ログ",
-                "detail": f"{len(state.get('audit_log') or [])} 件の主要操作を保持。",
-            },
+                "level": item["level"],
+                "title": item["label"],
+                "detail": item["detail"],
+            }
+            for item in monitor_checks
         ]
+        alerts.extend(
+            [
+                {
+                    "level": collector_level,
+                    "title": "公開ソース利用",
+                    "detail": "日本株日足は Stooq 公開CSV を使用しています。",
+                },
+                {
+                    "level": "normal",
+                    "title": "モデル実装差分",
+                    "detail": "Primary は LightGBM 本実装、Baseline は Logistic Regression です。",
+                },
+                {
+                    "level": "normal",
+                    "title": "監査ログ",
+                    "detail": f"{len(state.get('audit_log') or [])} 件の主要操作を保持。",
+                },
+            ]
+        )
         logs = []
         for item in (state.get("audit_log") or [])[:8]:
             if not isinstance(item, dict):
@@ -1817,13 +2135,13 @@ class StockMlPageService:
         return {
             "pipeline": pipeline,
             "summary_cards": [
-                {"label": "取得件数異常", "value": "0 source"},
-                {"label": "欠損率", "value": "0.0%"},
-                {"label": "スコアドリフト", "value": self._score_drift_value(dataset)},
-                {"label": "対象銘柄数", "value": str(len(dashboard["rows"]))},
+                {"label": item["label"], "value": item["value"]}
+                for item in monitor_checks
+            ] + [
                 {"label": "リークチェック", "value": "PASS"},
                 {"label": "ジョブ状態", "value": "SUCCEEDED" if not refresh else "REFRESHED"},
             ],
+            "monitor_checks": monitor_checks,
             "alerts": alerts,
             "logs": logs,
         }

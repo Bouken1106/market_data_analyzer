@@ -7,7 +7,7 @@
   <title>次営業日株価予測</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="/static/styles.css?v=20260318a" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260319a" />
 </head>
 
 <body class="ml-page mlops-page">
@@ -777,6 +777,18 @@
               <div class="mlops-detail-section">
                 <h4>
                   <span class="mlops-heading-inline">
+                    採用理由 / 警告
+                    <details class="mlops-inline-help">
+                      <summary aria-label="採用理由と警告の説明">?</summary>
+                      <div>この欄では「なぜ候補なのか」「どの指標で注意が必要か」を確認します。統計指標とバックテストの両方を見て、採用可否を判断するための要約です。</div>
+                    </details>
+                  </span>
+                </h4>
+                <div id="mlops-model-decision" class="mlops-stack-list"></div>
+              </div>
+              <div class="mlops-detail-section">
+                <h4>
+                  <span class="mlops-heading-inline">
                     説明可能性
                     <details class="mlops-inline-help">
                       <summary aria-label="説明可能性の説明">?</summary>
@@ -848,7 +860,7 @@
     </div>
   </main>
 
-  <script src="/static/ml_lab.js?v=20260318a"></script>
+  <script src="/static/ml_lab.js?v=20260319a"></script>
   <script src="/static/page_menu.js?v=20260318a" defer></script>
 </body>
 
