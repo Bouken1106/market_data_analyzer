@@ -761,6 +761,35 @@ function exportReport() {
   );
 }
 
+function closeInlineHelp(except = null) {
+  document.querySelectorAll(".mlops-inline-help[open]").forEach((element) => {
+    if (element !== except) {
+      element.open = false;
+    }
+  });
+}
+
+function bindInlineHelp() {
+  document.querySelectorAll(".mlops-inline-help").forEach((element) => {
+    element.addEventListener("toggle", () => {
+      if (element.open) {
+        closeInlineHelp(element);
+      }
+    });
+  });
+  document.addEventListener("click", (event) => {
+    if (event.target instanceof Element && event.target.closest(".mlops-inline-help")) {
+      return;
+    }
+    closeInlineHelp();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeInlineHelp();
+    }
+  });
+}
+
 function bindEvents() {
   tabs.forEach((tab) => {
     tab.addEventListener("click", () => {
@@ -854,6 +883,7 @@ function bindEvents() {
 }
 
 async function init() {
+  bindInlineHelp();
   bindEvents();
   await fetchSnapshot();
 }

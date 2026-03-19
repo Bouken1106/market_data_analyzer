@@ -80,6 +80,13 @@
 
     <section class="card mlops-action-bar" aria-label="固定アクション">
       <div class="mlops-action-buttons">
+        <div class="mlops-action-help">
+          <span class="label">操作</span>
+          <details class="mlops-inline-help">
+            <summary aria-label="固定アクションの説明">?</summary>
+            <div>データ更新はキャッシュ再取得、推論実行は当日予測の再生成、学習ジョブ作成は検証集計の更新、レポート出力は現画面の JSON 保存です。実運用では実行メモも合わせて残します。</div>
+          </details>
+        </div>
         <button id="mlops-refresh-data" type="button" class="secondary">データ更新</button>
         <button id="mlops-run-inference" type="button">推論実行</button>
         <button id="mlops-create-training" type="button" class="secondary">学習ジョブ作成</button>
@@ -96,7 +103,15 @@
         <div class="mlops-sticky">
           <section class="mlops-side-section">
             <div class="mlops-side-head">
-              <h2>共通フィルタ</h2>
+              <h2>
+                <span class="mlops-heading-inline">
+                  共通フィルタ
+                  <details class="mlops-inline-help">
+                    <summary aria-label="共通フィルタの説明">?</summary>
+                    <div>この条件はすべてのタブに共通です。未来営業日や未確定日を選べないようにして、学習と運用の前提をそろえます。</div>
+                  </details>
+                </span>
+              </h2>
               <p class="hint">未来営業日・未確定日を候補に出さない前提で固定。</p>
             </div>
 
@@ -115,36 +130,60 @@
               <label>
                 <span class="ml-label-row">
                   <span>予測基準日</span>
+                  <details class="mlops-inline-help">
+                    <summary aria-label="予測基準日の説明">?</summary>
+                    <div>予測を作る基準になる営業日 D です。この日の引け後までに確定した情報だけを使い、対象は次の営業日 D+1 です。</div>
+                  </details>
                 </span>
                 <select id="mlops-prediction-date"></select>
               </label>
               <label>
                 <span class="ml-label-row">
                   <span>ユニバース</span>
+                  <details class="mlops-inline-help">
+                    <summary aria-label="ユニバースの説明">?</summary>
+                    <div>学習と推論の対象にする銘柄集合です。初版は日本株大型株の固定プリセットで、流動性が低い銘柄を避けます。</div>
+                  </details>
                 </span>
                 <select id="mlops-universe-filter"></select>
               </label>
               <label>
                 <span class="ml-label-row">
                   <span>モデル</span>
+                  <details class="mlops-inline-help">
+                    <summary aria-label="モデルの説明">?</summary>
+                    <div>翌営業日の上昇方向を判定する分類器です。LightGBM を本命、Logistic Regression を比較用の基準として並べています。</div>
+                  </details>
                 </span>
                 <select id="mlops-model-family"></select>
               </label>
               <label>
                 <span class="ml-label-row">
                   <span>特徴量セット</span>
+                  <details class="mlops-inline-help">
+                    <summary aria-label="特徴量セットの説明">?</summary>
+                    <div>モデルへ渡す説明変数の束です。初版は価格と出来高を中心にした `base_v1` を使い、イベント特徴量は将来拡張扱いです。</div>
+                  </details>
                 </span>
                 <select id="mlops-feature-set"></select>
               </label>
               <label>
                 <span class="ml-label-row">
                   <span>cost_buffer</span>
+                  <details class="mlops-inline-help">
+                    <summary aria-label="cost_buffer の説明">?</summary>
+                    <div>翌日リターンがこの閾値を超えたら「上がる」とみなす判定基準です。`0.002` は約 0.2% の上昇が必要で、細かなノイズを少し減らします。</div>
+                  </details>
                 </span>
                 <select id="mlops-cost-buffer"></select>
               </label>
               <label class="mlops-filter-wide">
                 <span class="ml-label-row">
                   <span>実行メモ</span>
+                  <details class="mlops-inline-help">
+                    <summary aria-label="実行メモの説明">?</summary>
+                    <div>手動実行の理由を短く残す欄です。内容は監査ログに保存され、後で誰が何のために動かしたかを追跡できます。</div>
+                  </details>
                 </span>
                 <textarea id="mlops-run-note" rows="4" maxlength="200" placeholder="手動実行理由を200文字以内で記録"></textarea>
               </label>
@@ -215,10 +254,42 @@
                       <th>Code</th>
                       <th>Company</th>
                       <th>Sector</th>
-                      <th>prob_up</th>
-                      <th>score_cls</th>
-                      <th>expected_return</th>
-                      <th>警告</th>
+                      <th>
+                        <span class="mlops-th-help">
+                          prob_up
+                          <details class="mlops-inline-help">
+                            <summary aria-label="prob_up の説明">?</summary>
+                            <div>モデルが翌営業日に上昇すると見ている確率です。高いほど強気ですが、コストや警告もあわせて見ます。</div>
+                          </details>
+                        </span>
+                      </th>
+                      <th>
+                        <span class="mlops-th-help">
+                          score_cls
+                          <details class="mlops-inline-help">
+                            <summary aria-label="score_cls の説明">?</summary>
+                            <div>`prob_up` の元になる分類モデルの生スコアです。0 より大きいほど上方向寄りで、順位付けにも使います。</div>
+                          </details>
+                        </span>
+                      </th>
+                      <th>
+                        <span class="mlops-th-help">
+                          expected_return
+                          <details class="mlops-inline-help">
+                            <summary aria-label="expected_return の説明">?</summary>
+                            <div>翌営業日の期待収益率の参考値です。方向判定とは別の回帰モデルで出しているため、補助指標として扱います。</div>
+                          </details>
+                        </span>
+                      </th>
+                      <th>
+                        <span class="mlops-th-help">
+                          警告
+                          <details class="mlops-inline-help">
+                            <summary aria-label="警告列の説明">?</summary>
+                            <div>鮮度、流動性、ボラティリティなどの注意点です。数値が良くても警告が強い銘柄は慎重に見ます。</div>
+                          </details>
+                        </span>
+                      </th>
                     </tr>
                   </thead>
                   <tbody id="mlops-prediction-body"></tbody>
@@ -237,7 +308,15 @@
               <div id="mlops-detail-head" class="mlops-detail-head"></div>
               <div id="mlops-detail-metrics" class="mlops-mini-metrics"></div>
               <div class="mlops-detail-section">
-                <h4>主要特徴量寄与</h4>
+                <h4>
+                  <span class="mlops-heading-inline">
+                    主要特徴量寄与
+                    <details class="mlops-inline-help">
+                      <summary aria-label="主要特徴量寄与の説明">?</summary>
+                      <div>どの特徴量がその銘柄の予測を押し上げたか、または押し下げたかの要約です。「なぜ上位に来たか」を確認する欄です。</div>
+                    </details>
+                  </span>
+                </h4>
                 <div id="mlops-feature-contrib" class="mlops-feature-list"></div>
               </div>
               <div class="mlops-detail-section">
@@ -251,7 +330,15 @@
             <section class="mlops-subcard">
               <div class="mlops-subcard-head">
                 <div>
-                  <h3>セクター別平均スコア</h3>
+                  <h3>
+                    <span class="mlops-heading-inline">
+                      セクター別平均スコア
+                      <details class="mlops-inline-help">
+                        <summary aria-label="セクター別平均スコアの説明">?</summary>
+                        <div>同じセクターの銘柄をまとめて見たときの平均 `prob_up` です。個別銘柄だけでなく、どの業種が相対的に強いかをざっくり把握できます。</div>
+                      </details>
+                    </span>
+                  </h3>
                   <p class="hint">sector33_code 単位の平均 prob_up。</p>
                 </div>
               </div>
@@ -292,7 +379,15 @@
             <section class="mlops-subcard">
               <div class="mlops-subcard-head">
                 <div>
-                  <h3>入力フォーム要約</h3>
+                  <h3>
+                    <span class="mlops-heading-inline">
+                      入力フォーム要約
+                      <details class="mlops-inline-help">
+                        <summary aria-label="入力フォーム要約の説明">?</summary>
+                        <div>`gap` や `valid` 期間を含む学習条件の要約です。初版は自由入力を絞り、リークを起こしにくい preset だけを見せます。</div>
+                      </details>
+                    </span>
+                  </h3>
                   <p class="hint">時系列制約を守る preset のみ表示。</p>
                 </div>
               </div>
@@ -325,10 +420,42 @@
                   <thead>
                     <tr>
                       <th>モデル</th>
-                      <th>ROC-AUC</th>
-                      <th>PR-AUC</th>
-                      <th>Balanced Acc</th>
-                      <th>Hit Ratio</th>
+                      <th>
+                        <span class="mlops-th-help">
+                          ROC-AUC
+                          <details class="mlops-inline-help">
+                            <summary aria-label="ROC-AUC の説明">?</summary>
+                            <div>上がる銘柄を下がる銘柄より前に並べられるかを見る指標です。0.5 付近はランダム、1.0 に近いほど良好です。</div>
+                          </details>
+                        </span>
+                      </th>
+                      <th>
+                        <span class="mlops-th-help">
+                          PR-AUC
+                          <details class="mlops-inline-help">
+                            <summary aria-label="PR-AUC の説明">?</summary>
+                            <div>上昇候補をどれだけ効率よく拾えるかを見る指標です。陽性が少ない場面で参考になりやすいです。</div>
+                          </details>
+                        </span>
+                      </th>
+                      <th>
+                        <span class="mlops-th-help">
+                          Balanced Acc
+                          <details class="mlops-inline-help">
+                            <summary aria-label="Balanced Accuracy の説明">?</summary>
+                            <div>上昇と下落の両方を偏りなく当てられているかを見る正解率です。片側だけ強いモデルを見抜きやすくします。</div>
+                          </details>
+                        </span>
+                      </th>
+                      <th>
+                        <span class="mlops-th-help">
+                          Hit Ratio
+                          <details class="mlops-inline-help">
+                            <summary aria-label="Hit Ratio の説明">?</summary>
+                            <div>単純な的中率です。分かりやすい反面、上昇や下落に偏った相場では良く見えやすいので、他指標と合わせて判断します。</div>
+                          </details>
+                        </span>
+                      </th>
                       <th>Train Time</th>
                       <th>推論時間</th>
                       <th>特徴量数</th>
@@ -355,7 +482,15 @@
             <section class="mlops-subcard">
               <div class="mlops-subcard-head">
                 <div>
-                  <h3>walk-forward 詳細</h3>
+                  <h3>
+                    <span class="mlops-heading-inline">
+                      walk-forward 詳細
+                      <details class="mlops-inline-help">
+                        <summary aria-label="walk-forward の説明">?</summary>
+                        <div>古い期間で学習し、その後ろの期間で検証する時系列分割です。fold の間に `gap` を挟み、未来情報のにじみを防ぎます。</div>
+                      </details>
+                    </span>
+                  </h3>
                   <p class="hint">train期間 / gap / valid期間 / 件数を明示。</p>
                 </div>
               </div>
@@ -430,10 +565,42 @@
                   <thead>
                     <tr>
                       <th>モデル</th>
-                      <th>CAGR</th>
-                      <th>Sharpe</th>
-                      <th>Max Drawdown</th>
-                      <th>Turnover</th>
+                      <th>
+                        <span class="mlops-th-help">
+                          CAGR
+                          <details class="mlops-inline-help">
+                            <summary aria-label="CAGR の説明">?</summary>
+                            <div>複利ベースで年率換算した成長率です。高いほど良いですが、ドローダウンや売買回転もあわせて見ます。</div>
+                          </details>
+                        </span>
+                      </th>
+                      <th>
+                        <span class="mlops-th-help">
+                          Sharpe
+                          <details class="mlops-inline-help">
+                            <summary aria-label="Sharpe の説明">?</summary>
+                            <div>リターンを値動きの荒さで割った効率指標です。同じ利益でも、ぶれが小さい戦略ほど高くなります。</div>
+                          </details>
+                        </span>
+                      </th>
+                      <th>
+                        <span class="mlops-th-help">
+                          Max Drawdown
+                          <details class="mlops-inline-help">
+                            <summary aria-label="Max Drawdown の説明">?</summary>
+                            <div>資産曲線の最大下落率です。大きいほど途中で大きく負ける局面があり、心理的にも運用しづらくなります。</div>
+                          </details>
+                        </span>
+                      </th>
+                      <th>
+                        <span class="mlops-th-help">
+                          Turnover
+                          <details class="mlops-inline-help">
+                            <summary aria-label="Turnover の説明">?</summary>
+                            <div>銘柄の入れ替わり量です。高すぎると売買コストが増え、机上では良く見えても実運用で弱くなります。</div>
+                          </details>
+                        </span>
+                      </th>
                       <th>勝率</th>
                       <th>約定不能</th>
                     </tr>
@@ -536,7 +703,15 @@
               <div id="mlops-model-detail-head" class="mlops-detail-head"></div>
               <div id="mlops-model-detail-grid" class="mlops-key-value-grid"></div>
               <div class="mlops-detail-section">
-                <h4>説明可能性</h4>
+                <h4>
+                  <span class="mlops-heading-inline">
+                    説明可能性
+                    <details class="mlops-inline-help">
+                      <summary aria-label="説明可能性の説明">?</summary>
+                      <div>どの特徴量がモデル判断に効いたかを要約する欄です。「なぜこのモデルを採用候補にするのか」を確認する目的で使います。</div>
+                    </details>
+                  </span>
+                </h4>
                 <div id="mlops-model-explainability" class="mlops-stack-list"></div>
               </div>
               <div class="mlops-detail-section">
@@ -571,7 +746,15 @@
             <section class="mlops-subcard">
               <div class="mlops-subcard-head">
                 <div>
-                  <h3>監視アラート</h3>
+                  <h3>
+                    <span class="mlops-heading-inline">
+                      監視アラート
+                      <details class="mlops-inline-help">
+                        <summary aria-label="監視アラートの説明">?</summary>
+                        <div>取得件数、欠損率、スコア分布の変化を監視します。モデル性能が落ちる前兆やデータ異常を早めに見つけるための欄です。</div>
+                      </details>
+                    </span>
+                  </h3>
                   <p class="hint">取得件数異常、欠損率、ドリフトを確認。</p>
                 </div>
               </div>

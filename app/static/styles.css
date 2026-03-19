@@ -3727,6 +3727,13 @@ body.chart-panning {
   gap: 8px;
 }
 
+.mlops-action-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 4px;
+}
+
 .mlops-action-status {
   min-width: 280px;
   display: flex;
@@ -3801,6 +3808,81 @@ body.chart-panning {
 .mlops-panel-head p,
 .mlops-banner p {
   max-width: 72ch;
+}
+
+.mlops-heading-inline,
+.mlops-th-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mlops-inline-help {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.mlops-inline-help summary {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(88, 166, 255, 0.34);
+  background: rgba(88, 166, 255, 0.12);
+  color: #cfe4ff;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color var(--transition), background var(--transition), color var(--transition);
+}
+
+.mlops-inline-help summary::-webkit-details-marker {
+  display: none;
+}
+
+.mlops-inline-help summary:hover,
+.mlops-inline-help[open] summary {
+  border-color: rgba(57, 210, 192, 0.52);
+  background: rgba(57, 210, 192, 0.16);
+  color: #e8fffb;
+}
+
+.mlops-inline-help summary:focus-visible {
+  outline: 2px solid rgba(88, 166, 255, 0.5);
+  outline-offset: 2px;
+}
+
+.mlops-inline-help div {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 90;
+  width: min(320px, calc(100vw - 36px));
+  padding: 10px 11px;
+  border: 1px solid rgba(57, 210, 192, 0.26);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(16, 31, 44, 0.98) 0%, rgba(10, 17, 28, 0.98) 100%);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.34);
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 400;
+  line-height: 1.5;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.mlops-th-help .mlops-inline-help div {
+  left: auto;
+  right: 0;
 }
 
 .mlops-readonly-grid {
@@ -4253,6 +4335,12 @@ body.chart-panning {
   .mlops-head-meta {
     width: 100%;
     justify-content: stretch;
+  }
+
+  .mlops-inline-help div,
+  .mlops-th-help .mlops-inline-help div {
+    left: 0;
+    right: auto;
   }
 
   .mlops-tab-strip,
