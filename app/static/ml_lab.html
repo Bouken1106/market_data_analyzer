@@ -95,7 +95,13 @@
       <div class="mlops-action-status">
         <span id="mlops-role-badge" class="pill chip-cyan">role: -</span>
         <span id="mlops-global-badge" class="mlops-badge is-unknown">UNKNOWN</span>
-        <p id="mlops-global-status" class="hint">初期化中...</p>
+        <div class="mlops-action-copy">
+          <p id="mlops-global-status" class="hint">初期化中...</p>
+          <div class="mlops-job-inline">
+            <span id="mlops-job-badge" class="mlops-badge is-unknown">IDLE</span>
+            <p id="mlops-job-status" class="hint">ジョブ待機中...</p>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -611,6 +617,9 @@
             <div>
               <h2>Tab C - バックテスト</h2>
               <p class="hint">D日引け後予測 → D+1寄り買い → D+1引け売り の1日保有を標準ルールとして比較。</p>
+            </div>
+            <div class="mlops-inline-actions">
+              <button id="mlops-run-backtest" type="button" class="secondary">バックテスト再計算</button>
             </div>
           </div>
 

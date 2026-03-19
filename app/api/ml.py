@@ -154,6 +154,27 @@ def _training_job_status_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _ml_job_status_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    error_detail = payload.get("error_detail") or {}
+    raw_status = str(payload.get("status") or "")
+    return {
+        "job_id": payload.get("job_id"),
+        "kind": payload.get("kind"),
+        "symbol": payload.get("symbol"),
+        "status": _spec_job_status(raw_status),
+        "status_raw": raw_status,
+        "progress": payload.get("progress"),
+        "message": payload.get("message"),
+        "result": payload.get("result"),
+        "error": payload.get("error"),
+        "stage_name": error_detail.get("stage_name"),
+        "error_code": error_detail.get("error_code"),
+        "retryable": error_detail.get("retryable"),
+        "created_at": payload.get("created_at"),
+        "updated_at": payload.get("updated_at"),
+    }
+
+
 def _backtest_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
     backtest = snapshot.get("backtest", {})
     return {
@@ -364,6 +385,33 @@ async def stock_ml_prediction_run(
     stock_ml_page_store: StockMlPageStoreDep,
     ml_job_store: MlJobStoreDep,
 ) -> JSONResponse:
+    service = _stock_ml_page_service(hub, stock_ml_page_store)
+    snapshot = await service.build_snapshot(**_stock_page_kwargs(
+        prediction_date=req.prediction_date,
+        universe_filter=req.universe_filter,
+        model_family=req.model_family,
+        feature_set=req.feature_set,
+        cost_buffer=req.cost_buffer,
+        train_window_months=req.train_window_months,
+        gap_days=req.gap_days,
+        valid_window_months=req.valid_window_months,
+        random_seed=req.random_seed,
+        train_note=req.train_note,
+        run_note=req.run_note,
+        refresh=req.refresh,
+    ))
+    service._ensure_action_allowed(snapshot, "run_inference")
+    generation = service._prediction_run_payload(snapshot)
+    existing = stock_ml_page_store.find_prediction_run(generation_key=generation["generation_key"])
+    if existing is not None and not req.confirm_regenerate:
+        generated_at = existing.get("generated_at")
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "同一条件の prediction_daily は既に生成済みです。"
+                f" 最終生成: {generated_at}。再生成する場合は確認してください。"
+            ),
+        )
     job_id = ml_job_store.create(kind="stock_prediction_run", symbol="JP")
     asyncio.create_task(
         _run_stock_page_job(
@@ -375,7 +423,13 @@ async def stock_ml_prediction_run(
             ml_job_store=ml_job_store,
         )
     )
-    return ok_json_response(job_id=job_id, status="QUEUED", status_raw="queued", accepted_at=utc_now_iso())
+    return ok_json_response(
+        job_id=job_id,
+        kind="stock_prediction_run",
+        status="QUEUED",
+        status_raw="queued",
+        accepted_at=utc_now_iso(),
+    )
 
 
 @router.post("/api/ml/training/jobs")
@@ -385,6 +439,22 @@ async def stock_ml_training_job_create(
     stock_ml_page_store: StockMlPageStoreDep,
     ml_job_store: MlJobStoreDep,
 ) -> JSONResponse:
+    service = _stock_ml_page_service(hub, stock_ml_page_store)
+    snapshot = await service.build_snapshot(**_stock_page_kwargs(
+        prediction_date=req.prediction_date,
+        universe_filter=req.universe_filter,
+        model_family=req.model_family,
+        feature_set=req.feature_set,
+        cost_buffer=req.cost_buffer,
+        train_window_months=req.train_window_months,
+        gap_days=req.gap_days,
+        valid_window_months=req.valid_window_months,
+        random_seed=req.random_seed,
+        train_note=req.train_note,
+        run_note=req.run_note,
+        refresh=req.refresh,
+    ))
+    service._ensure_action_allowed(snapshot, "create_training_job")
     job_id = ml_job_store.create(kind="stock_training_job", symbol="JP")
     asyncio.create_task(
         _run_stock_page_job(
@@ -398,6 +468,7 @@ async def stock_ml_training_job_create(
     )
     return ok_json_response(
         job_id=job_id,
+        kind="stock_training_job",
         status="QUEUED",
         status_raw="queued",
         config_hash=_stock_page_config_hash(req),
@@ -410,6 +481,14 @@ async def stock_ml_training_job_status(job_id: str, ml_job_store: MlJobStoreDep)
     if payload is None:
         raise HTTPException(status_code=404, detail="Job not found.")
     return ok_json_response(**_training_job_status_payload(payload))
+
+
+@router.get("/api/ml/jobs/{job_id}")
+async def ml_job_status(job_id: str, ml_job_store: MlJobStoreDep) -> JSONResponse:
+    payload = ml_job_store.get(job_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return ok_json_response(**_ml_job_status_payload(payload))
 
 
 @router.get("/api/ml/backtests")
@@ -454,6 +533,22 @@ async def stock_ml_backtests_run(
     stock_ml_page_store: StockMlPageStoreDep,
     ml_job_store: MlJobStoreDep,
 ) -> JSONResponse:
+    service = _stock_ml_page_service(hub, stock_ml_page_store)
+    snapshot = await service.build_snapshot(**_stock_page_kwargs(
+        prediction_date=req.prediction_date,
+        universe_filter=req.universe_filter,
+        model_family=req.model_family,
+        feature_set=req.feature_set,
+        cost_buffer=req.cost_buffer,
+        train_window_months=req.train_window_months,
+        gap_days=req.gap_days,
+        valid_window_months=req.valid_window_months,
+        random_seed=req.random_seed,
+        train_note=req.train_note,
+        run_note=req.run_note,
+        refresh=req.refresh,
+    ))
+    service._ensure_action_allowed(snapshot, "run_backtest")
     job_id = ml_job_store.create(kind="stock_backtest_run", symbol="JP")
     asyncio.create_task(
         _run_stock_page_job(
@@ -465,7 +560,13 @@ async def stock_ml_backtests_run(
             ml_job_store=ml_job_store,
         )
     )
-    return ok_json_response(job_id=job_id, status="QUEUED", status_raw="queued", accepted_at=utc_now_iso())
+    return ok_json_response(
+        job_id=job_id,
+        kind="stock_backtest_run",
+        status="QUEUED",
+        status_raw="queued",
+        accepted_at=utc_now_iso(),
+    )
 
 
 @router.post("/api/ml/models/{model_version}/adopt")

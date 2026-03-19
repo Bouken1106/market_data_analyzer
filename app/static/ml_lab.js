@@ -11,9 +11,12 @@ const runInferenceBtn = document.getElementById("mlops-run-inference");
 const createTrainingBtn = document.getElementById("mlops-create-training");
 const exportReportBtn = document.getElementById("mlops-export-report");
 const exportCsvBtn = document.getElementById("mlops-export-csv");
+const runBacktestBtn = document.getElementById("mlops-run-backtest");
 const roleBadgeEl = document.getElementById("mlops-role-badge");
 const globalBadgeEl = document.getElementById("mlops-global-badge");
 const globalStatusEl = document.getElementById("mlops-global-status");
+const jobBadgeEl = document.getElementById("mlops-job-badge");
+const jobStatusEl = document.getElementById("mlops-job-status");
 const sidebarStatusEl = document.getElementById("mlops-sidebar-status");
 const tabs = Array.from(document.querySelectorAll(".mlops-tab"));
 const tabPanels = Array.from(document.querySelectorAll(".mlops-tab-panel"));
@@ -73,6 +76,9 @@ const opsDriftNoteEl = document.getElementById("mlops-ops-drift-note");
 const appState = {
   activeTab: "dashboard",
   snapshot: null,
+  job: null,
+  jobPollTimer: 0,
+  jobPollToken: 0,
   filters: {
     prediction_date: "",
     universe_filter: "jp_large_cap_stooq_v1",
@@ -92,6 +98,8 @@ const appState = {
   busyAction: "",
 };
 
+const JOB_TERMINAL_STATUSES = new Set(["SUCCEEDED", "FAILED", "CANCELLED"]);
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -106,6 +114,55 @@ function levelClass(level) {
   if (level === "warning") return "is-warning";
   if (level === "error") return "is-error";
   return "is-unknown";
+}
+
+function jobLevel(status) {
+  if (status === "SUCCEEDED") return "normal";
+  if (status === "FAILED" || status === "CANCELLED") return "error";
+  if (status === "RUNNING" || status === "QUEUED") return "warning";
+  return "unknown";
+}
+
+function jobKindLabel(kind) {
+  if (kind === "stock_prediction_run") return "推論ジョブ";
+  if (kind === "stock_training_job") return "学習ジョブ";
+  if (kind === "stock_backtest_run") return "バックテスト";
+  return "ジョブ";
+}
+
+function hasActiveJob() {
+  return Boolean(appState.job && !JOB_TERMINAL_STATUSES.has(appState.job.status || ""));
+}
+
+function stopJobPolling() {
+  if (appState.jobPollTimer) {
+    window.clearTimeout(appState.jobPollTimer);
+    appState.jobPollTimer = 0;
+  }
+  appState.jobPollToken += 1;
+}
+
+function normalizeJobPayload(payload, kindOverride = "") {
+  return {
+    job_id: String(payload?.job_id || ""),
+    kind: String(payload?.kind || kindOverride || ""),
+    status: String(payload?.status || "UNKNOWN"),
+    status_raw: String(payload?.status_raw || "").trim(),
+    progress: Number(payload?.progress ?? 0),
+    message: String(payload?.message || ""),
+    error: String(payload?.error || ""),
+    stage_name: String(payload?.stage_name || ""),
+    error_code: String(payload?.error_code || ""),
+    retryable: Boolean(payload?.retryable),
+    created_at: String(payload?.created_at || payload?.accepted_at || ""),
+    updated_at: String(payload?.updated_at || ""),
+  };
+}
+
+function setJobState(job) {
+  appState.job = job ? { ...job } : null;
+  renderJobStatus();
+  applyActionPermissions();
 }
 
 function makeBadge(label, level) {
@@ -137,6 +194,20 @@ function formatNullableValue(value) {
   if (value === null || value === undefined) return "NULL";
   if (typeof value === "number") return String(value);
   return String(value);
+}
+
+function formatJobTimestamp(value) {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return parsed.toLocaleString("ja-JP", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
 }
 
 function makeSummaryCards(cards) {
@@ -345,6 +416,9 @@ function setBusyAction(action) {
   refreshDataBtn.textContent = appState.busyAction === "refresh" ? "更新中..." : "データ更新";
   runInferenceBtn.textContent = appState.busyAction === "run-inference" ? "推論実行中..." : "推論実行";
   createTrainingBtn.textContent = appState.busyAction === "training" ? "集計中..." : "学習ジョブ作成";
+  if (runBacktestBtn) {
+    runBacktestBtn.textContent = appState.busyAction === "backtest" ? "再計算中..." : "バックテスト再計算";
+  }
   exportCsvBtn.textContent = appState.busyAction === "export-csv" ? "CSV出力中..." : "CSV出力";
   exportReportBtn.textContent = appState.busyAction === "export-report" ? "出力中..." : "レポート出力";
   if (!isBusy) {
@@ -453,37 +527,117 @@ async function requestDownload(endpoint, body, busyAction, fallbackMessage) {
   }
 }
 
-async function runInferenceAction(confirmRegenerate = false) {
-  setBusyAction("run-inference");
+async function refreshSnapshotAfterJob(job) {
   try {
-    const response = await fetch("/api/ml/stock-page/actions/run-inference", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...currentFilterPayload(),
-        confirm_regenerate: confirmRegenerate,
-      }),
+    await fetchSnapshot();
+    setJobState(job);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "最新スナップショットの再取得に失敗しました。";
+    setJobState({
+      ...job,
+      status: "FAILED",
+      error: message,
+      message,
     });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok || !payload.ok) {
-      const detail = payload.detail || "推論実行に失敗しました。";
-      if (response.status === 409 && !confirmRegenerate) {
-        setBusyAction("");
-        const approved = window.confirm(`${detail}\n\n再生成しますか？`);
-        if (approved) {
-          await runInferenceAction(true);
+    renderErrorState(message);
+  }
+}
+
+async function pollJobStatus(jobId, kind) {
+  stopJobPolling();
+  const token = appState.jobPollToken;
+
+  const pollOnce = async () => {
+    if (token !== appState.jobPollToken) return;
+    try {
+      const response = await fetch(`/api/ml/jobs/${encodeURIComponent(jobId)}`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.detail || "ジョブ状態の取得に失敗しました。");
+      }
+      const job = normalizeJobPayload(payload, kind);
+      setJobState(job);
+      if (JOB_TERMINAL_STATUSES.has(job.status)) {
+        if (job.status === "SUCCEEDED") {
+          await refreshSnapshotAfterJob(job);
+        } else {
+          renderErrorState(job.error || job.message || `${jobKindLabel(job.kind)} が失敗しました。`);
         }
         return;
       }
-      throw new Error(detail);
+      appState.jobPollTimer = window.setTimeout(() => {
+        void pollOnce();
+      }, 1200);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "ジョブ状態の取得に失敗しました。";
+      setJobState({
+        job_id: jobId,
+        kind,
+        status: "FAILED",
+        status_raw: "failed",
+        progress: 0,
+        message,
+        error: message,
+        stage_name: "",
+        error_code: "",
+        retryable: true,
+        created_at: "",
+        updated_at: "",
+      });
+      renderErrorState(message);
     }
-    appState.snapshot = payload;
-    syncStateFromSnapshot();
-    renderAll();
-  } catch (error) {
-    renderErrorState(error instanceof Error ? error.message : "推論実行に失敗しました。");
+  };
+
+  void pollOnce();
+}
+
+async function startAsyncJob(endpoint, body, busyAction, kind, fallbackMessage) {
+  stopJobPolling();
+  setBusyAction(busyAction);
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) {
+      const error = new Error(payload.detail || fallbackMessage);
+      error.status = response.status;
+      throw error;
+    }
+    const job = normalizeJobPayload(payload, kind);
+    setJobState(job);
+    await pollJobStatus(job.job_id, job.kind);
+    return job;
   } finally {
     setBusyAction("");
+  }
+}
+
+async function runInferenceAction(confirmRegenerate = false) {
+  try {
+    await startAsyncJob(
+      "/api/ml/predictions/run",
+      {
+        ...currentFilterPayload(),
+        confirm_regenerate: confirmRegenerate,
+      },
+      "run-inference",
+      "stock_prediction_run",
+      "推論実行に失敗しました。",
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "推論実行に失敗しました。";
+    const status = Number(error?.status || 0);
+    if (status === 409 && !confirmRegenerate) {
+      const approved = window.confirm(`${message}\n\n再生成しますか？`);
+      if (approved) {
+        await runInferenceAction(true);
+      }
+      return;
+    }
+    renderErrorState(message);
   }
 }
 
@@ -510,26 +664,35 @@ function actionPermission(actionKey) {
 
 function applyActionPermissions() {
   const isBusy = Boolean(appState.busyAction);
+  const jobActive = hasActiveJob();
   const buttonSpecs = [
     { button: refreshDataBtn, actionKey: "refresh_data" },
     { button: runInferenceBtn, actionKey: "run_inference" },
     { button: createTrainingBtn, actionKey: "create_training_job" },
+    { button: runBacktestBtn, actionKey: "run_backtest" },
     { button: exportReportBtn, actionKey: "export_report" },
     { button: exportCsvBtn, actionKey: "export_csv" },
   ];
   buttonSpecs.forEach(({ button, actionKey }) => {
     if (!button) return;
     const permission = actionPermission(actionKey);
-    button.disabled = isBusy || !permission.allowed;
-    button.title = !permission.allowed ? permission.reason || "" : "";
+    const blockedByJob = jobActive && !["export_report", "export_csv"].includes(actionKey);
+    button.disabled = isBusy || blockedByJob || !permission.allowed;
+    button.title = !permission.allowed
+      ? permission.reason || ""
+      : blockedByJob
+        ? "別のジョブが実行中です。完了後に再度実行してください。"
+        : "";
   });
   if (adoptModelBtn) {
     const selected = getSelectedModelRow();
     const permission = actionPermission("adopt_model");
     const modelEligible = Boolean(selected && selected.adoptable && selected.status !== "adopted");
-    adoptModelBtn.disabled = isBusy || !permission.allowed || !modelEligible;
+    adoptModelBtn.disabled = isBusy || jobActive || !permission.allowed || !modelEligible;
     adoptModelBtn.title = !permission.allowed
       ? permission.reason || ""
+      : jobActive
+        ? "別のジョブが実行中です。完了後に採用切替してください。"
       : modelEligible
         ? ""
         : selected
@@ -597,6 +760,27 @@ function renderGlobalStatus() {
         : "viewer は閲覧と CSV 出力のみ可能です。";
   }
   applyActionPermissions();
+}
+
+function renderJobStatus() {
+  const job = appState.job;
+  if (!jobBadgeEl || !jobStatusEl) return;
+  if (!job) {
+    jobBadgeEl.className = "mlops-badge is-unknown";
+    jobBadgeEl.textContent = "IDLE";
+    jobStatusEl.textContent = "ジョブ待機中。固定アクションから実行すると、ここに進捗を表示します。";
+    return;
+  }
+  const level = jobLevel(job.status);
+  const details = [
+    jobKindLabel(job.kind),
+    Number.isFinite(job.progress) ? `${Math.max(0, Math.round(job.progress))}%` : "",
+    job.stage_name ? `stage=${job.stage_name}` : "",
+    job.updated_at ? `updated ${formatJobTimestamp(job.updated_at)}` : "",
+  ].filter(Boolean);
+  jobBadgeEl.className = `mlops-badge ${levelClass(level)}`;
+  jobBadgeEl.textContent = job.status || "UNKNOWN";
+  jobStatusEl.textContent = [job.message || `${jobKindLabel(job.kind)} を実行しています。`, details.join(" / ")].filter(Boolean).join(" ");
 }
 
 function renderSidebarStatus() {
@@ -951,6 +1135,7 @@ function renderAll() {
   renderFilters();
   renderTrainingInputs();
   renderGlobalStatus();
+  renderJobStatus();
   renderSidebarStatus();
   renderTabs();
   renderDashboard();
@@ -1160,7 +1345,33 @@ function bindEvents() {
   createTrainingBtn?.addEventListener("click", async () => {
     appState.activeTab = "train";
     renderTabs();
-    await postAction("/api/ml/stock-page/actions/create-training-job", currentFilterPayload(), "training");
+    try {
+      await startAsyncJob(
+        "/api/ml/training/jobs",
+        currentFilterPayload(),
+        "training",
+        "stock_training_job",
+        "学習ジョブ作成に失敗しました。",
+      );
+    } catch (error) {
+      renderErrorState(error instanceof Error ? error.message : "学習ジョブ作成に失敗しました。");
+    }
+  });
+
+  runBacktestBtn?.addEventListener("click", async () => {
+    appState.activeTab = "backtest";
+    renderTabs();
+    try {
+      await startAsyncJob(
+        "/api/ml/backtests/run",
+        currentFilterPayload(),
+        "backtest",
+        "stock_backtest_run",
+        "バックテスト再計算に失敗しました。",
+      );
+    } catch (error) {
+      renderErrorState(error instanceof Error ? error.message : "バックテスト再計算に失敗しました。");
+    }
   });
 
   adoptModelBtn?.addEventListener("click", async () => {

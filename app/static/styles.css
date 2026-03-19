@@ -3741,6 +3741,24 @@ body.chart-panning {
   gap: 10px;
 }
 
+.mlops-action-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  flex: 1 1 260px;
+}
+
+.mlops-job-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mlops-job-inline .hint {
+  margin: 0;
+}
+
 .mlops-badge {
   display: inline-flex;
   align-items: center;
