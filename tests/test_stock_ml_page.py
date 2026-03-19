@@ -54,6 +54,17 @@ class StockMlPageServiceHelpersTest(unittest.TestCase):
         self.assertEqual(cards[-1]["value"], "IDLE")
         self.assertIn("help", cards[-1])
 
+    def test_ops_summary_cards_include_help_for_coverage_monitor(self) -> None:
+        cards = StockMlPageService._ops_summary_cards(
+            monitor_checks=[{"label": "銘柄数急減", "value": "22/25"}],
+            leakage_ok=True,
+            state={"audit_log": []},
+            refresh=False,
+        )
+
+        self.assertEqual(cards[0]["label"], "銘柄数急減")
+        self.assertTrue(cards[0]["help"])
+
     def test_ops_job_status_uses_error_audit_level(self) -> None:
         label = StockMlPageService._ops_job_status_label(
             state={"audit_log": [{"level": "error", "action": "run_inference"}]},
