@@ -27,6 +27,7 @@ class MlJobStore:
             "message": "ジョブを作成しました。",
             "result": None,
             "error": None,
+            "error_detail": None,
             "cancel_requested": False,
             "created_at": now_iso,
             "updated_at": now_iso,
@@ -57,6 +58,7 @@ class MlJobStore:
                     message="停止しました。",
                     result=None,
                     error=None,
+                    error_detail=None,
                 )
             else:
                 item.update(
@@ -65,10 +67,18 @@ class MlJobStore:
                     message="完了しました。",
                     result=result,
                     error=None,
+                    error_detail=None,
                 )
             item["updated_at"] = datetime.now(timezone.utc).isoformat()
 
-    def fail(self, job_id: str, error: str) -> None:
+    def fail(
+        self,
+        job_id: str,
+        error: str,
+        *,
+        error_detail: dict[str, Any] | None = None,
+        message: str = "失敗しました。",
+    ) -> None:
         with self._lock:
             item = self._jobs.get(job_id)
             if not item:
@@ -79,13 +89,15 @@ class MlJobStore:
                     progress=0,
                     message="停止しました。",
                     error=None,
+                    error_detail=None,
                     result=None,
                 )
             else:
                 item.update(
                     status="failed",
-                    message="失敗しました。",
+                    message=message,
                     error=error,
+                    error_detail=error_detail,
                     result=None,
                 )
             item["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -114,6 +126,7 @@ class MlJobStore:
                     message="停止しました。",
                     result=None,
                     error=None,
+                    error_detail=None,
                 )
             else:
                 item.update(
@@ -122,6 +135,7 @@ class MlJobStore:
                     message="停止を要求しました。",
                     result=None,
                     error=None,
+                    error_detail=None,
                 )
             item["updated_at"] = datetime.now(timezone.utc).isoformat()
             return dict(item)
@@ -134,6 +148,7 @@ class MlJobStore:
             message=message,
             result=None,
             error=None,
+            error_detail=None,
             cancel_requested=True,
         )
 

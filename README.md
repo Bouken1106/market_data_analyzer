@@ -104,7 +104,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 右上の `Pages` ボタンから各ページに遷移できます。
 
 - `/`: US Stock Live Monitor（リアルタイム監視）
-- `/ml-lab`: ML Forecast Lab（モデル一覧から選択して翌営業日分布を推定）
+- `/ml-lab`: 次営業日株価予測ページ（予測ダッシュボード、学習・検証、バックテスト、モデル管理、運用監視）
 - `/strategy-lab`: Strategy Lab（配分ルール + リバランス提案 + コスト込みバックテスト）
 - `/compare-lab`: Model Compare Lab（複数銘柄 × 複数モデルの一括比較）
 - `/` には Paper Portfolio（仮想資産）パネルを搭載し、実注文なしで売買シミュレーション可能
@@ -136,15 +136,12 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 6. テーブルに価格・更新時刻が表示され、取得ソース（`websocket` / `rest` / `stored`）は更新時刻の下に小さく表示
    - `change(%)` は営業中は「現在値 vs 前営業日終値」、休場中は「直近営業日終値 vs その1つ前の営業日終値」で表示
 7. `Refresh Credits` で日次の残APIクレジットを手動更新（`/api_usage` を呼ぶため 1 クレジット消費）
-8. `/ml-lab` では Model Catalog からモデルを選択し、実行可能なモデルで以下を表示:
-   - 0.1%〜99.9%分位点の分位点関数プロット（代表日を複数比較）
-   - ファンチャート（q50, q25-q75, q05-q95, 実測値）
-   - 最新時点から翌営業日分布（PDF/CDF、Returns/Prices切替）
-   - 予測に毎日従った場合の「過去60営業日」実績バックテスト（戦略 vs 固定株数ホールド）
-   - 戦略は「1日1%超損失の確率が3%を超えない上限」の範囲で期待リターン最大の株式比率を採用
-   - test の平均ピンボール損失 / 被覆率（q05-q95, q25-q75）
-   - 時系列分割は「直近2カ月を test、残りを train/val=4:1」で分割
-   - 現在 `Ready` は Quantile LSTM / PatchTST Quantile、他モデルは `Coming Soon` として UI 上で選択可能
+8. `/ml-lab` では日本株 / 日足 / 翌日方向分類の stock ML ページとして以下を表示:
+   - prediction_daily 互換の予測ダッシュボード（`prob_up`, `score_cls`, `score_rank`, `expected_return`）
+   - LightGBM Classifier と Logistic Regression の walk-forward + gap 比較
+   - コスト込みのバックテスト結果（CAGR, Sharpe, Max Drawdown, Turnover, 勝率, 約定不能件数）
+   - 採用中モデルと候補モデルの比較、採用切替、監査情報
+   - 取得件数異常、欠損率、スコア分布ドリフト、監査ログを含む運用・監視タブ
 9. `/compare-lab` では、複数銘柄（例: AAPL, MSFT, GOOG, JPM, XOM, UNH, WMT, META, LLY, BRK.B, NVDA, HD）に同一ハイパーパラメータを適用してモデルを一括学習・比較
    - 比較期間（test）は「最新データから直近2カ月」
    - 学習/検証は残り期間を `4:1` で分割（train=80%, val=20%）
@@ -212,7 +209,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `GET /api/ml/predictions/daily`: prediction_daily 互換レスポンス
 - `POST /api/ml/predictions/run`: 次営業日株価予測の推論ジョブを起動
 - `POST /api/ml/training/jobs`: 学習・検証ジョブを起動
-- `GET /api/ml/training/jobs/{job_id}`: 学習・検証ジョブ状態取得
+- `GET /api/ml/training/jobs/{job_id}`: 学習・検証ジョブ状態取得（`status`: `QUEUED` / `RUNNING` / `SUCCEEDED` / `FAILED` / `CANCELLED`、失敗時は `stage_name` / `error_code` / `retryable` を返却）
 - `GET /api/ml/backtests`: バックテスト結果取得
 - `POST /api/ml/backtests/run`: バックテスト再計算ジョブを起動
 - `POST /api/ml/models/{model_version}/adopt`: 採用モデル切替
@@ -224,10 +221,10 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `POST /api/ml/quantile-lstm/jobs`: Quantile LSTM 非同期ジョブを開始
 - `POST /api/ml/patchtst/jobs`: PatchTST 非同期ジョブを開始
 - `POST /api/ml/compare/jobs`: 複数銘柄 × 複数モデル比較ジョブを開始（直近2カ月評価、残り4:1分割）
-- `GET /api/ml/jobs/{job_id}`: 非同期ジョブ状態を取得（`queued` / `running` / `cancelling` / `completed` / `failed` / `cancelled`）
+- `GET /api/ml/jobs/{job_id}`: 非同期ジョブ状態を取得（従来の `status` に加えて、仕様寄りの `status_code` も返却）
 - `POST /api/ml/jobs/{job_id}/cancel`: 実行中ジョブの停止を要求
 - `GET /api/stream`: SSE でリアルタイム配信
-- `GET /ml-lab`: モデル選択式の分位点予測ページ
+- `GET /ml-lab`: 次営業日株価予測ページ
 - `POST /api/strategy/evaluate`: ポートフォリオ戦略を評価（配分案・リバランス提案・コスト込みバックテスト結果）
 - `GET /strategy-lab`: 戦略検証ページ
 - `GET /compare-lab`: モデル一括比較ページ

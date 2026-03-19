@@ -33,6 +33,25 @@ from .deps import HubDep, MlJobStoreDep, StockMlPageStoreDep
 router = APIRouter()
 
 
+def _spec_job_status(status: str | None) -> str:
+    normalized = str(status or "").strip().lower()
+    mapping = {
+        "queued": "QUEUED",
+        "running": "RUNNING",
+        "cancelling": "RUNNING",
+        "completed": "SUCCEEDED",
+        "failed": "FAILED",
+        "cancelled": "CANCELLED",
+    }
+    return mapping.get(normalized, "UNKNOWN")
+
+
+def _job_response_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    result = dict(payload)
+    result["status_code"] = _spec_job_status(payload.get("status"))
+    return result
+
+
 def _stock_ml_page_service(hub: HubDep, stock_ml_page_store: StockMlPageStoreDep) -> StockMlPageService:
     return StockMlPageService(
         full_daily_history_store=hub.full_daily_history_store,
@@ -115,9 +134,12 @@ def _prediction_daily_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
 
 def _training_job_status_payload(payload: dict[str, Any]) -> dict[str, Any]:
     result = payload.get("result") or {}
+    error_detail = payload.get("error_detail") or {}
+    raw_status = str(payload.get("status") or "")
     return {
         "job_id": payload.get("job_id"),
-        "status": payload.get("status"),
+        "status": _spec_job_status(raw_status),
+        "status_raw": raw_status,
         "progress": payload.get("progress"),
         "message": payload.get("message"),
         "metrics": result.get("metrics"),
@@ -125,6 +147,9 @@ def _training_job_status_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "folds": result.get("folds"),
         "logs": result.get("logs"),
         "error": payload.get("error"),
+        "stage_name": error_detail.get("stage_name"),
+        "error_code": error_detail.get("error_code"),
+        "retryable": error_detail.get("retryable"),
         "updated_at": payload.get("updated_at"),
     }
 
@@ -192,6 +217,7 @@ async def _run_stock_page_job(
 ) -> None:
     service = _stock_ml_page_service(hub, stock_ml_page_store)
     ml_job_store.update(job_id, status="running", progress=15, message="ジョブを実行しています。")
+    stage_name = "prepare"
     kwargs = _stock_page_kwargs(
         prediction_date=req.prediction_date,
         universe_filter=req.universe_filter,
@@ -208,9 +234,11 @@ async def _run_stock_page_job(
     )
     try:
         if kind == "stock_prediction_run":
+            stage_name = "run_inference"
             snapshot = await service.run_inference(confirm_regenerate=req.confirm_regenerate, **kwargs)
             result = _prediction_daily_payload(snapshot)
         elif kind == "stock_training_job":
+            stage_name = "create_training_job"
             snapshot = await service.create_training_job(**kwargs)
             result = {
                 "metrics": snapshot.get("train", {}).get("compare_rows", []),
@@ -219,6 +247,7 @@ async def _run_stock_page_job(
                 "logs": snapshot.get("ops", {}).get("logs", []),
             }
         elif kind == "stock_backtest_run":
+            stage_name = "run_backtest"
             snapshot = await service.build_snapshot(**kwargs)
             service._ensure_action_allowed(snapshot, "run_backtest")
             result = _backtest_payload(snapshot)
@@ -226,10 +255,31 @@ async def _run_stock_page_job(
             raise HTTPException(status_code=400, detail="Unsupported stock ML job kind.")
         ml_job_store.complete(job_id, result)
     except HTTPException as exc:
-        ml_job_store.fail(job_id, str(exc.detail))
+        detail = str(exc.detail)
+        ml_job_store.fail(
+            job_id,
+            detail,
+            error_detail={
+                "stage_name": stage_name,
+                "error_code": f"HTTP_{exc.status_code}",
+                "message": detail,
+                "retryable": exc.status_code >= 500,
+            },
+            message=detail,
+        )
     except Exception as exc:  # pragma: no cover - defensive background task guard
         LOGGER.exception("Stock ML page job failed: %s", exc)
-        ml_job_store.fail(job_id, str(exc))
+        ml_job_store.fail(
+            job_id,
+            str(exc),
+            error_detail={
+                "stage_name": stage_name,
+                "error_code": "UNEXPECTED_ERROR",
+                "message": str(exc),
+                "retryable": True,
+            },
+            message="内部エラーにより失敗しました。",
+        )
 
 
 @router.get("/api/ml/models")
@@ -325,7 +375,7 @@ async def stock_ml_prediction_run(
             ml_job_store=ml_job_store,
         )
     )
-    return ok_json_response(job_id=job_id, accepted_at=utc_now_iso())
+    return ok_json_response(job_id=job_id, status="QUEUED", status_raw="queued", accepted_at=utc_now_iso())
 
 
 @router.post("/api/ml/training/jobs")
@@ -346,7 +396,12 @@ async def stock_ml_training_job_create(
             ml_job_store=ml_job_store,
         )
     )
-    return ok_json_response(job_id=job_id, config_hash=_stock_page_config_hash(req))
+    return ok_json_response(
+        job_id=job_id,
+        status="QUEUED",
+        status_raw="queued",
+        config_hash=_stock_page_config_hash(req),
+    )
 
 
 @router.get("/api/ml/training/jobs/{job_id}")
@@ -410,7 +465,7 @@ async def stock_ml_backtests_run(
             ml_job_store=ml_job_store,
         )
     )
-    return ok_json_response(job_id=job_id, accepted_at=utc_now_iso())
+    return ok_json_response(job_id=job_id, status="QUEUED", status_raw="queued", accepted_at=utc_now_iso())
 
 
 @router.post("/api/ml/models/{model_version}/adopt")
@@ -791,7 +846,7 @@ async def ml_job_status(job_id: str, ml_job_store: MlJobStoreDep) -> JSONRespons
     payload = ml_job_store.get(job_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="Job not found.")
-    return ok_json_response(**payload)
+    return ok_json_response(**_job_response_payload(payload))
 
 
 @router.post("/api/ml/jobs/{job_id}/cancel")
@@ -799,4 +854,4 @@ async def ml_job_cancel(job_id: str, ml_job_store: MlJobStoreDep) -> JSONRespons
     payload = ml_job_store.request_cancel(job_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="Job not found.")
-    return ok_json_response(**payload)
+    return ok_json_response(**_job_response_payload(payload))
