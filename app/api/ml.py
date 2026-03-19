@@ -186,7 +186,7 @@ async def _run_stock_page_job(
     )
     try:
         if kind == "stock_prediction_run":
-            snapshot = await service.run_inference(**kwargs)
+            snapshot = await service.run_inference(confirm_regenerate=req.confirm_regenerate, **kwargs)
             result = _prediction_daily_payload(snapshot)
         elif kind == "stock_training_job":
             snapshot = await service.create_training_job(**kwargs)
@@ -467,6 +467,7 @@ async def stock_ml_page_run_inference(
         model_family=req.model_family,
         feature_set=req.feature_set,
         cost_buffer=req.cost_buffer,
+        confirm_regenerate=req.confirm_regenerate,
         run_note=req.run_note,
         refresh=req.refresh,
     )
@@ -506,6 +507,46 @@ async def stock_ml_page_adopt_model(
         model_family=req.model_family,
         feature_set=req.feature_set,
         cost_buffer=req.cost_buffer,
+        run_note=req.run_note,
+        refresh=req.refresh,
+    )
+    return ok_json_response(**payload)
+
+
+@router.post("/api/ml/stock-page/actions/export-csv")
+async def stock_ml_page_export_csv(
+    req: StockMlPageActionRequest,
+    hub: HubDep,
+    stock_ml_page_store: StockMlPageStoreDep,
+) -> JSONResponse:
+    service = _stock_ml_page_service(hub, stock_ml_page_store)
+    payload = await service.export_csv(
+        prediction_date=req.prediction_date,
+        universe_filter=req.universe_filter,
+        model_family=req.model_family,
+        feature_set=req.feature_set,
+        cost_buffer=req.cost_buffer,
+        search_query=req.search_query,
+        run_note=req.run_note,
+        refresh=req.refresh,
+    )
+    return ok_json_response(**payload)
+
+
+@router.post("/api/ml/stock-page/actions/export-report")
+async def stock_ml_page_export_report(
+    req: StockMlPageActionRequest,
+    hub: HubDep,
+    stock_ml_page_store: StockMlPageStoreDep,
+) -> JSONResponse:
+    service = _stock_ml_page_service(hub, stock_ml_page_store)
+    payload = await service.export_report(
+        prediction_date=req.prediction_date,
+        universe_filter=req.universe_filter,
+        model_family=req.model_family,
+        feature_set=req.feature_set,
+        cost_buffer=req.cost_buffer,
+        search_query=req.search_query,
         run_note=req.run_note,
         refresh=req.refresh,
     )

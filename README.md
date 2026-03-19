@@ -217,6 +217,8 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `POST /api/ml/backtests/run`: バックテスト再計算ジョブを起動
 - `POST /api/ml/models/{model_version}/adopt`: 採用モデル切替
 - `GET /api/ml/ops/status`: 運用・監視ステータス取得
+- `POST /api/ml/stock-page/actions/export-csv`: 画面絞り込み後の `prediction_daily` 互換 CSV を出力し、監査ログへ記録
+- `POST /api/ml/stock-page/actions/export-report`: 現在スナップショットの JSON レポートを出力し、監査ログへ記録
 - `GET /api/ml/quantile-lstm?...`: Quantile LSTM を学習・推論し、分位点/評価/描画データを返却（`months=3..60`, デフォルト `60`）
 - `GET /api/ml/patchtst?...`: PatchTST Quantile を学習・推論し、分位点/評価/描画データを返却（`months=3..60`, デフォルト `60`）
 - `POST /api/ml/quantile-lstm/jobs`: Quantile LSTM 非同期ジョブを開始

@@ -22,6 +22,7 @@ class StockMlPageStore(JsonStateStore):
             "last_training_run_at": None,
             "updated_at": None,
             "audit_log": [],
+            "prediction_runs": [],
         }
         self._load_from_disk()
 
@@ -67,6 +68,60 @@ class StockMlPageStore(JsonStateStore):
         del logs[self.max_logs:]
         self._touch_and_write()
 
+    def find_prediction_run(self, *, generation_key: str) -> dict[str, str] | None:
+        normalized_key = str(generation_key or "").strip()
+        if not normalized_key:
+            return None
+        runs = self._state.get("prediction_runs")
+        if not isinstance(runs, list):
+            return None
+        for item in runs:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("generation_key") or "").strip() != normalized_key:
+                continue
+            return clone_json_like(item)
+        return None
+
+    def record_prediction_run(
+        self,
+        *,
+        generation_key: str,
+        prediction_date: str,
+        target_date: str,
+        model_version: str,
+        feature_version: str,
+        data_version: str,
+        config_hash: str,
+    ) -> None:
+        normalized_key = str(generation_key or "").strip()
+        if not normalized_key:
+            return
+        runs = self._state.setdefault("prediction_runs", [])
+        if not isinstance(runs, list):
+            runs = []
+            self._state["prediction_runs"] = runs
+        cleaned_runs = [
+            item
+            for item in runs
+            if isinstance(item, dict) and str(item.get("generation_key") or "").strip() != normalized_key
+        ]
+        cleaned_runs.insert(
+            0,
+            {
+                "generation_key": normalized_key,
+                "prediction_date": str(prediction_date or "").strip(),
+                "target_date": str(target_date or "").strip(),
+                "model_version": str(model_version or "").strip(),
+                "feature_version": str(feature_version or "").strip(),
+                "data_version": str(data_version or "").strip(),
+                "config_hash": str(config_hash or "").strip(),
+                "generated_at": utc_now_iso(),
+            },
+        )
+        self._state["prediction_runs"] = cleaned_runs[: self.max_logs]
+        self._touch_and_write()
+
     def _load_from_disk(self) -> None:
         payload = self._read_state_dict()
         if payload is None:
@@ -95,6 +150,28 @@ class StockMlPageStore(JsonStateStore):
                     }
                 )
             self._state["audit_log"] = cleaned
+        runs = payload.get("prediction_runs")
+        if isinstance(runs, list):
+            cleaned_runs: list[dict[str, str]] = []
+            for item in runs[: self.max_logs]:
+                if not isinstance(item, dict):
+                    continue
+                generation_key = str(item.get("generation_key") or "").strip()
+                if not generation_key:
+                    continue
+                cleaned_runs.append(
+                    {
+                        "generation_key": generation_key,
+                        "prediction_date": str(item.get("prediction_date") or "").strip(),
+                        "target_date": str(item.get("target_date") or "").strip(),
+                        "model_version": str(item.get("model_version") or "").strip(),
+                        "feature_version": str(item.get("feature_version") or "").strip(),
+                        "data_version": str(item.get("data_version") or "").strip(),
+                        "config_hash": str(item.get("config_hash") or "").strip(),
+                        "generated_at": str(item.get("generated_at") or "").strip(),
+                    }
+                )
+            self._state["prediction_runs"] = cleaned_runs
 
     def _touch_and_write(self) -> None:
         self._touch_and_write_state(self._state)

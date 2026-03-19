@@ -96,6 +96,8 @@ class StockMlPageActionRequest(BaseModel):
     feature_set: str = "base_v1"
     cost_buffer: float = 0.0
     run_note: str = ""
+    search_query: str = ""
+    confirm_regenerate: bool = False
     refresh: bool = False
 
 

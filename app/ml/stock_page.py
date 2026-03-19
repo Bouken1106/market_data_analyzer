@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import hashlib
 import io
+import json
 import math
 import time
 from dataclasses import dataclass
@@ -157,6 +159,25 @@ def _to_jst_timestamp(value: str | None) -> str:
     return jst.strftime("%Y-%m-%d %H:%M JST")
 
 
+def _config_hash(
+    *,
+    prediction_date: str,
+    universe_filter: str,
+    model_family: str,
+    feature_set: str,
+    cost_buffer: float,
+) -> str:
+    payload = {
+        "prediction_date": prediction_date,
+        "universe_filter": universe_filter,
+        "model_family": model_family,
+        "feature_set": feature_set,
+        "cost_buffer": round(float(cost_buffer), 6),
+    }
+    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+    return digest[:12]
+
+
 def _roc_auc_score(y_true: np.ndarray, y_score: np.ndarray) -> float | None:
     if y_true.size == 0 or y_score.size == 0:
         return None
@@ -278,10 +299,17 @@ class StockMlPageService:
         selected_feature_set = feature_set if feature_set in {_FEATURE_VERSION} else _FEATURE_VERSION
         selected_universe = universe_filter if universe_filter in {_UNIVERSE_VALUE} else _UNIVERSE_VALUE
         latest_market_date = dataset["latest_market_date"]
+        config_hash = _config_hash(
+            prediction_date=selected_prediction_date,
+            universe_filter=selected_universe,
+            model_family=selected_model_family,
+            feature_set=selected_feature_set,
+            cost_buffer=cost_buffer,
+        )
 
         training = self._build_training_view(dataset=dataset)
         backtest = self._build_backtest_view(dataset=dataset)
-        models = self._build_model_registry(training=training, backtest=backtest)
+        models = self._build_model_registry(training=training, backtest=backtest, config_hash=config_hash)
         selected_model_version = models["default_versions"].get(selected_model_family, _MODEL_PRIMARY_VERSION)
         dashboard = self._build_dashboard_view(
             dataset=dataset,
@@ -315,6 +343,7 @@ class StockMlPageService:
 
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
+            "config_hash": config_hash,
             "header": {
                 "updated_at": dashboard["latest_update"],
                 "env": self._infer_environment(),
@@ -351,12 +380,43 @@ class StockMlPageService:
         }
 
     async def run_inference(self, **kwargs: Any) -> dict[str, Any]:
+        confirm_regenerate = bool(kwargs.pop("confirm_regenerate", False))
         current_snapshot = await self.build_snapshot(**kwargs)
         self._ensure_action_allowed(current_snapshot, "run_inference")
+        generation = self._prediction_run_payload(current_snapshot)
+        existing = self.page_store.find_prediction_run(generation_key=generation["generation_key"])
+        if existing is not None and not confirm_regenerate:
+            generated_at = _to_jst_timestamp(existing.get("generated_at"))
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "同一条件の prediction_daily は既に生成済みです。"
+                    f" 最終生成: {generated_at}。再生成する場合は確認してください。"
+                ),
+            )
         self.page_store.mark_inference_run()
+        self.page_store.record_prediction_run(
+            generation_key=generation["generation_key"],
+            prediction_date=generation["prediction_date"],
+            target_date=generation["target_date"],
+            model_version=generation["model_version"],
+            feature_version=generation["feature_version"],
+            data_version=generation["data_version"],
+            config_hash=generation["config_hash"],
+        )
+        regenerate_label = "Regenerated" if existing is not None else "Generated"
+        run_note = str(kwargs.get("run_note") or "").strip()
         self.page_store.add_audit_log(
             action="run_inference",
-            detail=f"Manual inference executed. model_family={kwargs.get('model_family') or _PRIMARY_MODEL_FAMILY}",
+            detail=(
+                f"{regenerate_label} prediction_daily."
+                f" prediction_date={generation['prediction_date']}"
+                f" target_date={generation['target_date']}"
+                f" model_version={generation['model_version']}"
+                f" config={generation['config_hash']}"
+                + (f" note={run_note[:80]}" if run_note else "")
+            ),
+            level="warning" if existing is not None else "normal",
         )
         return await self.build_snapshot(**kwargs)
 
@@ -364,9 +424,17 @@ class StockMlPageService:
         current_snapshot = await self.build_snapshot(**kwargs)
         self._ensure_action_allowed(current_snapshot, "create_training_job")
         self.page_store.mark_training_run()
+        filters = current_snapshot.get("filters", {})
+        run_note = str(kwargs.get("run_note") or "").strip()
         self.page_store.add_audit_log(
             action="create_training_job",
-            detail=f"Training summary refreshed. cost_buffer={kwargs.get('cost_buffer')}",
+            detail=(
+                "Training summary refreshed."
+                f" prediction_date={filters.get('prediction_date')}"
+                f" cost_buffer={filters.get('cost_buffer')}"
+                f" config={current_snapshot.get('config_hash') or '-'}"
+                + (f" note={run_note[:80]}" if run_note else "")
+            ),
             level="warning",
         )
         return await self.build_snapshot(**kwargs)
@@ -374,9 +442,16 @@ class StockMlPageService:
     async def refresh_data(self, **kwargs: Any) -> dict[str, Any]:
         current_snapshot = await self.build_snapshot(**kwargs)
         self._ensure_action_allowed(current_snapshot, "refresh_data")
+        filters = current_snapshot.get("filters", {})
+        run_note = str(kwargs.get("run_note") or "").strip()
         self.page_store.add_audit_log(
             action="refresh_data",
-            detail="Universe daily cache refreshed from Stooq.",
+            detail=(
+                "Universe daily cache refreshed from Stooq."
+                f" prediction_date={filters.get('prediction_date')}"
+                f" config={current_snapshot.get('config_hash') or '-'}"
+                + (f" note={run_note[:80]}" if run_note else "")
+            ),
         )
         refreshed_kwargs = dict(kwargs)
         refreshed_kwargs["refresh"] = True
@@ -388,12 +463,95 @@ class StockMlPageService:
         current_snapshot = await self.build_snapshot(**kwargs)
         self._ensure_action_allowed(current_snapshot, "adopt_model")
         self.page_store.set_adopted_model_version(model_version)
+        run_note = str(kwargs.get("run_note") or "").strip()
         self.page_store.add_audit_log(
             action="adopt_model",
-            detail=f"Adopted model changed to {model_version}.",
+            detail=(
+                f"Adopted model changed to {model_version}."
+                f" config={current_snapshot.get('config_hash') or '-'}"
+                + (f" note={run_note[:80]}" if run_note else "")
+            ),
             level="warning",
         )
         return await self.build_snapshot(**kwargs)
+
+    async def export_csv(self, *, search_query: str = "", **kwargs: Any) -> dict[str, Any]:
+        current_snapshot = await self.build_snapshot(**kwargs)
+        self._ensure_action_allowed(current_snapshot, "export_csv")
+        dashboard = current_snapshot.get("dashboard", {})
+        filtered_rows = self._filter_dashboard_rows(
+            rows=dashboard.get("rows", []),
+            search_query=search_query,
+        )
+        model_version = self._prediction_run_payload(current_snapshot)["model_version"]
+        output = io.StringIO()
+        writer = csv.writer(output, lineterminator="\n")
+        writer.writerow(
+            [
+                "prediction_date",
+                "target_date",
+                "code",
+                "score_cls",
+                "prob_up",
+                "score_rank",
+                "expected_return",
+                "model_version",
+                "feature_version",
+                "data_version",
+            ]
+        )
+        for row in filtered_rows:
+            writer.writerow(
+                [
+                    dashboard.get("prediction_date") or current_snapshot.get("filters", {}).get("prediction_date") or "",
+                    dashboard.get("target_date") or "",
+                    row.get("code") or "",
+                    f"{float(row.get('score_cls') or 0.0):.2f}",
+                    f"{float(row.get('prob_up') or 0.0):.3f}",
+                    "NULL" if row.get("score_rank") is None else str(row.get("score_rank")),
+                    "NULL" if row.get("expected_return") is None else f"{float(row.get('expected_return')):.6f}",
+                    model_version,
+                    dashboard.get("feature_version") or current_snapshot.get("filters", {}).get("feature_set") or "",
+                    dashboard.get("data_version") or "",
+                ]
+            )
+        trimmed_query = str(search_query or "").strip()
+        self.page_store.add_audit_log(
+            action="export_csv",
+            detail=(
+                f"CSV exported. rows={len(filtered_rows)}"
+                f" query={trimmed_query[:80] or '-'}"
+                f" config={current_snapshot.get('config_hash') or '-'}"
+            ),
+        )
+        updated_snapshot = await self.build_snapshot(**kwargs)
+        filename = f"prediction_daily_{str(dashboard.get('prediction_date') or '').replace('-', '')}.csv"
+        return {
+            "filename": filename,
+            "content": output.getvalue(),
+            "row_count": len(filtered_rows),
+            "snapshot": updated_snapshot,
+        }
+
+    async def export_report(self, *, search_query: str = "", **kwargs: Any) -> dict[str, Any]:
+        current_snapshot = await self.build_snapshot(**kwargs)
+        self._ensure_action_allowed(current_snapshot, "export_report")
+        trimmed_query = str(search_query or "").strip()
+        self.page_store.add_audit_log(
+            action="export_report",
+            detail=(
+                "Report exported."
+                f" query={trimmed_query[:80] or '-'}"
+                f" config={current_snapshot.get('config_hash') or '-'}"
+            ),
+        )
+        updated_snapshot = await self.build_snapshot(**kwargs)
+        filename = f"stock_ml_report_{str(updated_snapshot.get('dashboard', {}).get('prediction_date') or '').replace('-', '')}.json"
+        return {
+            "filename": filename,
+            "content": f"{json.dumps(updated_snapshot, ensure_ascii=False, indent=2)}\n",
+            "snapshot": updated_snapshot,
+        }
 
     async def _load_histories(self, *, refresh: bool) -> dict[str, dict[str, Any]]:
         semaphore = asyncio.Semaphore(_STOOQ_FETCH_CONCURRENCY)
@@ -1221,7 +1379,7 @@ class StockMlPageService:
                 )
         return out[:8]
 
-    def _build_model_registry(self, *, training: dict[str, Any], backtest: dict[str, Any]) -> dict[str, Any]:
+    def _build_model_registry(self, *, training: dict[str, Any], backtest: dict[str, Any], config_hash: str) -> dict[str, Any]:
         adopted_model_version = self.page_store.get_adopted_model_version()
         model_results = backtest["model_results"]
         primary_result = model_results[_MODEL_PRIMARY_VERSION]
@@ -1258,7 +1416,7 @@ class StockMlPageService:
                 {"level": "normal", "title": "説明可能性の注記", "detail": "pred_contrib による tree contribution を各銘柄で表示します。"},
                 {"level": "normal", "title": "当日寄与上位", "detail": "各銘柄の top3 feature contribution をダッシュボードで表示。"},
             ],
-            "audit": self._model_audit_lines(model_version=_MODEL_PRIMARY_VERSION),
+            "audit": self._model_audit_lines(model_version=_MODEL_PRIMARY_VERSION, config_hash=config_hash),
         }
         baseline_row = {
             "model_version": _MODEL_BASELINE_VERSION,
@@ -1291,7 +1449,7 @@ class StockMlPageService:
                 {"level": "normal", "title": "セクター別傾向", "detail": "価格・出来高特徴量のみのためセクター説明は限定的です。"},
                 {"level": "normal", "title": "当日寄与上位", "detail": "線形係数に基づく寄与。"},
             ],
-            "audit": self._model_audit_lines(model_version=_MODEL_BASELINE_VERSION),
+            "audit": self._model_audit_lines(model_version=_MODEL_BASELINE_VERSION, config_hash=config_hash),
         }
         rows = [primary_row, baseline_row]
         default_versions = {
@@ -1657,21 +1815,83 @@ class StockMlPageService:
         reason = str(action_permission.get("reason") or "この操作は現在の条件では実行できません。").strip()
         raise HTTPException(status_code=403, detail=reason)
 
-    def _model_audit_lines(self, *, model_version: str) -> list[str]:
+    def _model_audit_lines(self, *, model_version: str, config_hash: str) -> list[str]:
         state = self.page_store.get_state()
         adopted_model_version = state.get("adopted_model_version")
         lines = [
             f"採用状態: {'採用中' if model_version == adopted_model_version else '候補'}",
             f"最終推論: {_to_jst_timestamp(state.get('last_inference_run_at'))}",
             f"最終学習集計: {_to_jst_timestamp(state.get('last_training_run_at'))}",
-            "入力設定ハッシュ: stooq-jp-base_v1",
+            f"入力設定ハッシュ: {config_hash or '-'}",
         ]
+        prediction_runs = state.get("prediction_runs") or []
+        latest_prediction_run = None
+        for item in prediction_runs:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("model_version") or "").strip() != model_version:
+                continue
+            latest_prediction_run = item
+            break
+        if isinstance(latest_prediction_run, dict):
+            lines.append(
+                "直近prediction_daily: "
+                f"{latest_prediction_run.get('prediction_date')}"
+                f" -> {latest_prediction_run.get('target_date')}"
+                f" / {_to_jst_timestamp(latest_prediction_run.get('generated_at'))}"
+            )
         latest_audit = state.get("audit_log") or []
         if latest_audit:
             first = latest_audit[0]
             if isinstance(first, dict):
                 lines.append(f"直近操作: {first.get('action')} / {first.get('detail')}")
         return lines
+
+    @staticmethod
+    def _filter_dashboard_rows(*, rows: list[dict[str, Any]], search_query: str) -> list[dict[str, Any]]:
+        query = str(search_query or "").strip().lower()
+        if not query:
+            return [item for item in rows if isinstance(item, dict)]
+        filtered: list[dict[str, Any]] = []
+        for item in rows:
+            if not isinstance(item, dict):
+                continue
+            haystacks = (
+                str(item.get("code") or "").lower(),
+                str(item.get("company_name") or "").lower(),
+                str(item.get("sector") or "").lower(),
+            )
+            if any(query in value for value in haystacks):
+                filtered.append(item)
+        return filtered
+
+    def _prediction_run_payload(self, snapshot: dict[str, Any]) -> dict[str, str]:
+        filters = snapshot.get("filters", {})
+        models = snapshot.get("models", {})
+        dashboard = snapshot.get("dashboard", {})
+        model_version = str(models.get("default_versions", {}).get(filters.get("model_family"), "")).strip()
+        prediction_date = str(dashboard.get("prediction_date") or filters.get("prediction_date") or "").strip()
+        feature_version = str(dashboard.get("feature_version") or filters.get("feature_set") or "").strip()
+        data_version = str(dashboard.get("data_version") or "").strip()
+        generation_key = "::".join(
+            [
+                prediction_date,
+                model_version,
+                feature_version,
+                data_version,
+                str(filters.get("universe_filter") or "").strip(),
+                str(filters.get("cost_buffer") or "").strip(),
+            ]
+        )
+        return {
+            "generation_key": generation_key,
+            "prediction_date": prediction_date,
+            "target_date": str(dashboard.get("target_date") or "").strip(),
+            "model_version": model_version,
+            "feature_version": feature_version,
+            "data_version": data_version,
+            "config_hash": str(snapshot.get("config_hash") or "").strip(),
+        }
 
     def _runtime_logs(self, *, action: str, latest_market_date: str) -> list[dict[str, Any]]:
         time_label = f"{latest_market_date} 15:00".split(" ")[1] if latest_market_date else "-"

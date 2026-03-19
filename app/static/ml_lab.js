@@ -267,8 +267,10 @@ function setBusyAction(action) {
   refreshDataBtn.textContent = appState.busyAction === "refresh" ? "更新中..." : "データ更新";
   runInferenceBtn.textContent = appState.busyAction === "run-inference" ? "推論実行中..." : "推論実行";
   createTrainingBtn.textContent = appState.busyAction === "training" ? "集計中..." : "学習ジョブ作成";
+  exportCsvBtn.textContent = appState.busyAction === "export-csv" ? "CSV出力中..." : "CSV出力";
   exportReportBtn.textContent = appState.busyAction === "export-report" ? "出力中..." : "レポート出力";
   if (!isBusy) {
+    exportCsvBtn.textContent = "CSV出力";
     exportReportBtn.textContent = "レポート出力";
   }
   applyActionPermissions();
@@ -336,6 +338,67 @@ async function postAction(endpoint, body, busyAction) {
     renderAll();
   } catch (error) {
     renderErrorState(error instanceof Error ? error.message : "操作に失敗しました。");
+  } finally {
+    setBusyAction("");
+  }
+}
+
+async function requestDownload(endpoint, body, busyAction, fallbackMessage) {
+  setBusyAction(busyAction);
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.detail || fallbackMessage);
+    }
+    if (payload.snapshot) {
+      appState.snapshot = payload.snapshot;
+      syncStateFromSnapshot();
+      renderAll();
+    }
+    downloadTextFile(payload.filename || "download.txt", payload.content || "", busyAction === "export-csv"
+      ? "text/csv;charset=utf-8"
+      : "application/json;charset=utf-8");
+  } catch (error) {
+    renderErrorState(error instanceof Error ? error.message : fallbackMessage);
+  } finally {
+    setBusyAction("");
+  }
+}
+
+async function runInferenceAction(confirmRegenerate = false) {
+  setBusyAction("run-inference");
+  try {
+    const response = await fetch("/api/ml/stock-page/actions/run-inference", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...currentFilterPayload(),
+        confirm_regenerate: confirmRegenerate,
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) {
+      const detail = payload.detail || "推論実行に失敗しました。";
+      if (response.status === 409 && !confirmRegenerate) {
+        setBusyAction("");
+        const approved = window.confirm(`${detail}\n\n再生成しますか？`);
+        if (approved) {
+          await runInferenceAction(true);
+        }
+        return;
+      }
+      throw new Error(detail);
+    }
+    appState.snapshot = payload;
+    syncStateFromSnapshot();
+    renderAll();
+  } catch (error) {
+    renderErrorState(error instanceof Error ? error.message : "推論実行に失敗しました。");
   } finally {
     setBusyAction("");
   }
@@ -745,6 +808,13 @@ function currentFilterPayload() {
   };
 }
 
+function currentExportPayload() {
+  return {
+    ...currentFilterPayload(),
+    search_query: appState.search || "",
+  };
+}
+
 function downloadTextFile(filename, content, mimeType) {
   const blob = new Blob([content], { type: mimeType });
   const url = window.URL.createObjectURL(blob);
@@ -757,55 +827,21 @@ function downloadTextFile(filename, content, mimeType) {
   window.URL.revokeObjectURL(url);
 }
 
-function escapeCsv(value) {
-  const text = String(value ?? "");
-  if (/[",\n]/.test(text)) {
-    return `"${text.replaceAll('"', '""')}"`;
-  }
-  return text;
+async function exportCsv() {
+  await requestDownload(
+    "/api/ml/stock-page/actions/export-csv",
+    currentExportPayload(),
+    "export-csv",
+    "CSV 出力に失敗しました。",
+  );
 }
 
-function exportCsv() {
-  const snapshot = appState.snapshot;
-  if (!snapshot) return;
-  const dashboard = snapshot.dashboard || {};
-  const rows = getDashboardRows();
-  const modelVersion = snapshot.models?.default_versions?.[appState.filters.model_family] || "";
-  const lines = [
-    [
-      "prediction_date",
-      "target_date",
-      "code",
-      "score_cls",
-      "prob_up",
-      "score_rank",
-      "expected_return",
-      "model_version",
-      "feature_version",
-      "data_version",
-    ].join(","),
-    ...rows.map((row) => [
-      dashboard.prediction_date || appState.filters.prediction_date,
-      dashboard.target_date || "",
-      row.code,
-      Number(row.score_cls || 0).toFixed(2),
-      Number(row.prob_up || 0).toFixed(3),
-      Number(row.score_rank || 0),
-      row.expected_return == null ? "NULL" : Number(row.expected_return).toFixed(6),
-      modelVersion,
-      dashboard.feature_version || appState.filters.feature_set,
-      dashboard.data_version || "",
-    ].map(escapeCsv).join(",")),
-  ];
-  downloadTextFile(`prediction_daily_${String(dashboard.prediction_date || "").replaceAll("-", "")}.csv`, `${lines.join("\n")}\n`, "text/csv;charset=utf-8");
-}
-
-function exportReport() {
-  if (!appState.snapshot) return;
-  downloadTextFile(
-    `stock_ml_report_${String(appState.snapshot.dashboard?.prediction_date || "").replaceAll("-", "")}.json`,
-    `${JSON.stringify(appState.snapshot, null, 2)}\n`,
-    "application/json;charset=utf-8",
+async function exportReport() {
+  await requestDownload(
+    "/api/ml/stock-page/actions/export-report",
+    currentExportPayload(),
+    "export-report",
+    "レポート出力に失敗しました。",
   );
 }
 
@@ -908,7 +944,7 @@ function bindEvents() {
   });
 
   runInferenceBtn?.addEventListener("click", async () => {
-    await postAction("/api/ml/stock-page/actions/run-inference", currentFilterPayload(), "run-inference");
+    await runInferenceAction();
   });
 
   createTrainingBtn?.addEventListener("click", async () => {
@@ -926,8 +962,12 @@ function bindEvents() {
     }, "adopt");
   });
 
-  exportCsvBtn?.addEventListener("click", exportCsv);
-  exportReportBtn?.addEventListener("click", exportReport);
+  exportCsvBtn?.addEventListener("click", async () => {
+    await exportCsv();
+  });
+  exportReportBtn?.addEventListener("click", async () => {
+    await exportReport();
+  });
 }
 
 async function init() {
