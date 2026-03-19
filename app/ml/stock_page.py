@@ -96,34 +96,35 @@ class UniverseSymbol:
     symbol: str
     company_name: str
     sector: str
+    sector33_code: str
 
 
 JP_LARGE_CAP_UNIVERSE: tuple[UniverseSymbol, ...] = (
-    UniverseSymbol("7203", "7203.JP", "トヨタ自動車", "輸送用機器"),
-    UniverseSymbol("6758", "6758.JP", "ソニーグループ", "電気機器"),
-    UniverseSymbol("9984", "9984.JP", "ソフトバンクグループ", "情報・通信業"),
-    UniverseSymbol("8035", "8035.JP", "東京エレクトロン", "電気機器"),
-    UniverseSymbol("7974", "7974.JP", "任天堂", "その他製品"),
-    UniverseSymbol("6501", "6501.JP", "日立製作所", "電気機器"),
-    UniverseSymbol("4063", "4063.JP", "信越化学工業", "化学"),
-    UniverseSymbol("9983", "9983.JP", "ファーストリテイリング", "小売業"),
-    UniverseSymbol("8306", "8306.JP", "三菱UFJフィナンシャル・グループ", "銀行業"),
-    UniverseSymbol("6861", "6861.JP", "キーエンス", "電気機器"),
-    UniverseSymbol("9432", "9432.JP", "日本電信電話", "情報・通信業"),
-    UniverseSymbol("9433", "9433.JP", "KDDI", "情報・通信業"),
-    UniverseSymbol("4519", "4519.JP", "中外製薬", "医薬品"),
-    UniverseSymbol("4568", "4568.JP", "第一三共", "医薬品"),
-    UniverseSymbol("8058", "8058.JP", "三菱商事", "卸売業"),
-    UniverseSymbol("6902", "6902.JP", "デンソー", "輸送用機器"),
-    UniverseSymbol("8766", "8766.JP", "東京海上ホールディングス", "保険業"),
-    UniverseSymbol("7741", "7741.JP", "HOYA", "精密機器"),
-    UniverseSymbol("6857", "6857.JP", "アドバンテスト", "電気機器"),
-    UniverseSymbol("6367", "6367.JP", "ダイキン工業", "機械"),
-    UniverseSymbol("7267", "7267.JP", "本田技研工業", "輸送用機器"),
-    UniverseSymbol("6098", "6098.JP", "リクルートホールディングス", "サービス業"),
-    UniverseSymbol("6146", "6146.JP", "ディスコ", "機械"),
-    UniverseSymbol("6723", "6723.JP", "ルネサスエレクトロニクス", "電気機器"),
-    UniverseSymbol("8001", "8001.JP", "伊藤忠商事", "卸売業"),
+    UniverseSymbol("7203", "7203.JP", "トヨタ自動車", "輸送用機器", "3700"),
+    UniverseSymbol("6758", "6758.JP", "ソニーグループ", "電気機器", "3650"),
+    UniverseSymbol("9984", "9984.JP", "ソフトバンクグループ", "情報・通信業", "5250"),
+    UniverseSymbol("8035", "8035.JP", "東京エレクトロン", "電気機器", "3650"),
+    UniverseSymbol("7974", "7974.JP", "任天堂", "その他製品", "3800"),
+    UniverseSymbol("6501", "6501.JP", "日立製作所", "電気機器", "3650"),
+    UniverseSymbol("4063", "4063.JP", "信越化学工業", "化学", "3200"),
+    UniverseSymbol("9983", "9983.JP", "ファーストリテイリング", "小売業", "6100"),
+    UniverseSymbol("8306", "8306.JP", "三菱UFJフィナンシャル・グループ", "銀行業", "7050"),
+    UniverseSymbol("6861", "6861.JP", "キーエンス", "電気機器", "3650"),
+    UniverseSymbol("9432", "9432.JP", "日本電信電話", "情報・通信業", "5250"),
+    UniverseSymbol("9433", "9433.JP", "KDDI", "情報・通信業", "5250"),
+    UniverseSymbol("4519", "4519.JP", "中外製薬", "医薬品", "3250"),
+    UniverseSymbol("4568", "4568.JP", "第一三共", "医薬品", "3250"),
+    UniverseSymbol("8058", "8058.JP", "三菱商事", "卸売業", "6050"),
+    UniverseSymbol("6902", "6902.JP", "デンソー", "輸送用機器", "3700"),
+    UniverseSymbol("8766", "8766.JP", "東京海上ホールディングス", "保険業", "7150"),
+    UniverseSymbol("7741", "7741.JP", "HOYA", "精密機器", "3750"),
+    UniverseSymbol("6857", "6857.JP", "アドバンテスト", "電気機器", "3650"),
+    UniverseSymbol("6367", "6367.JP", "ダイキン工業", "機械", "3600"),
+    UniverseSymbol("7267", "7267.JP", "本田技研工業", "輸送用機器", "3700"),
+    UniverseSymbol("6098", "6098.JP", "リクルートホールディングス", "サービス業", "9050"),
+    UniverseSymbol("6146", "6146.JP", "ディスコ", "機械", "3600"),
+    UniverseSymbol("6723", "6723.JP", "ルネサスエレクトロニクス", "電気機器", "3650"),
+    UniverseSymbol("8001", "8001.JP", "伊藤忠商事", "卸売業", "6050"),
 )
 
 
@@ -1066,6 +1067,7 @@ class StockMlPageService:
                     "symbol": meta.symbol,
                     "company_name": meta.company_name,
                     "sector": meta.sector,
+                    "sector33_code": meta.sector33_code,
                     "close": float(closes[idx]),
                     "target_open": float(opens[idx + 1]),
                     "target_close": float(closes[idx + 1]),
@@ -2376,6 +2378,7 @@ class StockMlPageService:
                     "code": row["code"],
                     "company_name": row["company_name"],
                     "sector": row["sector"],
+                    "sector33_code": row.get("sector33_code"),
                     "prob_up": float(row["prob_up"]),
                     "score_cls": float(row["score_cls"]),
                     "score_rank": rank,
@@ -2395,12 +2398,27 @@ class StockMlPageService:
                 }
             )
 
-        sector_scores: dict[str, list[float]] = {}
+        sector_scores: dict[str, dict[str, Any]] = {}
         for row in display_rows:
-            sector_scores.setdefault(row["sector"], []).append(float(row["prob_up"]))
+            sector_code = str(row.get("sector33_code") or "").strip() or "-"
+            bucket = sector_scores.setdefault(
+                sector_code,
+                {
+                    "sector": row["sector"],
+                    "values": [],
+                },
+            )
+            bucket["values"].append(float(row["prob_up"]))
         sector_items = [
-            {"label": sector, "value": float(sum(values) / len(values))}
-            for sector, values in sorted(sector_scores.items(), key=lambda item: sum(item[1]) / len(item[1]), reverse=True)
+            {
+                "label": f"{sector_code} / {bucket['sector']}",
+                "value": float(sum(bucket["values"]) / len(bucket["values"])),
+            }
+            for sector_code, bucket in sorted(
+                sector_scores.items(),
+                key=lambda item: sum(item[1]["values"]) / len(item[1]["values"]),
+                reverse=True,
+            )
         ]
         coverage_total = len(display_rows)
         coverage_excluded = dataset["excluded_symbols"]
@@ -3207,7 +3225,21 @@ class StockMlPageService:
     def _infer_environment() -> str:
         import os
 
+        env = str(
+            os.getenv("APP_ENV")
+            or os.getenv("ENVIRONMENT")
+            or os.getenv("ENV")
+            or ""
+        ).strip().lower()
+        if env in {"prod", "production"}:
+            return "prod"
+        if env in {"stg", "stage", "staging"}:
+            return "stg"
+        if env:
+            return "dev"
         host = str(os.getenv("HOSTNAME") or "").lower()
+        if "prod" in host or "production" in host:
+            return "prod"
         if "stg" in host or "stage" in host:
             return "stg"
         if host:

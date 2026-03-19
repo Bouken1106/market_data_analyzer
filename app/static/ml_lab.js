@@ -143,11 +143,18 @@ function stopJobPolling() {
 }
 
 function normalizeJobPayload(payload, kindOverride = "") {
+  const rawStatus = String(payload?.status_raw || payload?.status || "").trim();
+  const statusCode = String(payload?.status_code || "").trim();
+  const normalizedStatus = statusCode || (rawStatus
+    ? rawStatus === "completed"
+      ? "SUCCEEDED"
+      : rawStatus.toUpperCase()
+    : String(payload?.status || "UNKNOWN").trim());
   return {
     job_id: String(payload?.job_id || ""),
     kind: String(payload?.kind || kindOverride || ""),
-    status: String(payload?.status || "UNKNOWN"),
-    status_raw: String(payload?.status_raw || "").trim(),
+    status: normalizedStatus || "UNKNOWN",
+    status_raw: rawStatus,
     progress: Number(payload?.progress ?? 0),
     message: String(payload?.message || ""),
     error: String(payload?.error || ""),

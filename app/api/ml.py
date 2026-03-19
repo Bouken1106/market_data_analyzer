@@ -47,9 +47,25 @@ def _spec_job_status(status: str | None) -> str:
 
 
 def _job_response_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    result = dict(payload)
-    result["status_code"] = _spec_job_status(payload.get("status"))
-    return result
+    error_detail = payload.get("error_detail") or {}
+    raw_status = str(payload.get("status") or "")
+    return {
+        "job_id": payload.get("job_id"),
+        "kind": payload.get("kind"),
+        "symbol": payload.get("symbol"),
+        "status": raw_status,
+        "status_raw": raw_status,
+        "status_code": _spec_job_status(raw_status),
+        "progress": payload.get("progress"),
+        "message": payload.get("message"),
+        "result": payload.get("result"),
+        "error": payload.get("error"),
+        "stage_name": error_detail.get("stage_name"),
+        "error_code": error_detail.get("error_code"),
+        "retryable": error_detail.get("retryable"),
+        "created_at": payload.get("created_at"),
+        "updated_at": payload.get("updated_at"),
+    }
 
 
 def _stock_ml_page_service(hub: HubDep, stock_ml_page_store: StockMlPageStoreDep) -> StockMlPageService:
@@ -112,6 +128,7 @@ def _prediction_daily_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
                 "prediction_date": dashboard.get("prediction_date"),
                 "target_date": dashboard.get("target_date"),
                 "code": item.get("code"),
+                "company_name": item.get("company_name"),
                 "score_cls": item.get("score_cls"),
                 "prob_up": item.get("prob_up"),
                 "score_rank": item.get("score_rank"),
@@ -119,6 +136,7 @@ def _prediction_daily_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
                 "model_version": model_version,
                 "feature_version": dashboard.get("feature_version"),
                 "data_version": dashboard.get("data_version"),
+                "sector33_code": item.get("sector33_code"),
                 "warnings": item.get("warnings", []),
             }
         )
@@ -480,14 +498,6 @@ async def stock_ml_training_job_status(job_id: str, ml_job_store: MlJobStoreDep)
     if payload is None:
         raise HTTPException(status_code=404, detail="Job not found.")
     return ok_json_response(**_training_job_status_payload(payload))
-
-
-@router.get("/api/ml/jobs/{job_id}")
-async def ml_job_status(job_id: str, ml_job_store: MlJobStoreDep) -> JSONResponse:
-    payload = ml_job_store.get(job_id)
-    if payload is None:
-        raise HTTPException(status_code=404, detail="Job not found.")
-    return ok_json_response(**_ml_job_status_payload(payload))
 
 
 @router.get("/api/ml/backtests")
