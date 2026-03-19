@@ -5,13 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..config import LOGGER, MAX_BASIC_SYMBOLS
-from ..utils import normalize_symbols, read_json_file, utc_now_iso, write_json_file
+from ..config import MAX_BASIC_SYMBOLS
+from ..utils import normalize_symbols
+from .json_state import JsonStateStore
 
 
-class UiStateStore:
+class UiStateStore(JsonStateStore):
     def __init__(self, cache_path: Path) -> None:
-        self.cache_path = cache_path
+        super().__init__(cache_path, log_label="UI state cache")
         self._state: dict[str, Any] = {
             "symbols": [],
             "watchlist_commentary": None,
@@ -40,8 +41,8 @@ class UiStateStore:
         self._touch_and_write()
 
     def _load_from_disk(self) -> None:
-        payload = read_json_file(self.cache_path)
-        if not isinstance(payload, dict):
+        payload = self._read_state_dict()
+        if payload is None:
             return
         symbols = payload.get("symbols")
         commentary = payload.get("watchlist_commentary")
@@ -54,11 +55,4 @@ class UiStateStore:
             self._state["updated_at"] = updated_at
 
     def _touch_and_write(self) -> None:
-        self._state["updated_at"] = utc_now_iso()
-        self._write_to_disk()
-
-    def _write_to_disk(self) -> None:
-        try:
-            write_json_file(self.cache_path, self._state)
-        except Exception as exc:
-            LOGGER.warning("Failed to write UI state cache: %s", exc)
+        self._touch_and_write_state(self._state)

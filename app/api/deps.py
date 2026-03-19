@@ -25,12 +25,15 @@ def init_routes(
     stock_ml_page_store: Any,
 ) -> None:
     """Register shared service objects on application state."""
-    app.state.__setattr__(APP_STATE_HUB, hub)
-    app.state.__setattr__(APP_STATE_SYMBOL_CATALOG_STORE, symbol_catalog_store)
-    app.state.__setattr__(APP_STATE_ML_JOB_STORE, ml_job_store)
-    app.state.__setattr__(APP_STATE_PAPER_PORTFOLIO_STORE, paper_portfolio_store)
-    app.state.__setattr__(APP_STATE_UI_STATE_STORE, ui_state_store)
-    app.state.__setattr__(APP_STATE_STOCK_ML_PAGE_STORE, stock_ml_page_store)
+    for key, value in (
+        (APP_STATE_HUB, hub),
+        (APP_STATE_SYMBOL_CATALOG_STORE, symbol_catalog_store),
+        (APP_STATE_ML_JOB_STORE, ml_job_store),
+        (APP_STATE_PAPER_PORTFOLIO_STORE, paper_portfolio_store),
+        (APP_STATE_UI_STATE_STORE, ui_state_store),
+        (APP_STATE_STOCK_ML_PAGE_STORE, stock_ml_page_store),
+    ):
+        setattr(app.state, key, value)
 
 
 def _get_app_state_or_500(request: Request, key: str, label: str) -> Any:
@@ -40,29 +43,19 @@ def _get_app_state_or_500(request: Request, key: str, label: str) -> Any:
     return value
 
 
-def _get_hub(request: Request) -> Any:
-    return _get_app_state_or_500(request, APP_STATE_HUB, "hub")
+def _build_state_dependency(key: str, label: str):
+    def _dependency(request: Request) -> Any:
+        return _get_app_state_or_500(request, key, label)
+
+    return _dependency
 
 
-def _get_symbol_catalog_store(request: Request) -> Any:
-    return _get_app_state_or_500(request, APP_STATE_SYMBOL_CATALOG_STORE, "symbol catalog store")
-
-
-def _get_ml_job_store(request: Request) -> Any:
-    return _get_app_state_or_500(request, APP_STATE_ML_JOB_STORE, "ML job store")
-
-
-def _get_paper_portfolio_store(request: Request) -> Any:
-    return _get_app_state_or_500(request, APP_STATE_PAPER_PORTFOLIO_STORE, "paper portfolio store")
-
-
-def _get_ui_state_store(request: Request) -> Any:
-    return _get_app_state_or_500(request, APP_STATE_UI_STATE_STORE, "ui state store")
-
-
-def _get_stock_ml_page_store(request: Request) -> Any:
-    return _get_app_state_or_500(request, APP_STATE_STOCK_ML_PAGE_STORE, "stock ML page store")
-
+_get_hub = _build_state_dependency(APP_STATE_HUB, "hub")
+_get_symbol_catalog_store = _build_state_dependency(APP_STATE_SYMBOL_CATALOG_STORE, "symbol catalog store")
+_get_ml_job_store = _build_state_dependency(APP_STATE_ML_JOB_STORE, "ML job store")
+_get_paper_portfolio_store = _build_state_dependency(APP_STATE_PAPER_PORTFOLIO_STORE, "paper portfolio store")
+_get_ui_state_store = _build_state_dependency(APP_STATE_UI_STATE_STORE, "ui state store")
+_get_stock_ml_page_store = _build_state_dependency(APP_STATE_STOCK_ML_PAGE_STORE, "stock ML page store")
 
 HubDep = Annotated[Any, Depends(_get_hub)]
 SymbolCatalogStoreDep = Annotated[Any, Depends(_get_symbol_catalog_store)]

@@ -9,6 +9,9 @@ from typing import Any
 from ..config import LOGGER
 from ..utils import is_valid_symbol, normalize_symbol, read_json_file, utc_now_iso, write_json_file
 
+_SUPPORTED_TRADE_SIDES = frozenset({"buy", "sell", "short", "cover"})
+_MAX_STORED_TRADES = 1000
+
 
 class PaperPortfolioStore:
     def __init__(self, cache_path: Path, default_initial_cash: float = 1_000_000.0) -> None:
@@ -17,13 +20,29 @@ class PaperPortfolioStore:
         self._lock = asyncio.Lock()
         self._state = self._load_from_disk()
 
-    def _empty_state(self) -> dict[str, Any]:
+    def _empty_state(self, initial_cash: float | None = None) -> dict[str, Any]:
+        base_cash = self.default_initial_cash if initial_cash is None else float(initial_cash)
         return {
-            "initial_cash": self.default_initial_cash,
-            "cash": self.default_initial_cash,
+            "initial_cash": base_cash,
+            "cash": base_cash,
             "positions": {},
             "trades": [],
             "updated_at": utc_now_iso(),
+        }
+
+    def _snapshot_state_no_lock(self) -> dict[str, Any]:
+        return {
+            "initial_cash": float(self._state["initial_cash"]),
+            "cash": float(self._state["cash"]),
+            "positions": {
+                symbol: {
+                    "quantity": float(item["quantity"]),
+                    "avg_cost": float(item["avg_cost"]),
+                }
+                for symbol, item in self._state["positions"].items()
+            },
+            "trades": [dict(item) for item in self._state["trades"]],
+            "updated_at": str(self._state["updated_at"]),
         }
 
     def _load_from_disk(self) -> dict[str, Any]:
@@ -100,7 +119,7 @@ class PaperPortfolioStore:
             side = str(item.get("side") or "").lower().strip()
             if not is_valid_symbol(symbol):
                 continue
-            if side not in {"buy", "sell", "short", "cover"}:
+            if side not in _SUPPORTED_TRADE_SIDES:
                 continue
             qty = self._to_positive_float(item.get("quantity"), fallback=-1)
             price = self._to_positive_float(item.get("price"), fallback=-1)
@@ -117,7 +136,7 @@ class PaperPortfolioStore:
                     "cash_after": self._to_non_negative_float(item.get("cash_after"), fallback=0.0),
                 }
             )
-        return out[-1000:]
+        return out[-_MAX_STORED_TRADES:]
 
     @staticmethod
     def _to_non_negative_or_negative_float(value: Any) -> float | None:
@@ -130,13 +149,8 @@ class PaperPortfolioStore:
         return parsed
 
     def _write_no_lock(self) -> None:
-        payload = {
-            "initial_cash": self._state["initial_cash"],
-            "cash": self._state["cash"],
-            "positions": self._state["positions"],
-            "trades": self._state["trades"][-1000:],
-            "updated_at": self._state["updated_at"],
-        }
+        payload = self._snapshot_state_no_lock()
+        payload["trades"] = payload["trades"][-_MAX_STORED_TRADES:]
         try:
             write_json_file(self.cache_path, payload)
         except Exception as exc:
@@ -144,19 +158,7 @@ class PaperPortfolioStore:
 
     async def get_state(self) -> dict[str, Any]:
         async with self._lock:
-            return {
-                "initial_cash": float(self._state["initial_cash"]),
-                "cash": float(self._state["cash"]),
-                "positions": {
-                    symbol: {
-                        "quantity": float(item["quantity"]),
-                        "avg_cost": float(item["avg_cost"]),
-                    }
-                    for symbol, item in self._state["positions"].items()
-                },
-                "trades": [dict(item) for item in self._state["trades"]],
-                "updated_at": str(self._state["updated_at"]),
-            }
+            return self._snapshot_state_no_lock()
 
     async def apply_trade(self, symbol: str, side: str, quantity: float, price: float) -> dict[str, Any]:
         normalized_symbol = normalize_symbol(symbol)
@@ -166,7 +168,7 @@ class PaperPortfolioStore:
 
         if not is_valid_symbol(normalized_symbol):
             raise ValueError("Invalid symbol format.")
-        if normalized_side not in {"buy", "sell", "short", "cover"}:
+        if normalized_side not in _SUPPORTED_TRADE_SIDES:
             raise ValueError("side must be buy, sell, short, or cover.")
         if qty <= 0:
             raise ValueError("quantity must be greater than 0.")
@@ -258,8 +260,8 @@ class PaperPortfolioStore:
             }
             trades = self._state["trades"]
             trades.append(trade)
-            if len(trades) > 1000:
-                del trades[:-1000]
+            if len(trades) > _MAX_STORED_TRADES:
+                del trades[:-_MAX_STORED_TRADES]
 
             self._state["cash"] = cash
             self._state["updated_at"] = timestamp
@@ -273,18 +275,6 @@ class PaperPortfolioStore:
                 if initial_cash is not None
                 else self.default_initial_cash
             )
-            self._state = {
-                "initial_cash": next_initial_cash,
-                "cash": next_initial_cash,
-                "positions": {},
-                "trades": [],
-                "updated_at": utc_now_iso(),
-            }
+            self._state = self._empty_state(next_initial_cash)
             self._write_no_lock()
-            return {
-                "initial_cash": float(self._state["initial_cash"]),
-                "cash": float(self._state["cash"]),
-                "positions": {},
-                "trades": [],
-                "updated_at": str(self._state["updated_at"]),
-            }
+            return self._snapshot_state_no_lock()

@@ -5,16 +5,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..config import LOGGER
-from ..utils import clone_json_like, read_json_file, utc_now_iso, write_json_file
+from ..utils import clone_json_like, utc_now_iso
+from .json_state import JsonStateStore
 
 _PRIMARY_MODEL_VERSION = "lgbm_cls_jp_v1.0.0"
 _LEGACY_PRIMARY_MODEL_VERSION = "lgbm_cls_jp_v0.1.0_proxy"
 
 
-class StockMlPageStore:
+class StockMlPageStore(JsonStateStore):
     def __init__(self, cache_path: Path, *, max_logs: int = 120) -> None:
-        self.cache_path = cache_path
+        super().__init__(cache_path, log_label="stock ML page state cache", compact=True)
         self.max_logs = max(20, int(max_logs))
         self._state: dict[str, Any] = {
             "adopted_model_version": _PRIMARY_MODEL_VERSION,
@@ -68,8 +68,8 @@ class StockMlPageStore:
         self._touch_and_write()
 
     def _load_from_disk(self) -> None:
-        payload = read_json_file(self.cache_path)
-        if not isinstance(payload, dict):
+        payload = self._read_state_dict()
+        if payload is None:
             return
         adopted_model_version = str(payload.get("adopted_model_version") or "").strip()
         if adopted_model_version:
@@ -97,11 +97,4 @@ class StockMlPageStore:
             self._state["audit_log"] = cleaned
 
     def _touch_and_write(self) -> None:
-        self._state["updated_at"] = utc_now_iso()
-        self._write_to_disk()
-
-    def _write_to_disk(self) -> None:
-        try:
-            write_json_file(self.cache_path, self._state, compact=True)
-        except Exception as exc:
-            LOGGER.warning("Failed to write stock ML page state cache: %s", exc)
+        self._touch_and_write_state(self._state)
