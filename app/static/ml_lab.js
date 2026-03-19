@@ -214,7 +214,15 @@ function makeSummaryCards(cards) {
   return (Array.isArray(cards) ? cards : [])
     .map((item) => `
       <article class="mlops-metric-card${item.action_tab ? " is-actionable" : ""}"${item.action_tab ? ` data-action-tab="${escapeHtml(item.action_tab)}" tabindex="0" role="button"` : ""}>
-        <span class="label">${escapeHtml(item.label)}</span>
+        <span class="label">
+          <span>${escapeHtml(item.label)}</span>
+          ${item.help ? `
+            <details class="mlops-inline-help">
+              <summary aria-label="${escapeHtml(item.label)} の説明">?</summary>
+              <div>${escapeHtml(item.help)}</div>
+            </details>
+          ` : ""}
+        </span>
         <strong>${escapeHtml(item.value)}</strong>
         ${item.sub ? `<span class="hint">${escapeHtml(item.sub)}</span>` : ""}
       </article>

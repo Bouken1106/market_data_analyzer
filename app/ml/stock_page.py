@@ -1805,21 +1805,57 @@ class StockMlPageService:
         }
 
     @staticmethod
-    def _backtest_summary_cards(*, focus_label: str, result: dict[str, Any]) -> list[dict[str, str]]:
+    def _backtest_summary_cards(*, focus_label: str, result: dict[str, Any]) -> list[dict[str, Any]]:
         metrics = result["metrics"]
         return [
-            {"label": "CAGR (gross)", "value": f"{metrics['gross_cagr_pct']:.1f}%", "sub": focus_label},
-            {"label": "CAGR (net)", "value": f"{metrics['cagr_pct']:.1f}%", "sub": focus_label},
+            {
+                "label": "CAGR (gross)",
+                "value": f"{metrics['gross_cagr_pct']:.1f}%",
+                "sub": focus_label,
+                "help": "売買コスト控除前の年率換算リターンです。シグナル自体の強さを確認するときの基準になります。",
+            },
+            {
+                "label": "CAGR (net)",
+                "value": f"{metrics['cagr_pct']:.1f}%",
+                "sub": focus_label,
+                "help": "売買コスト控除後の年率換算リターンです。実運用に近い成績を見るときはこちらを優先します。",
+            },
             {
                 "label": "Sharpe",
                 "value": f"{metrics['sharpe']:.2f}" if metrics["sharpe"] is not None else "-",
                 "sub": focus_label,
+                "help": "リターンを値動きの荒さで割った効率指標です。同じ利益なら、ぶれが小さい戦略ほど高くなります。",
             },
-            {"label": "Max Drawdown", "value": f"{metrics['max_drawdown_pct']:.1f}%", "sub": focus_label},
-            {"label": "Turnover", "value": f"{metrics['turnover_pct']:.1f}%", "sub": focus_label},
-            {"label": "平均保有損益", "value": f"{metrics['avg_holding_pnl_pct']:.2f}%", "sub": focus_label},
-            {"label": "勝率", "value": f"{metrics['win_rate_pct']:.1f}%", "sub": focus_label},
-            {"label": "約定不能影響率", "value": f"{metrics['unable_rate_pct']:.2f}%", "sub": focus_label},
+            {
+                "label": "Max Drawdown",
+                "value": f"{metrics['max_drawdown_pct']:.1f}%",
+                "sub": focus_label,
+                "help": "資産曲線の最大下落率です。大きいほど途中で大きく負ける局面があり、運用負荷も高くなります。",
+            },
+            {
+                "label": "Turnover",
+                "value": f"{metrics['turnover_pct']:.1f}%",
+                "sub": focus_label,
+                "help": "売買の入れ替わり量です。高すぎるとコスト負担が重くなり、再現性も落ちやすくなります。",
+            },
+            {
+                "label": "平均保有損益",
+                "value": f"{metrics['avg_holding_pnl_pct']:.2f}%",
+                "sub": focus_label,
+                "help": "1回の保有あたり平均損益です。小さすぎる場合はコストに負けやすい点を確認します。",
+            },
+            {
+                "label": "勝率",
+                "value": f"{metrics['win_rate_pct']:.1f}%",
+                "sub": focus_label,
+                "help": "日次ベースで利益になった割合です。高くても損失が大きい戦略は弱いので、他指標と合わせて見ます。",
+            },
+            {
+                "label": "約定不能影響率",
+                "value": f"{metrics['unable_rate_pct']:.2f}%",
+                "sub": focus_label,
+                "help": "流動性不足や急変で約定不能として除外された比率です。0でない場合は実運用との差に注意します。",
+            },
         ]
 
     @staticmethod
@@ -2390,12 +2426,41 @@ class StockMlPageService:
         logs = self._runtime_logs(action="predictor", latest_market_date=latest_market_date)
         adopted_label = "採用中" if selected_model_version == adopted_model_version else f"表示中 / 採用中={adopted_model_version}"
         summary_cards = [
-            {"label": "prediction_date", "value": _to_jst_label(prediction_date)},
-            {"label": "target_date", "value": _to_jst_label(target_date)},
-            {"label": "model_version", "value": selected_model_version, "sub": adopted_label, "action_tab": "models"},
-            {"label": "data_version", "value": f"stooq_jp_{prediction_date.replace('-', '')}", "sub": feature_set},
-            {"label": "coverage", "value": f"{coverage_total}/{coverage_total + coverage_excluded}", "sub": f"除外 {coverage_excluded}銘柄"},
-            {"label": "data freshness", "value": "最新" if freshness_level == "normal" else "遅延あり", "sub": latest_update},
+            {
+                "label": "prediction_date",
+                "value": _to_jst_label(prediction_date),
+                "help": "予測を作る基準営業日 D です。この日までに確定した情報だけを使って、次営業日 D+1 を予測します。",
+            },
+            {
+                "label": "target_date",
+                "value": _to_jst_label(target_date),
+                "help": "予測対象の営業日です。休日をまたぐ場合も次の営業日ベースで計算します。",
+            },
+            {
+                "label": "model_version",
+                "value": selected_model_version,
+                "sub": adopted_label,
+                "action_tab": "models",
+                "help": "現在表示している予測を作ったモデル版です。採用中モデルと違う場合は比較確認用の表示です。",
+            },
+            {
+                "label": "data_version",
+                "value": f"stooq_jp_{prediction_date.replace('-', '')}",
+                "sub": feature_set,
+                "help": "この予測の元になったデータ版です。同じ data_version と model_version なら再現確認がしやすくなります。",
+            },
+            {
+                "label": "coverage",
+                "value": f"{coverage_total}/{coverage_total + coverage_excluded}",
+                "sub": f"除外 {coverage_excluded}銘柄",
+                "help": "ユニバースのうち何銘柄を予測に使えたかを示します。除外が多い日は欠損や取得失敗の確認が必要です。",
+            },
+            {
+                "label": "data freshness",
+                "value": "最新" if freshness_level == "normal" else "遅延あり",
+                "sub": latest_update,
+                "help": "公開日足の鮮度です。遅延ありのときは最新営業日の更新反映を待つ必要があります。",
+            },
         ]
         return {
             "prediction_date": prediction_date,
@@ -2727,16 +2792,30 @@ class StockMlPageService:
         leakage_ok: bool,
         state: dict[str, Any],
         refresh: bool,
-    ) -> list[dict[str, str]]:
-        summary_cards = [
-            {"label": str(item.get("label") or "-"), "value": str(item.get("value") or "-")}
-            for item in monitor_checks
-        ]
-        summary_cards.append({"label": "リークチェック", "value": "PASS" if leakage_ok else "FAIL"})
+    ) -> list[dict[str, Any]]:
+        summary_cards = []
+        for item in monitor_checks:
+            label = str(item.get("label") or "-")
+            help_text = {
+                "取得件数異常": "当日利用できた銘柄数を通常水準と比べた監視です。急減している場合は取得失敗や除外増加を疑います。",
+                "欠損率上昇": "特徴量の欠損が増えていないかを見る監視です。上昇している場合は品質低下や前処理異常の可能性があります。",
+                "対象銘柄カバー率": "ユニバースのうち何銘柄を推論対象にできているかを見る比率です。低下時は除外理由の内訳を確認します。",
+                "スコア分布ドリフト": "直近のスコア分布が過去とずれていないかを見る監視です。急変時は相場変化やモデル劣化の可能性があります。",
+                "実績損益ドリフト": "採用モデルの直近成績が前期間より悪化していないかを見る監視です。悪化時は再学習候補として扱います。",
+            }.get(label, "")
+            summary_cards.append({"label": label, "value": str(item.get("value") or "-"), "help": help_text})
+        summary_cards.append(
+            {
+                "label": "リークチェック",
+                "value": "PASS" if leakage_ok else "FAIL",
+                "help": "未来情報の混入を防ぐ検査結果です。FAIL のモデルは成績が良くても採用不可として扱います。",
+            }
+        )
         summary_cards.append(
             {
                 "label": "ジョブ状態",
                 "value": StockMlPageService._ops_job_status_label(state=state, refresh=refresh),
+                "help": "直近ジョブまたは更新操作の結果です。FAILED の場合は監査ログと各タブのエラー内容を確認します。",
             }
         )
         return summary_cards

@@ -4073,6 +4073,13 @@ body.chart-panning {
   font-size: 0.96rem;
 }
 
+.mlops-metric-card .label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .mlops-dashboard-grid,
 .mlops-model-grid,
 .mlops-split-grid {

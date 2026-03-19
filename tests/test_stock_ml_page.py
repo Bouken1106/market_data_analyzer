@@ -26,9 +26,18 @@ class StockMlPageServiceHelpersTest(unittest.TestCase):
             result=result,
         )
 
-        self.assertEqual(cards[0], {"label": "CAGR (gross)", "value": "12.3%", "sub": "現行採用モデル"})
-        self.assertEqual(cards[1], {"label": "CAGR (net)", "value": "9.8%", "sub": "現行採用モデル"})
-        self.assertEqual(cards[2], {"label": "Sharpe", "value": "1.23", "sub": "現行採用モデル"})
+        self.assertEqual(cards[0]["label"], "CAGR (gross)")
+        self.assertEqual(cards[0]["value"], "12.3%")
+        self.assertEqual(cards[0]["sub"], "現行採用モデル")
+        self.assertIn("help", cards[0])
+        self.assertEqual(cards[1]["label"], "CAGR (net)")
+        self.assertEqual(cards[1]["value"], "9.8%")
+        self.assertEqual(cards[1]["sub"], "現行採用モデル")
+        self.assertIn("help", cards[1])
+        self.assertEqual(cards[2]["label"], "Sharpe")
+        self.assertEqual(cards[2]["value"], "1.23")
+        self.assertEqual(cards[2]["sub"], "現行採用モデル")
+        self.assertIn("help", cards[2])
 
     def test_ops_summary_cards_report_fail_and_idle_when_no_job_history(self) -> None:
         cards = StockMlPageService._ops_summary_cards(
@@ -38,8 +47,12 @@ class StockMlPageServiceHelpersTest(unittest.TestCase):
             refresh=False,
         )
 
-        self.assertEqual(cards[-2], {"label": "リークチェック", "value": "FAIL"})
-        self.assertEqual(cards[-1], {"label": "ジョブ状態", "value": "IDLE"})
+        self.assertEqual(cards[-2]["label"], "リークチェック")
+        self.assertEqual(cards[-2]["value"], "FAIL")
+        self.assertIn("help", cards[-2])
+        self.assertEqual(cards[-1]["label"], "ジョブ状態")
+        self.assertEqual(cards[-1]["value"], "IDLE")
+        self.assertIn("help", cards[-1])
 
     def test_ops_job_status_uses_error_audit_level(self) -> None:
         label = StockMlPageService._ops_job_status_label(
