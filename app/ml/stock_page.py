@@ -33,14 +33,17 @@ _MODEL_PRIMARY_VERSION = "lgbm_cls_jp_v1.0.0"
 _MODEL_BASELINE_VERSION = "logreg_cls_jp_v0.1.0"
 _PRIMARY_MODEL_FAMILY = "LightGBM Classifier"
 _BASELINE_MODEL_FAMILY = "Logistic Regression"
-_TRAIN_WINDOW_DAYS = 252
-_GAP_DAYS = 5
-_VALID_WINDOW_DAYS = 21
+_DEFAULT_TRAIN_WINDOW_MONTHS = 12
+_ALLOWED_TRAIN_WINDOW_MONTHS = (6, 12, 24)
+_DEFAULT_GAP_DAYS = 5
+_ALLOWED_GAP_DAYS = tuple(range(1, 11))
+_DEFAULT_VALID_WINDOW_MONTHS = 1
+_ALLOWED_VALID_WINDOW_MONTHS = (1, 2, 3)
 _BACKTEST_WINDOW_DAYS = 120
 _MAX_PREDICTION_DATES = 24
 _STOOQ_TIMEOUT_SEC = 25.0
 _STOOQ_FETCH_CONCURRENCY = 4
-_MODEL_SEED = 42
+_DEFAULT_MODEL_SEED = 42
 _RETURN_ABS_CLIP = 0.2
 
 _PRIMARY_FEATURE_ORDER = (
@@ -166,6 +169,10 @@ def _config_hash(
     model_family: str,
     feature_set: str,
     cost_buffer: float,
+    train_window_months: int,
+    gap_days: int,
+    valid_window_months: int,
+    random_seed: int,
 ) -> str:
     payload = {
         "prediction_date": prediction_date,
@@ -173,9 +180,33 @@ def _config_hash(
         "model_family": model_family,
         "feature_set": feature_set,
         "cost_buffer": round(float(cost_buffer), 6),
+        "train_window_months": int(train_window_months),
+        "gap_days": int(gap_days),
+        "valid_window_months": int(valid_window_months),
+        "random_seed": int(random_seed),
     }
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
     return digest[:12]
+
+
+def _normalize_choice(value: Any, *, allowed: tuple[int, ...], default: int) -> int:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return default
+    return normalized if normalized in allowed else default
+
+
+def _normalize_random_seed(value: Any) -> int:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        return _DEFAULT_MODEL_SEED
+    return normalized if normalized > 0 else _DEFAULT_MODEL_SEED
+
+
+def _window_days_from_months(months: int) -> int:
+    return int(months) * 21
 
 
 def _roc_auc_score(y_true: np.ndarray, y_score: np.ndarray) -> float | None:
@@ -283,9 +314,31 @@ class StockMlPageService:
         model_family: str | None,
         feature_set: str | None,
         cost_buffer: float,
+        train_window_months: int,
+        gap_days: int,
+        valid_window_months: int,
+        random_seed: int,
+        train_note: str | None,
         run_note: str | None,
         refresh: bool = False,
     ) -> dict[str, Any]:
+        selected_train_window_months = _normalize_choice(
+            train_window_months,
+            allowed=_ALLOWED_TRAIN_WINDOW_MONTHS,
+            default=_DEFAULT_TRAIN_WINDOW_MONTHS,
+        )
+        selected_gap_days = _normalize_choice(
+            gap_days,
+            allowed=_ALLOWED_GAP_DAYS,
+            default=_DEFAULT_GAP_DAYS,
+        )
+        selected_valid_window_months = _normalize_choice(
+            valid_window_months,
+            allowed=_ALLOWED_VALID_WINDOW_MONTHS,
+            default=_DEFAULT_VALID_WINDOW_MONTHS,
+        )
+        selected_random_seed = _normalize_random_seed(random_seed)
+        normalized_train_note = str(train_note or "").strip()[:500]
         histories = await self._load_histories(refresh=refresh)
         dataset = self._build_dataset(histories=histories, cost_buffer=cost_buffer)
         if not dataset["rows"]:
@@ -305,11 +358,36 @@ class StockMlPageService:
             model_family=selected_model_family,
             feature_set=selected_feature_set,
             cost_buffer=cost_buffer,
+            train_window_months=selected_train_window_months,
+            gap_days=selected_gap_days,
+            valid_window_months=selected_valid_window_months,
+            random_seed=selected_random_seed,
         )
 
-        training = self._build_training_view(dataset=dataset)
-        backtest = self._build_backtest_view(dataset=dataset)
-        models = self._build_model_registry(training=training, backtest=backtest, config_hash=config_hash)
+        training = self._build_training_view(
+            dataset=dataset,
+            cost_buffer=cost_buffer,
+            train_window_months=selected_train_window_months,
+            gap_days=selected_gap_days,
+            valid_window_months=selected_valid_window_months,
+            random_seed=selected_random_seed,
+        )
+        backtest = self._build_backtest_view(
+            dataset=dataset,
+            train_window_months=selected_train_window_months,
+            gap_days=selected_gap_days,
+            random_seed=selected_random_seed,
+        )
+        models = self._build_model_registry(
+            training=training,
+            backtest=backtest,
+            config_hash=config_hash,
+            cost_buffer=cost_buffer,
+            train_window_months=selected_train_window_months,
+            gap_days=selected_gap_days,
+            valid_window_months=selected_valid_window_months,
+            random_seed=selected_random_seed,
+        )
         selected_model_version = models["default_versions"].get(selected_model_family, _MODEL_PRIMARY_VERSION)
         dashboard = self._build_dashboard_view(
             dataset=dataset,
@@ -320,6 +398,8 @@ class StockMlPageService:
             feature_set=selected_feature_set,
             cost_buffer=cost_buffer,
             latest_market_date=latest_market_date,
+            train_window_months=selected_train_window_months,
+            random_seed=selected_random_seed,
         )
         ops = self._build_ops_view(
             dataset=dataset,
@@ -350,7 +430,7 @@ class StockMlPageService:
             },
             "filter_options": {
                 "prediction_dates": [
-                    {"value": item, "label": f"{item} / {_next_business_day(item)}"}
+                    {"value": item, "label": f"{item} / {dataset['target_date_by_prediction'].get(item) or _next_business_day(item)}"}
                     for item in available_prediction_dates[-_MAX_PREDICTION_DATES:]
                 ],
                 "universe_filters": [{"value": _UNIVERSE_VALUE, "label": _UNIVERSE_LABEL}],
@@ -360,6 +440,18 @@ class StockMlPageService:
                 ],
                 "feature_sets": [{"value": _FEATURE_VERSION, "label": _FEATURE_VERSION}],
                 "cost_buffers": [{"value": "0.0", "label": "0.0"}, {"value": "0.002", "label": "0.002"}],
+                "train_window_months": [
+                    {"value": str(item), "label": f"{item}か月"}
+                    for item in _ALLOWED_TRAIN_WINDOW_MONTHS
+                ],
+                "gap_days": [
+                    {"value": str(item), "label": f"{item}営業日"}
+                    for item in _ALLOWED_GAP_DAYS
+                ],
+                "valid_window_months": [
+                    {"value": str(item), "label": f"{item}か月"}
+                    for item in _ALLOWED_VALID_WINDOW_MONTHS
+                ],
             },
             "filters": {
                 "prediction_date": selected_prediction_date,
@@ -367,6 +459,11 @@ class StockMlPageService:
                 "model_family": selected_model_family,
                 "feature_set": selected_feature_set,
                 "cost_buffer": f"{cost_buffer:.3f}".rstrip("0").rstrip(".") if cost_buffer else "0.0",
+                "train_window_months": str(selected_train_window_months),
+                "gap_days": str(selected_gap_days),
+                "valid_window_months": str(selected_valid_window_months),
+                "random_seed": str(selected_random_seed),
+                "train_note": normalized_train_note,
                 "run_note": str(run_note or "").strip()[:200],
             },
             "permissions": permissions,
@@ -426,6 +523,7 @@ class StockMlPageService:
         self.page_store.mark_training_run()
         filters = current_snapshot.get("filters", {})
         run_note = str(kwargs.get("run_note") or "").strip()
+        train_note = str(kwargs.get("train_note") or "").strip()
         self.page_store.add_audit_log(
             action="create_training_job",
             detail=(
@@ -433,6 +531,7 @@ class StockMlPageService:
                 f" prediction_date={filters.get('prediction_date')}"
                 f" cost_buffer={filters.get('cost_buffer')}"
                 f" config={current_snapshot.get('config_hash') or '-'}"
+                + (f" train_note={train_note[:120]}" if train_note else "")
                 + (f" note={run_note[:80]}" if run_note else "")
             ),
             level="warning",
@@ -641,6 +740,7 @@ class StockMlPageService:
     def _build_dataset(self, *, histories: dict[str, dict[str, Any]], cost_buffer: float) -> dict[str, Any]:
         rows: list[dict[str, Any]] = []
         per_date: dict[str, list[dict[str, Any]]] = {}
+        target_date_by_prediction: dict[str, str] = {}
         latest_market_date = ""
         excluded_symbols = len(JP_LARGE_CAP_UNIVERSE) - len(histories)
         for payload in histories.values():
@@ -697,6 +797,7 @@ class StockMlPageService:
                 }
                 rows.append(row)
                 per_date.setdefault(row["date"], []).append(row)
+                target_date_by_prediction[row["date"]] = row["target_date"]
 
         prediction_dates = sorted(day for day, day_rows in per_date.items() if len(day_rows) >= 8)
         self._apply_primary_scores(per_date)
@@ -704,6 +805,7 @@ class StockMlPageService:
             "rows": rows,
             "by_date": per_date,
             "prediction_dates": prediction_dates,
+            "target_date_by_prediction": target_date_by_prediction,
             "excluded_symbols": excluded_symbols,
             "latest_market_date": latest_market_date,
         }
@@ -761,7 +863,7 @@ class StockMlPageService:
             lower, upper = upper, lower
         return lower, upper
 
-    def _fit_lightgbm_classifier(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    def _fit_lightgbm_classifier(self, rows: list[dict[str, Any]], *, seed: int) -> dict[str, Any]:
         self._require_lightgbm()
         if not rows:
             return {"mode": "constant", "prob": 0.5}
@@ -784,10 +886,10 @@ class StockMlPageService:
             "bagging_freq": 1,
             "lambda_l2": 1.0,
             "verbosity": -1,
-            "seed": _MODEL_SEED,
-            "feature_fraction_seed": _MODEL_SEED,
-            "bagging_seed": _MODEL_SEED,
-            "data_random_seed": _MODEL_SEED,
+            "seed": seed,
+            "feature_fraction_seed": seed,
+            "bagging_seed": seed,
+            "data_random_seed": seed,
             "num_threads": 1,
             "force_col_wise": True,
         }
@@ -839,7 +941,7 @@ class StockMlPageService:
             )
         return out
 
-    def _fit_lightgbm_regression(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    def _fit_lightgbm_regression(self, rows: list[dict[str, Any]], *, seed: int) -> dict[str, Any]:
         self._require_lightgbm()
         if not rows:
             return {"mode": "constant", "mean_return": 0.0, "lower_clip": -0.02, "upper_clip": 0.02}
@@ -866,10 +968,10 @@ class StockMlPageService:
             "bagging_freq": 1,
             "lambda_l2": 1.0,
             "verbosity": -1,
-            "seed": _MODEL_SEED,
-            "feature_fraction_seed": _MODEL_SEED,
-            "bagging_seed": _MODEL_SEED,
-            "data_random_seed": _MODEL_SEED,
+            "seed": seed,
+            "feature_fraction_seed": seed,
+            "bagging_seed": seed,
+            "data_random_seed": seed,
             "num_threads": 1,
             "force_col_wise": True,
         }
@@ -1032,9 +1134,21 @@ class StockMlPageService:
             for score, prob in zip(logits.tolist(), probs.tolist(), strict=False)
         ]
 
-    def _build_training_view(self, *, dataset: dict[str, Any]) -> dict[str, Any]:
+    def _build_training_view(
+        self,
+        *,
+        dataset: dict[str, Any],
+        cost_buffer: float,
+        train_window_months: int,
+        gap_days: int,
+        valid_window_months: int,
+        random_seed: int,
+    ) -> dict[str, Any]:
         prediction_dates: list[str] = dataset["prediction_dates"]
-        if len(prediction_dates) < (_TRAIN_WINDOW_DAYS + _VALID_WINDOW_DAYS + _GAP_DAYS + 5):
+        train_window_days = _window_days_from_months(train_window_months)
+        valid_window_days = _window_days_from_months(valid_window_months)
+        available_folds = min(4, max(0, (len(prediction_dates) - train_window_days - gap_days) // max(valid_window_days, 1)))
+        if available_folds <= 0:
             raise HTTPException(status_code=502, detail="学習・検証に必要な営業日数が不足しています。")
 
         folds: list[dict[str, Any]] = []
@@ -1042,13 +1156,13 @@ class StockMlPageService:
         baseline_metrics: list[dict[str, float | None]] = []
         latest_valid_rows: list[dict[str, Any]] = []
         latest_primary_model: dict[str, Any] | None = None
-        for fold_index in range(4):
-            valid_end = len(prediction_dates) - ((3 - fold_index) * _VALID_WINDOW_DAYS)
-            valid_start = valid_end - _VALID_WINDOW_DAYS
+        for fold_index in range(available_folds):
+            valid_end = len(prediction_dates) - ((available_folds - 1 - fold_index) * valid_window_days)
+            valid_start = valid_end - valid_window_days
             gap_end = valid_start
-            gap_start = gap_end - _GAP_DAYS
+            gap_start = gap_end - gap_days
             train_end = gap_start
-            train_start = max(0, train_end - _TRAIN_WINDOW_DAYS)
+            train_start = max(0, train_end - train_window_days)
             train_dates = set(prediction_dates[train_start:train_end])
             valid_dates = set(prediction_dates[valid_start:valid_end])
 
@@ -1058,7 +1172,7 @@ class StockMlPageService:
                 continue
 
             start_timer = time.perf_counter()
-            lgbm_model = self._fit_lightgbm_classifier(train_rows)
+            lgbm_model = self._fit_lightgbm_classifier(train_rows, seed=random_seed)
             primary_train_time = time.perf_counter() - start_timer
             inference_timer = time.perf_counter()
             lgbm_predictions = self._predict_lightgbm_classifier(lgbm_model, valid_rows)
@@ -1105,13 +1219,16 @@ class StockMlPageService:
                 {
                     "fold": f"Fold {len(folds) + 1}",
                     "train": f"{prediction_dates[train_start]} - {prediction_dates[train_end - 1]}",
-                    "gap": f"{_GAP_DAYS}営業日",
+                    "gap": f"{gap_days}営業日",
                     "valid": f"{prediction_dates[valid_start]} - {prediction_dates[valid_end - 1]}",
                     "samples": f"train {len(train_rows)} / valid {len(valid_rows)}",
                     "lgbm_roc_auc": primary_stat["roc_auc"] or 0.0,
                     "logreg_roc_auc": baseline_stat["roc_auc"] or 0.0,
                 }
             )
+
+        if not folds:
+            raise HTTPException(status_code=502, detail="学習・検証に利用できる fold を構築できませんでした。")
 
         primary_summary = self._summarize_model_metrics(primary_metrics, _PRIMARY_MODEL_FAMILY)
         baseline_summary = self._summarize_model_metrics(baseline_metrics, _BASELINE_MODEL_FAMILY)
@@ -1120,12 +1237,12 @@ class StockMlPageService:
             {
                 "level": "normal",
                 "title": "実データ評価完了",
-                "detail": f"{len(folds)} fold の walk-forward + gap を計算しました。",
+                "detail": f"{len(folds)} fold の walk-forward + gap({gap_days}) を計算しました。",
             },
             {
                 "level": "normal",
                 "title": "Primary model 実装",
-                "detail": "LightGBM binary classifier を fold ごとに再学習して評価しています。",
+                "detail": f"LightGBM binary classifier を seed={random_seed} で再学習し、Logistic Regression と比較しています。",
             },
             {
                 "level": "normal" if (primary_summary["roc_auc"] or 0) >= (baseline_summary["roc_auc"] or 0) else "warning",
@@ -1138,11 +1255,12 @@ class StockMlPageService:
                 {"label": "task_type", "value": "y_cls_1d"},
                 {"label": "主モデル", "value": f"{_PRIMARY_MODEL_FAMILY} ({_MODEL_PRIMARY_VERSION})"},
                 {"label": "比較モデル", "value": _BASELINE_MODEL_FAMILY},
-                {"label": "学習期間", "value": "252営業日"},
-                {"label": "gap", "value": f"{_GAP_DAYS}営業日"},
-                {"label": "valid期間", "value": f"{_VALID_WINDOW_DAYS}営業日"},
+                {"label": "学習期間", "value": f"{train_window_months}か月 ({train_window_days}営業日)"},
+                {"label": "gap", "value": f"{gap_days}営業日"},
+                {"label": "valid期間", "value": f"{valid_window_months}か月 ({valid_window_days}営業日)"},
+                {"label": "cost_buffer", "value": f"{cost_buffer:.3f}".rstrip("0").rstrip(".") if cost_buffer else "0.0"},
                 {"label": "feature_set", "value": _FEATURE_VERSION},
-                {"label": "seed", "value": "42"},
+                {"label": "seed", "value": str(random_seed)},
             ],
             "rules": [
                 "ランダム分割オプションを UI に出さない。",
@@ -1153,9 +1271,9 @@ class StockMlPageService:
             "summary_cards": [
                 {"label": "Primary", "value": _PRIMARY_MODEL_FAMILY},
                 {"label": "Baseline", "value": _BASELINE_MODEL_FAMILY},
-                {"label": "Validation", "value": "walk-forward + gap"},
+                {"label": "Validation", "value": f"walk-forward + gap({gap_days})"},
+                {"label": "Train Window", "value": f"{train_window_months}か月"},
                 {"label": "Leakage Check", "value": "PASS"},
-                {"label": "Feature Set", "value": _FEATURE_VERSION},
                 {"label": "Universe", "value": f"{len(JP_LARGE_CAP_UNIVERSE)} symbols"},
             ],
             "compare_rows": [primary_summary, baseline_summary],
@@ -1200,15 +1318,26 @@ class StockMlPageService:
         counts, _ = np.histogram(scores, bins=bins)
         return [{"label": labels[idx], "value": int(counts[idx])} for idx in range(len(labels))]
 
-    def _build_backtest_view(self, *, dataset: dict[str, Any]) -> dict[str, Any]:
+    def _build_backtest_view(
+        self,
+        *,
+        dataset: dict[str, Any],
+        train_window_months: int,
+        gap_days: int,
+        random_seed: int,
+    ) -> dict[str, Any]:
         prediction_dates: list[str] = dataset["prediction_dates"]
         backtest_dates = prediction_dates[-_BACKTEST_WINDOW_DAYS:]
         if len(backtest_dates) < 40:
             raise HTTPException(status_code=502, detail="バックテストに必要な営業日数が不足しています。")
-        train_dates = prediction_dates[: max(0, len(prediction_dates) - _BACKTEST_WINDOW_DAYS - _GAP_DAYS)]
-        primary_train_rows = [row for row in dataset["rows"] if row["date"] in set(train_dates)]
-        logistic_train_rows = [row for row in dataset["rows"] if row["date"] in set(train_dates)]
-        lgbm_model = self._fit_lightgbm_classifier(primary_train_rows)
+        train_window_days = _window_days_from_months(train_window_months)
+        train_end = max(0, len(prediction_dates) - _BACKTEST_WINDOW_DAYS - gap_days)
+        train_start = max(0, train_end - train_window_days)
+        train_dates = prediction_dates[train_start:train_end]
+        train_date_set = set(train_dates)
+        primary_train_rows = [row for row in dataset["rows"] if row["date"] in train_date_set]
+        logistic_train_rows = [row for row in dataset["rows"] if row["date"] in train_date_set]
+        lgbm_model = self._fit_lightgbm_classifier(primary_train_rows, seed=random_seed)
         logistic_model = self._fit_logistic_regression(logistic_train_rows)
 
         by_date = dataset["by_date"]
@@ -1379,7 +1508,18 @@ class StockMlPageService:
                 )
         return out[:8]
 
-    def _build_model_registry(self, *, training: dict[str, Any], backtest: dict[str, Any], config_hash: str) -> dict[str, Any]:
+    def _build_model_registry(
+        self,
+        *,
+        training: dict[str, Any],
+        backtest: dict[str, Any],
+        config_hash: str,
+        cost_buffer: float,
+        train_window_months: int,
+        gap_days: int,
+        valid_window_months: int,
+        random_seed: int,
+    ) -> dict[str, Any]:
         adopted_model_version = self.page_store.get_adopted_model_version()
         model_results = backtest["model_results"]
         primary_result = model_results[_MODEL_PRIMARY_VERSION]
@@ -1397,11 +1537,11 @@ class StockMlPageService:
             "leakage_check": True,
             "data_quality_check": True,
             "train_conditions": [
-                {"label": "学習期間", "value": f"{_TRAIN_WINDOW_DAYS}営業日"},
-                {"label": "gap", "value": f"{_GAP_DAYS}営業日"},
-                {"label": "valid期間", "value": f"{_VALID_WINDOW_DAYS}営業日"},
-                {"label": "cost_buffer", "value": "0.0 / 0.002"},
-                {"label": "seed", "value": "42"},
+                {"label": "学習期間", "value": f"{train_window_months}か月 ({_window_days_from_months(train_window_months)}営業日)"},
+                {"label": "gap", "value": f"{gap_days}営業日"},
+                {"label": "valid期間", "value": f"{valid_window_months}か月 ({_window_days_from_months(valid_window_months)}営業日)"},
+                {"label": "cost_buffer", "value": f"{cost_buffer:.3f}".rstrip("0").rstrip(".") if cost_buffer else "0.0"},
+                {"label": "seed", "value": str(random_seed)},
                 {"label": "特徴量セット", "value": _FEATURE_VERSION},
             ],
             "eval_conditions": [
@@ -1430,11 +1570,11 @@ class StockMlPageService:
             "leakage_check": True,
             "data_quality_check": True,
             "train_conditions": [
-                {"label": "学習期間", "value": f"{_TRAIN_WINDOW_DAYS}営業日"},
-                {"label": "gap", "value": f"{_GAP_DAYS}営業日"},
-                {"label": "valid期間", "value": f"{_VALID_WINDOW_DAYS}営業日"},
-                {"label": "cost_buffer", "value": "0.0 / 0.002"},
-                {"label": "seed", "value": "42"},
+                {"label": "学習期間", "value": f"{train_window_months}か月 ({_window_days_from_months(train_window_months)}営業日)"},
+                {"label": "gap", "value": f"{gap_days}営業日"},
+                {"label": "valid期間", "value": f"{valid_window_months}か月 ({_window_days_from_months(valid_window_months)}営業日)"},
+                {"label": "cost_buffer", "value": f"{cost_buffer:.3f}".rstrip("0").rstrip(".") if cost_buffer else "0.0"},
+                {"label": "seed", "value": str(random_seed)},
                 {"label": "特徴量セット", "value": _FEATURE_VERSION},
             ],
             "eval_conditions": [
@@ -1473,11 +1613,23 @@ class StockMlPageService:
         feature_set: str,
         cost_buffer: float,
         latest_market_date: str,
+        train_window_months: int,
+        random_seed: int,
     ) -> dict[str, Any]:
         base_rows = [dict(item) for item in dataset["by_date"].get(prediction_date, [])]
         if not base_rows:
             raise HTTPException(status_code=404, detail="選択した prediction_date のデータがありません。")
-        train_rows = [row for row in dataset["rows"] if row["date"] < prediction_date]
+        target_date = self._target_date_for_prediction(
+            target_date_by_prediction=dataset["target_date_by_prediction"],
+            prediction_date=prediction_date,
+        )
+        training_dates = self._recent_prediction_dates_before(
+            prediction_dates=dataset["prediction_dates"],
+            selected=prediction_date,
+            limit=_window_days_from_months(train_window_months),
+        )
+        training_date_set = set(training_dates)
+        train_rows = [row for row in dataset["rows"] if row["date"] in training_date_set]
         if model_family == _BASELINE_MODEL_FAMILY:
             logistic_model = self._fit_logistic_regression(train_rows)
             return_model = self._fit_linear_return_regression(train_rows)
@@ -1500,8 +1652,8 @@ class StockMlPageService:
             }
             expected_return_note = "expected_return は ridge return model の D+1 期待収益率です。"
         else:
-            lgbm_model = self._fit_lightgbm_classifier(train_rows)
-            return_model = self._fit_lightgbm_regression(train_rows)
+            lgbm_model = self._fit_lightgbm_classifier(train_rows, seed=random_seed)
+            return_model = self._fit_lightgbm_regression(train_rows, seed=random_seed)
             predictions = self._predict_lightgbm_classifier(lgbm_model, base_rows, include_contrib=True)
             return_predictions = self._predict_lightgbm_regression(return_model, base_rows)
             for row, prediction, expected_return in zip(base_rows, predictions, return_predictions, strict=False):
@@ -1586,7 +1738,7 @@ class StockMlPageService:
         adopted_label = "採用中" if selected_model_version == adopted_model_version else f"表示中 / 採用中={adopted_model_version}"
         summary_cards = [
             {"label": "prediction_date", "value": _to_jst_label(prediction_date)},
-            {"label": "target_date", "value": _to_jst_label(_next_business_day(prediction_date))},
+            {"label": "target_date", "value": _to_jst_label(target_date)},
             {"label": "model_version", "value": selected_model_version, "sub": adopted_label},
             {"label": "data_version", "value": f"stooq_jp_{prediction_date.replace('-', '')}", "sub": feature_set},
             {"label": "coverage", "value": f"{coverage_total}/{coverage_total + coverage_excluded}", "sub": f"除外 {coverage_excluded}銘柄"},
@@ -1595,7 +1747,7 @@ class StockMlPageService:
         return {
             "prediction_date": prediction_date,
             "label": _to_jst_label(prediction_date),
-            "target_date": _next_business_day(prediction_date),
+            "target_date": target_date,
             "latest_update": latest_update,
             "data_version": f"stooq_jp_{prediction_date.replace('-', '')}",
             "feature_version": feature_set,
@@ -1789,7 +1941,7 @@ class StockMlPageService:
                 "label": "リークチェック",
                 "value": "PASS",
                 "badge": {"label": "PASS", "level": "normal"},
-                "note": "walk-forward + gap を固定表示。",
+                "note": "walk-forward + gap 条件を明示し、ランダム分割は許可しません。",
             },
             {
                 "label": "推論実行可否",
@@ -1881,6 +2033,7 @@ class StockMlPageService:
                 data_version,
                 str(filters.get("universe_filter") or "").strip(),
                 str(filters.get("cost_buffer") or "").strip(),
+                str(snapshot.get("config_hash") or "").strip(),
             ]
         )
         return {
@@ -1908,6 +2061,20 @@ class StockMlPageService:
         if index <= 0:
             return None
         return prediction_dates[index - 1]
+
+    @staticmethod
+    def _recent_prediction_dates_before(prediction_dates: list[str], selected: str, limit: int) -> list[str]:
+        try:
+            index = prediction_dates.index(selected)
+        except ValueError:
+            index = len(prediction_dates)
+        start = max(0, index - max(1, int(limit)))
+        return prediction_dates[start:index]
+
+    @staticmethod
+    def _target_date_for_prediction(*, target_date_by_prediction: dict[str, str], prediction_date: str) -> str:
+        target_date = str(target_date_by_prediction.get(prediction_date) or "").strip()
+        return target_date or _next_business_day(prediction_date)
 
     @staticmethod
     def _staleness_days(latest_date: str) -> int:

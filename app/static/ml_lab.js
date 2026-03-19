@@ -40,6 +40,11 @@ const trainAcceptanceEl = document.getElementById("mlops-train-acceptance");
 const foldBodyEl = document.getElementById("mlops-fold-body");
 const foldChartEl = document.getElementById("mlops-fold-chart");
 const scoreDistributionEl = document.getElementById("mlops-score-distribution");
+const trainWindowMonthsEl = document.getElementById("mlops-train-window-months");
+const gapDaysEl = document.getElementById("mlops-gap-days");
+const validWindowMonthsEl = document.getElementById("mlops-valid-window-months");
+const randomSeedEl = document.getElementById("mlops-random-seed");
+const trainNoteEl = document.getElementById("mlops-train-note");
 
 const backtestSettingsEl = document.getElementById("mlops-backtest-settings");
 const backtestCompareBodyEl = document.getElementById("mlops-backtest-compare-body");
@@ -69,6 +74,11 @@ const appState = {
     model_family: "LightGBM Classifier",
     feature_set: "base_v1",
     cost_buffer: "0.0",
+    train_window_months: "12",
+    gap_days: "5",
+    valid_window_months: "1",
+    random_seed: "42",
+    train_note: "",
     run_note: "",
   },
   search: "",
@@ -299,6 +309,11 @@ async function fetchSnapshot({ refresh = false } = {}) {
       model_family: appState.filters.model_family,
       feature_set: appState.filters.feature_set,
       cost_buffer: appState.filters.cost_buffer,
+      train_window_months: appState.filters.train_window_months,
+      gap_days: appState.filters.gap_days,
+      valid_window_months: appState.filters.valid_window_months,
+      random_seed: appState.filters.random_seed,
+      train_note: appState.filters.train_note || "",
       run_note: appState.filters.run_note || "",
       refresh: refresh ? "true" : "false",
     });
@@ -460,6 +475,7 @@ function renderFilters() {
   if (!snapshot) return;
   const options = snapshot.filter_options || {};
   const renderOptions = (selectEl, rows, currentValue) => {
+    if (!selectEl) return;
     selectEl.innerHTML = (Array.isArray(rows) ? rows : [])
       .map((item) => `<option value="${escapeHtml(item.value)}"${item.value === currentValue ? " selected" : ""}>${escapeHtml(item.label)}</option>`)
       .join("");
@@ -470,6 +486,27 @@ function renderFilters() {
   renderOptions(featureSetEl, options.feature_sets, appState.filters.feature_set);
   renderOptions(costBufferEl, options.cost_buffers, appState.filters.cost_buffer);
   runNoteEl.value = appState.filters.run_note || "";
+}
+
+function renderTrainingInputs() {
+  const snapshot = appState.snapshot;
+  if (!snapshot) return;
+  const options = snapshot.filter_options || {};
+  const renderOptions = (selectEl, rows, currentValue) => {
+    if (!selectEl) return;
+    selectEl.innerHTML = (Array.isArray(rows) ? rows : [])
+      .map((item) => `<option value="${escapeHtml(item.value)}"${item.value === currentValue ? " selected" : ""}>${escapeHtml(item.label)}</option>`)
+      .join("");
+  };
+  renderOptions(trainWindowMonthsEl, options.train_window_months, appState.filters.train_window_months);
+  renderOptions(gapDaysEl, options.gap_days, appState.filters.gap_days);
+  renderOptions(validWindowMonthsEl, options.valid_window_months, appState.filters.valid_window_months);
+  if (randomSeedEl) {
+    randomSeedEl.value = appState.filters.random_seed || "42";
+  }
+  if (trainNoteEl) {
+    trainNoteEl.value = appState.filters.train_note || "";
+  }
 }
 
 function renderGlobalStatus() {
@@ -787,6 +824,7 @@ function renderOps() {
 function renderAll() {
   renderHeader();
   renderFilters();
+  renderTrainingInputs();
   renderGlobalStatus();
   renderSidebarStatus();
   renderTabs();
@@ -804,6 +842,11 @@ function currentFilterPayload() {
     model_family: appState.filters.model_family,
     feature_set: appState.filters.feature_set,
     cost_buffer: Number(appState.filters.cost_buffer || 0),
+    train_window_months: Number(appState.filters.train_window_months || 12),
+    gap_days: Number(appState.filters.gap_days || 5),
+    valid_window_months: Number(appState.filters.valid_window_months || 1),
+    random_seed: Number(appState.filters.random_seed || 42),
+    train_note: appState.filters.train_note || "",
     run_note: appState.filters.run_note || "",
   };
 }
@@ -914,6 +957,30 @@ function bindEvents() {
   costBufferEl?.addEventListener("change", async (event) => {
     appState.filters.cost_buffer = event.target.value;
     await fetchSnapshot();
+  });
+
+  trainWindowMonthsEl?.addEventListener("change", async (event) => {
+    appState.filters.train_window_months = event.target.value;
+    await fetchSnapshot();
+  });
+
+  gapDaysEl?.addEventListener("change", async (event) => {
+    appState.filters.gap_days = event.target.value;
+    await fetchSnapshot();
+  });
+
+  validWindowMonthsEl?.addEventListener("change", async (event) => {
+    appState.filters.valid_window_months = event.target.value;
+    await fetchSnapshot();
+  });
+
+  randomSeedEl?.addEventListener("change", async (event) => {
+    appState.filters.random_seed = event.target.value || "42";
+    await fetchSnapshot();
+  });
+
+  trainNoteEl?.addEventListener("input", (event) => {
+    appState.filters.train_note = event.target.value.slice(0, 500);
   });
 
   runNoteEl?.addEventListener("input", (event) => {

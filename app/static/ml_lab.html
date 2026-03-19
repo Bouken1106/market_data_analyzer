@@ -376,6 +376,77 @@
             </div>
           </div>
 
+          <section class="mlops-subcard">
+            <div class="mlops-subcard-head">
+              <div>
+                <h3>学習条件フォーム</h3>
+                <p class="hint">preset 選択だけを許可し、ランダム分割や未来期間は出しません。</p>
+              </div>
+            </div>
+            <div class="ml-form-grid mlops-filter-grid">
+              <label>
+                <span class="ml-label-row">
+                  <span>task_type</span>
+                  <details class="mlops-inline-help">
+                    <summary aria-label="task_type の説明">?</summary>
+                    <div>初版は翌営業日の上昇/下落を当てる `y_cls_1d` 固定です。ランキングや回帰は Phase 2 以降で拡張します。</div>
+                  </details>
+                </span>
+                <input type="text" value="y_cls_1d" readonly />
+              </label>
+              <label>
+                <span class="ml-label-row">
+                  <span>学習期間</span>
+                  <details class="mlops-inline-help">
+                    <summary aria-label="学習期間の説明">?</summary>
+                    <div>どこまで過去データを学習へ使うかの期間です。長いほど安定しやすい一方、相場変化への追随は鈍くなります。</div>
+                  </details>
+                </span>
+                <select id="mlops-train-window-months"></select>
+              </label>
+              <label>
+                <span class="ml-label-row">
+                  <span>gap</span>
+                  <details class="mlops-inline-help">
+                    <summary aria-label="gap の説明">?</summary>
+                    <div>学習期間と検証期間の間に空ける営業日数です。未来情報のにじみ込みを減らすために入れます。</div>
+                  </details>
+                </span>
+                <select id="mlops-gap-days"></select>
+              </label>
+              <label>
+                <span class="ml-label-row">
+                  <span>valid期間</span>
+                  <details class="mlops-inline-help">
+                    <summary aria-label="valid期間の説明">?</summary>
+                    <div>学習したモデルを評価するために後ろ側へ確保する期間です。長いほど検証は安定しますが、fold数は減ります。</div>
+                  </details>
+                </span>
+                <select id="mlops-valid-window-months"></select>
+              </label>
+              <label>
+                <span class="ml-label-row">
+                  <span>乱数 seed</span>
+                  <details class="mlops-inline-help">
+                    <summary aria-label="乱数 seed の説明">?</summary>
+                    <div>同じ条件で同じ結果を再現するための固定値です。通常は既定値のままで問題ありません。</div>
+                  </details>
+                </span>
+                <input id="mlops-random-seed" type="number" min="1" step="1" inputmode="numeric" />
+              </label>
+              <label class="mlops-filter-wide">
+                <span class="ml-label-row">
+                  <span>ジョブメモ</span>
+                  <details class="mlops-inline-help">
+                    <summary aria-label="ジョブメモの説明">?</summary>
+                    <div>この学習条件を試す理由を残す欄です。学習ジョブ実行時に監査ログへ残ります。</div>
+                  </details>
+                </span>
+                <textarea id="mlops-train-note" rows="4" maxlength="500" placeholder="学習条件や比較目的を500文字以内で記録"></textarea>
+              </label>
+            </div>
+          </section>
+
           <div class="mlops-split-grid">
             <section class="mlops-subcard">
               <div class="mlops-subcard-head">

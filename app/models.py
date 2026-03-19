@@ -95,6 +95,11 @@ class StockMlPageActionRequest(BaseModel):
     model_family: str = "LightGBM Classifier"
     feature_set: str = "base_v1"
     cost_buffer: float = 0.0
+    train_window_months: int = 12
+    gap_days: int = 5
+    valid_window_months: int = 1
+    random_seed: int = 42
+    train_note: str = ""
     run_note: str = ""
     search_query: str = ""
     confirm_regenerate: bool = False
