@@ -113,12 +113,27 @@ def _stock_page_kwargs(
     }
 
 
-def _prediction_daily_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
+def _selected_model_version(snapshot: dict[str, Any]) -> str:
     dashboard = snapshot.get("dashboard", {})
+    model_version = str(dashboard.get("model_version") or "").strip()
+    if model_version:
+        return model_version
+    for item in dashboard.get("summary_cards", []):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("label") or "").strip() != "model_version":
+            continue
+        value = str(item.get("value") or "").strip()
+        if value:
+            return value
     filters = snapshot.get("filters", {})
     models = snapshot.get("models", {})
-    default_versions = models.get("default_versions", {})
-    model_version = default_versions.get(filters.get("model_family"), "")
+    return str(models.get("default_versions", {}).get(filters.get("model_family"), "")).strip()
+
+
+def _prediction_daily_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
+    dashboard = snapshot.get("dashboard", {})
+    model_version = _selected_model_version(snapshot)
     rows = []
     for item in dashboard.get("rows", []):
         if not isinstance(item, dict):

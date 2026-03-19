@@ -2363,7 +2363,11 @@ class StockMlPageService:
         latest_delta_days = self._staleness_days(latest_market_date)
         display_rows: list[dict[str, Any]] = []
         volatility_cutoff = float(np.percentile(np.array([item["volatility_20"] for item in base_rows], dtype=np.float64), 75))
-        ranked_rows = sorted(base_rows, key=lambda item: float(item["score_cls"]), reverse=True)
+        ranked_rows = sorted(
+            base_rows,
+            key=lambda item: (float(item["prob_up"]), float(item["score_cls"])),
+            reverse=True,
+        )
         for rank, row in enumerate(ranked_rows, start=1):
             warnings: list[str] = []
             if float(row["volume_ratio_20"]) < 0.65:
@@ -2393,7 +2397,7 @@ class StockMlPageService:
                     ],
                     "event_proximity": "イベントデータ未接続 / 価格・出来高特徴量のみで推論",
                     "score_delta": f"{score_delta:+.2f} vs 前営業日",
-                    "note": f"{expected_return_note} score_rank は score_cls 降順です。",
+                    "note": f"{expected_return_note} score_rank は prob_up 降順です。",
                     "feature_contrib": row["model_feature_contrib"],
                 }
             )
@@ -2484,6 +2488,7 @@ class StockMlPageService:
             "prediction_date": prediction_date,
             "label": _to_jst_label(prediction_date),
             "target_date": target_date,
+            "model_version": selected_model_version,
             "latest_update": latest_update,
             "data_version": f"stooq_jp_{prediction_date.replace('-', '')}",
             "feature_version": feature_set,
@@ -2492,7 +2497,7 @@ class StockMlPageService:
             "freshness": {"level": freshness_level, "label": "最新" if freshness_level == "normal" else "遅延あり"},
             "run_state": "推論完了",
             "summary_cards": summary_cards,
-            "caption": f"{coverage_total} 件表示 / selected={model_family} / ranking=score_cls / cost_buffer={_format_cost_buffer(cost_buffer)}",
+            "caption": f"{coverage_total} 件表示 / selected={model_family} / ranking=prob_up / cost_buffer={_format_cost_buffer(cost_buffer)}",
             "footnote": f"score_rank を算出済み。{expected_return_note}",
             "rows": display_rows,
             "sector_scores": sector_items,
@@ -3140,9 +3145,11 @@ class StockMlPageService:
 
     def _prediction_run_payload(self, snapshot: dict[str, Any]) -> dict[str, str]:
         filters = snapshot.get("filters", {})
-        models = snapshot.get("models", {})
         dashboard = snapshot.get("dashboard", {})
-        model_version = str(models.get("default_versions", {}).get(filters.get("model_family"), "")).strip()
+        model_version = str(dashboard.get("model_version") or "").strip()
+        if not model_version:
+            models = snapshot.get("models", {})
+            model_version = str(models.get("default_versions", {}).get(filters.get("model_family"), "")).strip()
         prediction_date = str(dashboard.get("prediction_date") or filters.get("prediction_date") or "").strip()
         feature_version = str(dashboard.get("feature_version") or filters.get("feature_set") or "").strip()
         data_version = str(dashboard.get("data_version") or "").strip()

@@ -152,6 +152,37 @@ class StockMlPageServiceHelpersTest(unittest.TestCase):
         self.assertAlmostEqual(result["daily_series"][0]["net_return"], 0.0)
         self.assertEqual(result["metrics"]["unable_count"], 1)
 
+    def test_prediction_run_payload_prefers_dashboard_model_version(self) -> None:
+        service = StockMlPageService(full_daily_history_store=None, page_store=None)
+
+        payload = service._prediction_run_payload(
+            {
+                "config_hash": "cfg123456789",
+                "filters": {
+                    "prediction_date": "2026-03-18",
+                    "model_family": "LightGBM Classifier",
+                    "feature_set": "base_v1",
+                    "universe_filter": "jp_large_cap_stooq_v1",
+                    "cost_buffer": "0.0",
+                },
+                "models": {
+                    "default_versions": {
+                        "LightGBM Classifier": "lgbm_cls_jp_v1.0.0",
+                    }
+                },
+                "dashboard": {
+                    "prediction_date": "2026-03-18",
+                    "target_date": "2026-03-19",
+                    "model_version": "lgbm_cls_jp_v1.1.0",
+                    "feature_version": "base_v1",
+                    "data_version": "stooq_jp_20260318",
+                },
+            }
+        )
+
+        self.assertEqual(payload["model_version"], "lgbm_cls_jp_v1.1.0")
+        self.assertEqual(payload["generation_key"], "2026-03-18::lgbm_cls_jp_v1.1.0::base_v1::stooq_jp_20260318::jp_large_cap_stooq_v1::0.0::cfg123456789")
+
 
 class StockMlPageStoreTest(unittest.TestCase):
     def test_add_audit_log_preserves_structured_context(self) -> None:
