@@ -30,6 +30,16 @@ class SymbolUpdateRequest(BaseModel):
     symbols: str
 
 
+class MarketDataLabOnboardingRequest(BaseModel):
+    dismissed: bool = True
+
+
+class MarketDataLabStateRequest(BaseModel):
+    watchlist_symbols: str = ""
+    last_viewed_symbol: str = ""
+    chart_interval: str = "1day"
+
+
 class QuantileLstmJobRequest(BaseModel):
     symbol: str
     months: int = ML_HISTORY_DEFAULT_MONTHS

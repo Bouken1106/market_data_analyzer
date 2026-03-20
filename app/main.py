@@ -44,9 +44,12 @@ STATIC_DIR = BASE_DIR / "static"
 NO_CACHE_PATHS = frozenset(
     {
         "/",
+        "/market-data-lab",
         "/ml-lab",
         "/static/app.js",
         "/static/app.terminal.js",
+        "/static/market_data_lab.js",
+        "/static/market_data_lab.html",
         "/static/ml_lab.js",
         "/static/page_menu.js",
         "/static/app.monitor.20260211b.js",

@@ -35,6 +35,7 @@ from ..config import (
     HISTORICAL_MAX_POINTS,
     HISTORICAL_MAX_YEARS,
     LOGGER,
+    MAX_BASIC_SYMBOLS,
     ML_HISTORY_MAX_MONTHS,
     OVERVIEW_CACHE_TTL_SEC,
     QUOTE_URL,
@@ -1600,6 +1601,56 @@ class MarketDataQueriesMixin:
                         }
 
         return [items_by_symbol[symbol] for symbol in target_symbols if symbol in items_by_symbol]
+
+    async def market_data_lab_quotes_payload(self, symbols: list[str]) -> list[dict[str, Any]]:
+        target_symbols = normalize_symbols(symbols, max_items=MAX_BASIC_SYMBOLS)
+        if not target_symbols:
+            return []
+
+        timeout = httpx.Timeout(20.0, connect=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            quotes = await asyncio.gather(
+                *(self._fetch_quote(client, symbol) for symbol in target_symbols),
+                return_exceptions=True,
+            )
+
+        items: list[dict[str, Any]] = []
+        for symbol, quote in zip(target_symbols, quotes):
+            payload = quote if isinstance(quote, dict) else {}
+            current_price = self._pick_float(payload, "close", "price")
+            previous_close = self._pick_float(payload, "previous_close", "prev_close")
+            updated_at = self._best_updated_at(payload, [], [])
+            source = str(payload.get("_source_provider") or self.provider or "").strip() or "unknown"
+
+            if current_price is None:
+                stored = self.last_price_store.get(symbol) or {}
+                stored_price = self._pick_float(stored, "price")
+                if stored_price is not None:
+                    current_price = stored_price
+                    updated_at = str(stored.get("timestamp") or updated_at or "")
+                    source = str(stored.get("source") or source or "").strip() or source
+
+            change_abs = None
+            change_pct = None
+            if current_price is not None and previous_close is not None and previous_close > 0:
+                change_abs = current_price - previous_close
+                change_pct = (change_abs / previous_close) * 100
+
+            items.append(
+                {
+                    "symbol": symbol,
+                    "name": self._pick_string(payload, "name", "instrument_name"),
+                    "exchange": self._pick_string(payload, "exchange"),
+                    "price": current_price,
+                    "previous_close": previous_close,
+                    "change_abs": change_abs,
+                    "change_pct": change_pct,
+                    "updated_at": updated_at,
+                    "source": source,
+                }
+            )
+
+        return items
 
     async def _fetch_sparkline_item(self, client: httpx.AsyncClient, symbol: str) -> dict[str, Any] | None:
         points = await self._fetch_series(

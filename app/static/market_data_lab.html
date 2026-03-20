@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="ja">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Free Market Data Lab</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="/static/styles.css?v=20260321a" />
+</head>
+
+<body class="market-data-page">
+  <nav class="nav-tabs" aria-label="Main navigation">
+    <a href="/" class="nav-tab" data-path="/">
+      <span class="nav-tab-icon">📊</span> Monitor
+    </a>
+    <a href="/market-data-lab" class="nav-tab" data-path="/market-data-lab">
+      <span class="nav-tab-icon">🧭</span> Market Data
+    </a>
+    <a href="/ml-lab" class="nav-tab" data-path="/ml-lab">
+      <span class="nav-tab-icon">🧠</span> ML Lab
+    </a>
+    <a href="/compare-lab" class="nav-tab" data-path="/compare-lab">
+      <span class="nav-tab-icon">⚖️</span> Compare
+    </a>
+    <a href="/strategy-lab" class="nav-tab" data-path="/strategy-lab">
+      <span class="nav-tab-icon">🎯</span> Strategy
+    </a>
+  </nav>
+
+  <main class="container mdl-layout">
+    <header class="header mdl-header">
+      <div class="header-top">
+        <div>
+          <h1>Free Market Data Lab</h1>
+          <p>無料 API を前提に、米国株の検索、ウォッチ、詳細確認を初見ユーザー向けに絞ったページです。</p>
+        </div>
+        <div class="mdl-header-actions">
+          <button id="mdl-refresh-all" type="button" class="minor-action">全体更新</button>
+        </div>
+      </div>
+      <div class="live-monitor-chips">
+        <span class="pill chip-cyan">US Stocks</span>
+        <span class="pill chip-green">Free Plan First</span>
+        <span class="pill chip-amber">Max 8 Symbols</span>
+      </div>
+    </header>
+
+    <section class="card mdl-free-banner" aria-label="無料プラン説明">
+      <div class="mdl-banner-copy">
+        <h2>このページは無料プラン前提です</h2>
+        <p>FMP Free を標準に、必要なら Twelve Data Basic を補助で使います。板情報、ニュース、企業イベントの高度表示は初版では出しません。</p>
+      </div>
+      <div class="mdl-banner-grid">
+        <div class="mdl-banner-item">
+          <span class="mdl-label-row">
+            <span>Provider</span>
+            <details class="param-help mdl-help" data-help-key="provider">
+              <summary>?</summary>
+              <p></p>
+            </details>
+          </span>
+          <strong id="mdl-banner-provider">-</strong>
+        </div>
+        <div class="mdl-banner-item">
+          <span class="mdl-label-row">
+            <span>Watchlist</span>
+            <details class="param-help mdl-help" data-help-key="fallback">
+              <summary>?</summary>
+              <p></p>
+            </details>
+          </span>
+          <strong id="mdl-banner-count">0 / 8</strong>
+        </div>
+        <div class="mdl-banner-item">
+          <span class="mdl-label-row">
+            <span>REST Interval</span>
+            <details class="param-help mdl-help" data-help-key="update_mode">
+              <summary>?</summary>
+              <p></p>
+            </details>
+          </span>
+          <strong id="mdl-banner-polling">-</strong>
+        </div>
+        <div class="mdl-banner-item">
+          <span class="mdl-label-row">
+            <span>Unavailable</span>
+          </span>
+          <strong id="mdl-banner-unsupported">-</strong>
+        </div>
+      </div>
+    </section>
+
+    <section id="mdl-global-notice" class="mdl-notice is-hidden" aria-live="polite"></section>
+
+    <section id="mdl-guide-card" class="card mdl-guide-card" aria-label="初回ガイド">
+      <div class="mdl-section-head">
+        <div>
+          <h2>3ステップで開始</h2>
+          <p class="hint">まず何を押せばよいかを先に固定表示します。</p>
+        </div>
+        <div class="mdl-head-actions">
+          <button id="mdl-guide-close" type="button" class="minor-action">閉じる</button>
+        </div>
+      </div>
+      <ol class="mdl-guide-steps">
+        <li>
+          <strong>Step 1</strong>
+          <span>左上の検索欄で銘柄を探します。例: <code>AAPL</code>, <code>MSFT</code>, <code>NVDA</code></span>
+        </li>
+        <li>
+          <strong>Step 2</strong>
+          <span>候補を 1 銘柄ずつウォッチリストへ追加します。無料モードでは最大 8 銘柄です。</span>
+        </li>
+        <li>
+          <strong>Step 3</strong>
+          <span>ウォッチリストの銘柄をクリックすると、右側に詳細、チャート、補足情報を表示します。</span>
+        </li>
+      </ol>
+    </section>
+
+    <div id="mdl-guide-reopen-wrap" class="mdl-guide-reopen-wrap hidden">
+      <button id="mdl-guide-reopen" type="button" class="minor-action">初回ガイドを再表示</button>
+    </div>
+
+    <section class="card mdl-provider-card" aria-label="プロバイダー状態">
+      <div class="mdl-section-head">
+        <div>
+          <h2>プロバイダー状態</h2>
+          <p class="hint">更新モード、キャッシュ、クレジット、フォールバックを見える化します。</p>
+        </div>
+        <div class="mdl-head-actions">
+          <button id="mdl-refresh-credits" type="button" class="minor-action">クレジット更新</button>
+        </div>
+      </div>
+      <div class="mdl-provider-grid">
+        <div class="mdl-provider-item">
+          <span class="mdl-label-row">
+            <span>Data Provider</span>
+            <details class="param-help mdl-help" data-help-key="provider">
+              <summary>?</summary>
+              <p></p>
+            </details>
+          </span>
+          <strong id="mdl-provider-status">-</strong>
+          <span id="mdl-provider-config" class="hint">-</span>
+        </div>
+        <div class="mdl-provider-item">
+          <span class="mdl-label-row">
+            <span>Update Mode</span>
+            <details class="param-help mdl-help" data-help-key="update_mode">
+              <summary>?</summary>
+              <p></p>
+            </details>
+          </span>
+          <strong id="mdl-update-mode">-</strong>
+          <span id="mdl-update-note" class="hint">-</span>
+        </div>
+        <div class="mdl-provider-item">
+          <span class="mdl-label-row">
+            <span>Cache</span>
+            <details class="param-help mdl-help" data-help-key="cache">
+              <summary>?</summary>
+              <p></p>
+            </details>
+          </span>
+          <strong id="mdl-cache-state">-</strong>
+          <span id="mdl-cache-note" class="hint">-</span>
+        </div>
+        <div class="mdl-provider-item">
+          <span class="mdl-label-row">
+            <span>Credits</span>
+            <details class="param-help mdl-help" data-help-key="credits">
+              <summary>?</summary>
+              <p></p>
+            </details>
+          </span>
+          <strong id="mdl-credits-state">-</strong>
+          <span id="mdl-credits-updated" class="hint">-</span>
+        </div>
+        <div class="mdl-provider-item">
+          <span class="mdl-label-row">
+            <span>Fallback</span>
+            <details class="param-help mdl-help" data-help-key="fallback">
+              <summary>?</summary>
+              <p></p>
+            </details>
+          </span>
+          <strong id="mdl-fallback-state">-</strong>
+          <span id="mdl-fallback-note" class="hint">-</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="mdl-content-grid">
+      <div class="mdl-left-column">
+        <section class="card mdl-search-card" aria-label="銘柄検索">
+          <div class="mdl-section-head">
+            <div>
+              <h2>銘柄検索</h2>
+              <p class="hint">シンボル前方一致と社名部分一致で候補を出します。</p>
+            </div>
+          </div>
+          <div id="mdl-search-area" class="terminal-search mdl-search-area">
+            <input id="mdl-search-input" name="mdl-search-input" type="text" autocomplete="off"
+              placeholder="銘柄検索 (AAPL, Microsoft, NVDA...)" />
+            <div id="mdl-search-dropdown" class="symbol-dropdown hidden"></div>
+          </div>
+          <p id="mdl-catalog-meta" class="hint">Loading symbol catalog...</p>
+          <p id="mdl-search-error" class="hint error"></p>
+        </section>
+
+        <section class="card mdl-watch-card" aria-label="ウォッチリスト">
+          <div class="mdl-section-head">
+            <div>
+              <h2>ウォッチリスト</h2>
+              <p class="hint">クリックで詳細表示、削除で監視解除。並び替えは symbol / price / change% のみです。</p>
+            </div>
+            <div class="mdl-head-actions">
+              <span id="mdl-watch-count" class="pill chip-cyan">0 / 8</span>
+              <button id="mdl-refresh-watch" type="button" class="minor-action">更新</button>
+            </div>
+          </div>
+
+          <div class="mdl-watch-head" aria-label="ウォッチ列ヘッダー">
+            <button type="button" class="watch-sort-btn" data-sort-key="symbol">銘柄</button>
+            <button type="button" class="watch-sort-btn" data-sort-key="price">現在値</button>
+            <button type="button" class="watch-sort-btn" data-sort-key="changePct">前日比%</button>
+            <span>更新</span>
+            <span>取得元</span>
+            <span></span>
+          </div>
+
+          <div id="mdl-watchlist" class="mdl-watchlist" role="list"></div>
+
+          <div id="mdl-watch-empty" class="mdl-empty-state">
+            <p>左上の検索欄から銘柄を追加してください。</p>
+            <div class="mdl-example-buttons">
+              <button type="button" class="secondary mdl-example-btn" data-symbol="AAPL">AAPL</button>
+              <button type="button" class="secondary mdl-example-btn" data-symbol="MSFT">MSFT</button>
+              <button type="button" class="secondary mdl-example-btn" data-symbol="NVDA">NVDA</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="card mdl-usage-card" aria-label="利用制約">
+          <div class="mdl-section-head">
+            <div>
+              <h2>利用制約</h2>
+              <p class="hint">無料モードで未対応の項目は削除せず、理由つきで表示します。</p>
+            </div>
+          </div>
+          <ul id="mdl-unsupported-list" class="mdl-unsupported-list"></ul>
+        </section>
+      </div>
+
+      <div class="mdl-right-column">
+        <section class="card mdl-detail-card" aria-label="銘柄詳細">
+          <div class="mdl-section-head">
+            <div>
+              <h2>銘柄詳細</h2>
+              <p id="mdl-detail-subtitle" class="hint">ウォッチリストから銘柄を選ぶと、ここに詳細を表示します。</p>
+            </div>
+            <div class="mdl-head-actions">
+              <button id="mdl-refresh-detail" type="button" class="minor-action">詳細更新</button>
+            </div>
+          </div>
+
+          <div id="mdl-detail-empty" class="mdl-empty-state mdl-detail-empty">
+            <p>ウォッチリストから銘柄を選ぶと、ここに詳細を表示します。</p>
+          </div>
+
+          <div id="mdl-detail-content" class="hidden">
+            <div class="mdl-detail-hero">
+              <div>
+                <div class="mdl-detail-title-row">
+                  <h3 id="mdl-detail-symbol">-</h3>
+                  <span id="mdl-detail-exchange" class="pill">-</span>
+                </div>
+                <p id="mdl-detail-name" class="hint">-</p>
+              </div>
+              <div class="mdl-price-panel">
+                <div id="mdl-detail-price" class="mdl-detail-price">-</div>
+                <div id="mdl-detail-change" class="mdl-detail-change">-</div>
+                <div id="mdl-detail-updated" class="hint">-</div>
+              </div>
+            </div>
+
+            <div class="mdl-kpi-grid">
+              <div class="mdl-kpi-card">
+                <span class="mdl-label-row">
+                  <span>前日比</span>
+                  <details class="param-help mdl-help" data-help-key="change_pct">
+                    <summary>?</summary>
+                    <p></p>
+                  </details>
+                </span>
+                <strong id="mdl-kpi-change">-</strong>
+              </div>
+              <div class="mdl-kpi-card">
+                <span class="mdl-label-row">
+                  <span>当日高値 / 安値</span>
+                </span>
+                <strong id="mdl-kpi-range">-</strong>
+              </div>
+              <div class="mdl-kpi-card">
+                <span class="mdl-label-row">
+                  <span>出来高</span>
+                  <details class="param-help mdl-help" data-help-key="volume">
+                    <summary>?</summary>
+                    <p></p>
+                  </details>
+                </span>
+                <strong id="mdl-kpi-volume">-</strong>
+              </div>
+              <div class="mdl-kpi-card">
+                <span class="mdl-label-row">
+                  <span>売買代金</span>
+                </span>
+                <strong id="mdl-kpi-turnover">-</strong>
+              </div>
+              <div class="mdl-kpi-card">
+                <span class="mdl-label-row">
+                  <span>VWAP</span>
+                  <details class="param-help mdl-help" data-help-key="vwap">
+                    <summary>?</summary>
+                    <p></p>
+                  </details>
+                </span>
+                <strong id="mdl-kpi-vwap">-</strong>
+              </div>
+              <div class="mdl-kpi-card">
+                <span class="mdl-label-row">
+                  <span>MA20 / MA50</span>
+                  <details class="param-help mdl-help" data-help-key="ma">
+                    <summary>?</summary>
+                    <p></p>
+                  </details>
+                </span>
+                <strong id="mdl-kpi-ma">-</strong>
+              </div>
+              <div class="mdl-kpi-card">
+                <span class="mdl-label-row">
+                  <span>ATR14</span>
+                  <details class="param-help mdl-help" data-help-key="atr">
+                    <summary>?</summary>
+                    <p></p>
+                  </details>
+                </span>
+                <strong id="mdl-kpi-atr">-</strong>
+              </div>
+              <div class="mdl-kpi-card">
+                <span class="mdl-label-row">
+                  <span>ギャップ</span>
+                </span>
+                <strong id="mdl-kpi-gap">-</strong>
+              </div>
+              <div class="mdl-kpi-card">
+                <span class="mdl-label-row">
+                  <span>β / 相関</span>
+                  <details class="param-help mdl-help" data-help-key="beta_corr">
+                    <summary>?</summary>
+                    <p></p>
+                  </details>
+                </span>
+                <strong id="mdl-kpi-beta">-</strong>
+              </div>
+              <div class="mdl-kpi-card">
+                <span class="mdl-label-row">
+                  <span>データソース</span>
+                </span>
+                <strong id="mdl-kpi-source">-</strong>
+              </div>
+            </div>
+
+            <section class="mdl-chart-panel">
+              <div class="mdl-chart-toolbar">
+                <div class="mdl-chart-group" role="tablist" aria-label="足種切替">
+                  <button type="button" class="secondary mdl-interval-btn" data-interval="1min">1分</button>
+                  <button type="button" class="secondary mdl-interval-btn" data-interval="5min">5分</button>
+                  <button type="button" class="secondary mdl-interval-btn" data-interval="1day">日足</button>
+                </div>
+                <div class="mdl-chart-group" role="tablist" aria-label="レンジ切替">
+                  <button type="button" class="secondary mdl-range-btn" data-range="1D">1D</button>
+                  <button type="button" class="secondary mdl-range-btn" data-range="5D">5D</button>
+                  <button type="button" class="secondary mdl-range-btn" data-range="1M">1M</button>
+                  <button type="button" class="secondary mdl-range-btn" data-range="6M">6M</button>
+                  <button type="button" class="secondary mdl-range-btn" data-range="1Y">1Y</button>
+                  <button type="button" class="secondary mdl-range-btn" data-range="MAX">MAX</button>
+                </div>
+              </div>
+              <p id="mdl-chart-meta" class="hint">-</p>
+              <div id="mdl-chart" class="mdl-chart-shell"></div>
+            </section>
+
+            <div class="mdl-support-grid">
+              <section class="mdl-support-card">
+                <h3>補足表示</h3>
+                <div id="mdl-support-status" class="mdl-support-list"></div>
+              </section>
+              <section class="mdl-support-card">
+                <h3>市場連動</h3>
+                <div id="mdl-market-context" class="mdl-support-list"></div>
+              </section>
+            </div>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/market_data_lab.js?v=20260321a" defer></script>
+  <script src="/static/page_menu.js?v=20260321a" defer></script>
+</body>
+
+</html>

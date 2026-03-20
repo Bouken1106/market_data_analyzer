@@ -23,6 +23,11 @@ async def compare_lab_page() -> FileResponse:
     return FileResponse(STATIC_DIR / "compare_lab.html")
 
 
+@router.get("/market-data-lab", include_in_schema=False)
+async def market_data_lab_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "market_data_lab.html")
+
+
 @router.get("/ml-lab", include_in_schema=False)
 async def ml_lab_page() -> FileResponse:
     return FileResponse(STATIC_DIR / "ml_lab.html")
@@ -36,4 +41,3 @@ async def strategy_lab_page() -> FileResponse:
 @router.get("/historical/{symbol}", include_in_schema=False)
 async def historical_page(symbol: str) -> FileResponse:
     return FileResponse(STATIC_DIR / "historical.html")
-
