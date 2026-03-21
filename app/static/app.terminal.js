@@ -34,7 +34,6 @@ const kpiRangeEl = document.getElementById("kpi-range");
 const kpiVolumeEl = document.getElementById("kpi-volume");
 const kpiMaEl = document.getElementById("kpi-ma");
 const kpiAtrEl = document.getElementById("kpi-atr");
-
 const pfCashEl = document.getElementById("pf-cash");
 const pfEquityEl = document.getElementById("pf-equity");
 const pfUnrealizedPnlEl = document.getElementById("pf-unrealized-pnl");
@@ -49,15 +48,6 @@ const pfResetBtn = document.getElementById("pf-reset");
 const pfMessageEl = document.getElementById("pf-message");
 const pfPositionsBody = document.getElementById("pf-positions-body");
 const pfTradesBody = document.getElementById("pf-trades-body");
-const pfMlModelSearchArea = document.getElementById("pf-ml-model-search-area");
-const pfMlModelSearchInput = document.getElementById("pf-ml-model-search");
-const pfMlModelDropdown = document.getElementById("pf-ml-model-dropdown");
-const pfMlModelPillEl = document.getElementById("pf-ml-model-pill");
-const pfMlRunBtn = document.getElementById("pf-ml-run");
-const pfMlCancelBtn = document.getElementById("pf-ml-cancel");
-const pfMlStatusEl = document.getElementById("pf-ml-status");
-const pfMlSummaryEl = document.getElementById("pf-ml-summary");
-const pfMlResultsBody = document.getElementById("pf-ml-results-body");
 
 const MAX_SYMBOLS = 8;
 const MAX_DROPDOWN_ITEMS = 120;
@@ -77,10 +67,6 @@ const CHART_Y_PADDING_RATIO = 0.08;
 const CHART_VOLUME_BAND_RATIO = 0.28;
 const HISTORICAL_LOAD_YEARS = 100;
 const CHART_RANGE_PRESETS = ["1w", "1m", "1y", "5y", "10y", "max"];
-const PF_ML_JOB_START_ENDPOINT = {
-  quantile_lstm: "/api/ml/quantile-lstm/jobs",
-  patchtst_quantile: "/api/ml/patchtst/jobs",
-};
 const WATCHLIST_MODEL_UNKNOWN = "-";
 
 const watchItemsBySymbol = new Map();
@@ -108,16 +94,6 @@ let watchLlmLastSymbolsKey = "";
 let watchLlmModelName = WATCHLIST_MODEL_UNKNOWN;
 let ignoreFirstEmptySymbolsEvent = false;
 let portfolioBaseState = null;
-let portfolioPollIntervalId = null;
-const PORTFOLIO_POLL_INTERVAL_MS = 300_000; // 5分
-let pfMlModels = [
-  { id: "quantile_lstm", name: "Quantile LSTM", status_label: "Ready" },
-  { id: "patchtst_quantile", name: "PatchTST Quantile", status_label: "Ready" },
-];
-let pfMlActiveModelId = "quantile_lstm";
-let pfMlIsRunning = false;
-let pfMlCancelRequested = false;
-let pfMlActiveJobId = "";
 let chartPanState = {
   active: false,
   symbol: "",
@@ -478,12 +454,18 @@ function restoreSymbolInsightsCache() {
       if (!symbol) return;
       const latestClose = Number(item?.latest_close);
       const previousClose = Number(item?.previous_close);
+      const currentPrice = Number(item?.current_price);
+      const referenceClose = Number(item?.reference_close);
+      const changePct = Number(item?.change_pct);
       const trend = (Array.isArray(item?.trend_30d) ? item.trend_30d : [])
         .map((point) => Number(point))
         .filter((num) => Number.isFinite(num));
       symbolInsightsBySymbol.set(symbol, {
+        current_price: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : null,
         latest_close: Number.isFinite(latestClose) ? latestClose : null,
         previous_close: Number.isFinite(previousClose) ? previousClose : null,
+        reference_close: Number.isFinite(referenceClose) && referenceClose > 0 ? referenceClose : null,
+        change_pct: Number.isFinite(changePct) ? changePct : null,
         trend_30d: trend,
       });
     });
@@ -632,19 +614,20 @@ function findCatalogName(symbol) {
 
 function computeChangePct(symbol, currentPrice, insight = symbolInsightsBySymbol.get(symbol)) {
   const priceNum = Number(currentPrice);
+  const referenceClose = Number(insight?.reference_close);
+  if (Number.isFinite(priceNum) && priceNum > 0 && Number.isFinite(referenceClose) && referenceClose > 0) {
+    return ((priceNum - referenceClose) / referenceClose) * 100;
+  }
   const latestClose = Number(insight?.latest_close);
   const previousClose = Number(insight?.previous_close);
-  const marketIsOpen = openSymbolsSet.has(symbol);
-  // 市場OPEN中: 現在価格 vs 直近終値 (当日の日中変化)
-  // 市場CLOSED: 直近終値 vs 前日終値 (当日セッションの変化)
-  const referenceClose = marketIsOpen
-    ? latestClose
-    : (Number.isFinite(previousClose) && previousClose > 0 ? previousClose : latestClose);
+  const fallbackReferenceClose = Number.isFinite(previousClose) && previousClose > 0
+    ? previousClose
+    : latestClose;
 
-  if (!Number.isFinite(priceNum) || priceNum <= 0 || !Number.isFinite(referenceClose) || referenceClose <= 0) {
+  if (!Number.isFinite(priceNum) || priceNum <= 0 || !Number.isFinite(fallbackReferenceClose) || fallbackReferenceClose <= 0) {
     return null;
   }
-  return ((priceNum - referenceClose) / referenceClose) * 100;
+  return ((priceNum - fallbackReferenceClose) / fallbackReferenceClose) * 100;
 }
 
 function ensureWatchItem(symbol) {
@@ -672,9 +655,23 @@ function ensureWatchItem(symbol) {
 }
 
 function computeWatchMetrics(symbol) {
+  const state = tabStateBySymbol.get(symbol);
+  const overview = state?.overview;
+  const overviewPrice = Number(overview?.price?.current);
+  const overviewChangePct = Number(overview?.price?.change_pct);
   const latest = latestRowsBySymbol.get(symbol);
-  const price = Number(latest?.price);
-  const pct = computeChangePct(symbol, latest?.price);
+  const insight = symbolInsightsBySymbol.get(symbol);
+  const cachedPrice = Number(latest?.price);
+  const insightPrice = Number(insight?.current_price);
+  const insightChangePct = Number(insight?.change_pct);
+  const price = (Number.isFinite(overviewPrice) && overviewPrice > 0)
+    ? overviewPrice
+    : ((Number.isFinite(cachedPrice) && cachedPrice > 0)
+      ? cachedPrice
+      : (Number.isFinite(insightPrice) && insightPrice > 0 ? insightPrice : null));
+  const pct = Number.isFinite(overviewChangePct)
+    ? overviewChangePct
+    : (Number.isFinite(price) ? computeChangePct(symbol, price, insight) : insightChangePct);
   return {
     price: price > 0 ? price : null,
     changePct: Number.isFinite(pct) ? pct : null,
@@ -1014,26 +1011,33 @@ async function loadSymbolInsights(symbols, refresh = false) {
       if (!symbol) return;
       const latestClose = Number(item?.latest_close);
       const previousClose = Number(item?.previous_close);
+      const currentPrice = Number(item?.current_price);
+      const referenceClose = Number(item?.reference_close);
+      const changePct = Number(item?.change_pct);
       const trend = (Array.isArray(item?.trend_30d) ? item.trend_30d : [])
         .map((point) => Number(point))
         .filter((num) => Number.isFinite(num));
 
       symbolInsightsBySymbol.set(symbol, {
+        current_price: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : null,
         latest_close: Number.isFinite(latestClose) ? latestClose : null,
         previous_close: Number.isFinite(previousClose) ? previousClose : null,
+        reference_close: Number.isFinite(referenceClose) && referenceClose > 0 ? referenceClose : null,
+        change_pct: Number.isFinite(changePct) ? changePct : null,
         trend_30d: trend,
       });
 
-      // 価格が未取得/0のときはスパークライン終値で表示を補完する
+      // 価格が未取得/0のときは quote 現在値を優先し、なければ終値で補完する
       const existingRow = latestRowsBySymbol.get(symbol);
       const hasValidPrice = Number(existingRow?.price) > 0;
-      if (!hasValidPrice && Number.isFinite(latestClose) && latestClose > 0) {
+      const fallbackPrice = (Number.isFinite(currentPrice) && currentPrice > 0) ? currentPrice : latestClose;
+      if (!hasValidPrice && Number.isFinite(fallbackPrice) && fallbackPrice > 0) {
         latestRowsBySymbol.set(symbol, {
           ...(existingRow ?? {}),
           symbol,
-          price: latestClose,
-          timestamp: item?.latest_close_date ?? existingRow?.timestamp ?? null,
-          source: existingRow?.source || "sparkline_close",
+          price: fallbackPrice,
+          timestamp: item?.updated_at ?? item?.latest_close_date ?? existingRow?.timestamp ?? null,
+          source: existingRow?.source || (Number.isFinite(currentPrice) && currentPrice > 0 ? "sparkline_quote" : "sparkline_close"),
         });
         saveWatchlistRowsCache();
       }
@@ -1665,6 +1669,27 @@ async function loadTabData(symbol, forceRefresh = false) {
       historical: historicalResp.result,
       loadedAt: Date.now(),
     });
+    const overviewPrice = Number(overviewResp.result?.price?.current);
+    if (Number.isFinite(overviewPrice) && overviewPrice > 0) {
+      upsertLatestRow(normalized, {
+        price: overviewPrice,
+        timestamp: overviewResp.result?.price?.updated_at ?? null,
+        source: overviewResp.result?.source ?? "security_overview",
+      }, false);
+      saveWatchlistRowsCache();
+    }
+    const existingInsight = symbolInsightsBySymbol.get(normalized) || {};
+    const overviewPreviousClose = Number(overviewResp.result?.price?.previous_close);
+    const overviewChangePct = Number(overviewResp.result?.price?.change_pct);
+    symbolInsightsBySymbol.set(normalized, {
+      ...existingInsight,
+      current_price: Number.isFinite(overviewPrice) && overviewPrice > 0 ? overviewPrice : (existingInsight.current_price ?? null),
+      reference_close: Number.isFinite(overviewPreviousClose) && overviewPreviousClose > 0
+        ? overviewPreviousClose
+        : (existingInsight.reference_close ?? null),
+      change_pct: Number.isFinite(overviewChangePct) ? overviewChangePct : (existingInsight.change_pct ?? null),
+    });
+    saveSymbolInsightsCache();
     const loadedPoints = Array.isArray(historicalResp.result?.points) ? historicalResp.result.points : [];
     if (loadedPoints.length >= 2) {
       applyChartRangePreset(normalized, loadedPoints, "1y");
@@ -1803,355 +1828,6 @@ function setPortfolioMessage(message, isError = false) {
   pfMessageEl.classList.toggle("error", Boolean(isError));
 }
 
-function setPfMlStatus(message, isError = false) {
-  if (!pfMlStatusEl) return;
-  pfMlStatusEl.textContent = message || "";
-  pfMlStatusEl.classList.toggle("error", Boolean(isError));
-}
-
-function setPfMlSummary(message) {
-  if (!pfMlSummaryEl) return;
-  pfMlSummaryEl.textContent = message || "";
-}
-
-function renderPfMlResults(rows) {
-  if (!pfMlResultsBody) return;
-  const safeRows = Array.isArray(rows) ? rows : [];
-  pfMlResultsBody.innerHTML = "";
-  if (safeRows.length === 0) {
-    const tr = document.createElement("tr");
-    const td = document.createElement("td");
-    td.colSpan = 6;
-    td.className = "pf-empty";
-    td.textContent = "No calculation yet";
-    tr.appendChild(td);
-    pfMlResultsBody.appendChild(tr);
-    return;
-  }
-
-  safeRows.forEach((item) => {
-    const tr = document.createElement("tr");
-    const q50SimpleReturn = Number(item?.q50_simple_return);
-    const expectedPnl = Number(item?.expected_pnl);
-    const cells = [
-      normalizeSymbol(item?.symbol),
-      Number.isFinite(Number(item?.quantity)) ? Number(item.quantity).toFixed(4).replace(/\.?0+$/, "") : "-",
-      Number.isFinite(Number(item?.last_price)) ? `$ ${formatMoney(Number(item.last_price))}` : "-",
-      Number.isFinite(q50SimpleReturn) ? formatSignedPercent(q50SimpleReturn * 100) : "-",
-      Number.isFinite(expectedPnl) ? formatSigned(expectedPnl, 2) : "-",
-      String(item?.status || "-"),
-    ];
-    cells.forEach((text, idx) => {
-      const td = document.createElement("td");
-      td.textContent = text;
-      if (idx === 3 || idx === 4) {
-        const value = idx === 3 ? q50SimpleReturn : expectedPnl;
-        td.classList.toggle("pf-positive", Number(value) > 0);
-        td.classList.toggle("pf-negative", Number(value) < 0);
-      }
-      tr.appendChild(td);
-    });
-    pfMlResultsBody.appendChild(tr);
-  });
-}
-
-function setPfMlActionState() {
-  const running = pfMlIsRunning;
-  if (pfMlRunBtn) pfMlRunBtn.disabled = running;
-  if (pfMlCancelBtn) pfMlCancelBtn.disabled = !running;
-  if (pfMlModelSearchInput) pfMlModelSearchInput.disabled = running;
-}
-
-function showPfMlModelDropdown() {
-  if (!pfMlModelDropdown) return;
-  pfMlModelDropdown.classList.remove("hidden");
-}
-
-function hidePfMlModelDropdown() {
-  if (!pfMlModelDropdown) return;
-  pfMlModelDropdown.classList.add("hidden");
-}
-
-function setPfMlActiveModel(modelId) {
-  const nextId = String(modelId || "").trim().toLowerCase();
-  const model = pfMlModels.find((item) => item.id === nextId);
-  if (!model) return;
-  pfMlActiveModelId = model.id;
-  if (pfMlModelPillEl) {
-    pfMlModelPillEl.textContent = `${model.name} (${model.status_label || "Ready"})`;
-  }
-  if (pfMlModelSearchInput) {
-    pfMlModelSearchInput.value = model.name;
-  }
-}
-
-function pickPfMlModelCandidates(query) {
-  const needle = String(query || "").trim().toLowerCase();
-  const source = Array.isArray(pfMlModels) ? pfMlModels : [];
-  if (!needle) return source.slice(0, MAX_DROPDOWN_ITEMS);
-  return source.filter((item) => {
-    const id = String(item?.id || "").toLowerCase();
-    const name = String(item?.name || "").toLowerCase();
-    return id.includes(needle) || name.includes(needle);
-  }).slice(0, MAX_DROPDOWN_ITEMS);
-}
-
-function renderPfMlModelDropdown() {
-  if (!pfMlModelDropdown) return;
-  pfMlModelDropdown.innerHTML = "";
-  const candidates = pickPfMlModelCandidates(pfMlModelSearchInput?.value || "");
-  if (pfMlModels.length === 0) {
-    const row = document.createElement("div");
-    row.className = "dropdown-empty";
-    row.textContent = "Model list is not loaded yet.";
-    pfMlModelDropdown.appendChild(row);
-    showPfMlModelDropdown();
-    return;
-  }
-  if (candidates.length === 0) {
-    const row = document.createElement("div");
-    row.className = "dropdown-empty";
-    row.textContent = "No matching models";
-    pfMlModelDropdown.appendChild(row);
-    showPfMlModelDropdown();
-    return;
-  }
-  candidates.forEach((item) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "dropdown-item";
-    btn.dataset.modelId = item.id;
-    btn.textContent = `${item.name} | ${item.id}`;
-    pfMlModelDropdown.appendChild(btn);
-  });
-  showPfMlModelDropdown();
-}
-
-async function loadPfMlModels() {
-  try {
-    const { response, result } = await fetchJson("/api/ml/models");
-    if (!response.ok) return;
-    const rawModels = Array.isArray(result?.models) ? result.models : [];
-    const usable = rawModels
-      .filter((item) => String(item?.status || "").toLowerCase() === "ready")
-      .map((item) => ({
-        id: String(item?.id || "").trim().toLowerCase(),
-        name: String(item?.name || "").trim(),
-        status_label: String(item?.status_label || "Ready").trim(),
-      }))
-      .filter((item) => item.id && PF_ML_JOB_START_ENDPOINT[item.id]);
-    if (usable.length > 0) {
-      pfMlModels = usable;
-      if (!pfMlModels.some((item) => item.id === pfMlActiveModelId)) {
-        pfMlActiveModelId = pfMlModels[0].id;
-      }
-      setPfMlActiveModel(pfMlActiveModelId);
-    }
-  } catch (_error) {
-    // Keep default fallback model selection.
-  }
-}
-
-function extractQ50LogReturnFromJobPayload(jobPayload) {
-  const result = jobPayload?.result;
-  const nextDist = result?.next_day_forecast || result?.next_day_distribution;
-  const q50Return = Number(nextDist?.q50_return);
-  if (Number.isFinite(q50Return)) return q50Return;
-  const taus = Array.isArray(nextDist?.taus) ? nextDist.taus : [];
-  const returnQuantiles = Array.isArray(nextDist?.return_quantiles) ? nextDist.return_quantiles : [];
-  if (taus.length > 0 && taus.length === returnQuantiles.length) {
-    let bestIdx = 0;
-    let bestDist = Number.POSITIVE_INFINITY;
-    taus.forEach((tauRaw, idx) => {
-      const tau = Number(tauRaw);
-      if (!Number.isFinite(tau)) return;
-      const dist = Math.abs(tau - 0.5);
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestIdx = idx;
-      }
-    });
-    const fallbackQ50 = Number(returnQuantiles[bestIdx]);
-    if (Number.isFinite(fallbackQ50)) return fallbackQ50;
-  }
-  return null;
-}
-
-async function pollMlJobStatus(jobId) {
-  for (let attempt = 0; attempt < 1200; attempt += 1) {
-    if (!jobId) {
-      throw new Error("Missing ML job id.");
-    }
-    const { response, result } = await fetchJson(`/api/ml/jobs/${encodeURIComponent(jobId)}`);
-    if (!response.ok) {
-      throw new Error(result?.detail || "Failed to fetch ML job status.");
-    }
-    const status = String(result?.status || "").toLowerCase();
-    const message = String(result?.message || "").trim();
-    if (message) {
-      setPfMlStatus(message);
-    }
-    if (["completed", "failed", "cancelled"].includes(status)) {
-      return result;
-    }
-    await new Promise((resolve) => window.setTimeout(resolve, 1000));
-  }
-  throw new Error("ML job timeout.");
-}
-
-async function requestCancelActivePfMlJob() {
-  if (!pfMlActiveJobId) return;
-  try {
-    await fetchJson(`/api/ml/jobs/${encodeURIComponent(pfMlActiveJobId)}/cancel`, { method: "POST" });
-  } catch (_error) {
-    // Ignore cancel API errors; polling loop will detect terminal state or continue.
-  }
-}
-
-async function runPfMlExpectedReturnCalculation() {
-  if (pfMlIsRunning) return;
-  const activeModel = pfMlModels.find((item) => item.id === pfMlActiveModelId);
-  if (!activeModel || !PF_ML_JOB_START_ENDPOINT[activeModel.id]) {
-    setPfMlStatus("利用可能なモデルがありません。", true);
-    return;
-  }
-
-  const view = buildPortfolioView(portfolioBaseState);
-  const positions = Array.isArray(view?.positions) ? view.positions : [];
-  const targets = positions.filter((item) => {
-    return item?.symbol && Number.isFinite(Number(item?.quantity)) && Number(item.quantity) !== 0 && Number.isFinite(Number(item?.last_price));
-  });
-  if (targets.length === 0) {
-    setPfMlStatus("評価対象のポジションがありません。", true);
-    renderPfMlResults([]);
-    setPfMlSummary("");
-    return;
-  }
-
-  pfMlIsRunning = true;
-  pfMlCancelRequested = false;
-  pfMlActiveJobId = "";
-  setPfMlActionState();
-  setPfMlStatus(`計算開始: ${activeModel.name} / ${targets.length}銘柄`);
-  setPfMlSummary("");
-  renderPfMlResults([]);
-
-  const rows = [];
-  let totalExpectedPnl = 0;
-  let totalGrossExposure = 0;
-
-  try {
-    for (let idx = 0; idx < targets.length; idx += 1) {
-      const position = targets[idx];
-      const symbol = normalizeSymbol(position.symbol);
-      const quantity = Number(position.quantity);
-      const lastPrice = Number(position.last_price);
-      totalGrossExposure += Math.abs(quantity * lastPrice);
-
-      if (pfMlCancelRequested) {
-        rows.push({
-          symbol,
-          quantity,
-          last_price: lastPrice,
-          q50_simple_return: null,
-          expected_pnl: null,
-          status: "cancelled",
-        });
-        continue;
-      }
-
-      setPfMlStatus(`[${idx + 1}/${targets.length}] ${symbol}: job queued...`);
-      const { response: startResponse, result: startResult } = await fetchJson(PF_ML_JOB_START_ENDPOINT[activeModel.id], {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol }),
-      });
-      if (!startResponse.ok) {
-        rows.push({
-          symbol,
-          quantity,
-          last_price: lastPrice,
-          q50_simple_return: null,
-          expected_pnl: null,
-          status: startResult?.detail || "start_failed",
-        });
-        continue;
-      }
-
-      const jobId = String(startResult?.job_id || "");
-      pfMlActiveJobId = jobId;
-      const jobResult = await pollMlJobStatus(jobId);
-      pfMlActiveJobId = "";
-      const terminalStatus = String(jobResult?.status || "").toLowerCase();
-      if (terminalStatus === "cancelled") {
-        pfMlCancelRequested = true;
-        rows.push({
-          symbol,
-          quantity,
-          last_price: lastPrice,
-          q50_simple_return: null,
-          expected_pnl: null,
-          status: "cancelled",
-        });
-        continue;
-      }
-      if (terminalStatus !== "completed") {
-        rows.push({
-          symbol,
-          quantity,
-          last_price: lastPrice,
-          q50_simple_return: null,
-          expected_pnl: null,
-          status: jobResult?.error || terminalStatus || "failed",
-        });
-        continue;
-      }
-
-      const q50LogReturn = extractQ50LogReturnFromJobPayload(jobResult);
-      if (!Number.isFinite(q50LogReturn)) {
-        rows.push({
-          symbol,
-          quantity,
-          last_price: lastPrice,
-          q50_simple_return: null,
-          expected_pnl: null,
-          status: "q50_unavailable",
-        });
-        continue;
-      }
-
-      const q50SimpleReturn = Math.expm1(q50LogReturn);
-      const expectedPnl = quantity * lastPrice * q50SimpleReturn;
-      totalExpectedPnl += expectedPnl;
-      rows.push({
-        symbol,
-        quantity,
-        last_price: lastPrice,
-        q50_simple_return: q50SimpleReturn,
-        expected_pnl: expectedPnl,
-        status: "ok",
-      });
-    }
-  } catch (error) {
-    setPfMlStatus(error instanceof Error ? error.message : "ML expected-return calculation failed.", true);
-  } finally {
-    pfMlIsRunning = false;
-    pfMlActiveJobId = "";
-    setPfMlActionState();
-  }
-
-  renderPfMlResults(rows);
-  if (pfMlCancelRequested) {
-    setPfMlStatus("計算を停止しました。");
-  } else {
-    setPfMlStatus("計算が完了しました。");
-  }
-  const totalExpectedPct = totalGrossExposure > 0 ? (totalExpectedPnl / totalGrossExposure) * 100 : null;
-  setPfMlSummary(
-    `Model: ${activeModel.name} | Expected PnL(q50): ${formatSigned(totalExpectedPnl, 2)} | Expected Return(q50): ${formatSignedPercent(totalExpectedPct)}`
-  );
-}
-
 function buildPortfolioView(baseState) {
   if (!baseState || typeof baseState !== "object") return null;
   const initialCash = Number(baseState.initial_cash);
@@ -2228,6 +1904,7 @@ function buildPortfolioView(baseState) {
 }
 
 function renderPortfolio() {
+  if (!pfCashEl || !pfEquityEl || !pfUnrealizedPnlEl || !pfReturnEl || !pfPositionsBody || !pfTradesBody) return;
   const view = buildPortfolioView(portfolioBaseState);
   if (!view) return;
 
@@ -2332,17 +2009,6 @@ async function loadPortfolio() {
   }
 }
 
-async function loadPortfolioSilent() {
-  try {
-    const { response, result } = await fetchJson("/api/portfolio");
-    if (!response.ok) return;
-    portfolioBaseState = result;
-    renderPortfolio();
-  } catch (_error) {
-    // silent – periodic refresh, do not show error message
-  }
-}
-
 symbolSearchInput.addEventListener("focus", () => {
   renderDropdown();
 });
@@ -2383,9 +2049,6 @@ symbolDropdown.addEventListener("click", async (event) => {
 document.addEventListener("click", (event) => {
   if (!symbolSearchArea.contains(event.target)) {
     hideDropdown();
-  }
-  if (pfMlModelSearchArea && !pfMlModelSearchArea.contains(event.target)) {
-    hidePfMlModelDropdown();
   }
 });
 
@@ -2654,56 +2317,6 @@ if (pfResetBtn) {
   });
 }
 
-if (pfMlModelSearchInput) {
-  pfMlModelSearchInput.addEventListener("focus", () => {
-    renderPfMlModelDropdown();
-  });
-  pfMlModelSearchInput.addEventListener("input", () => {
-    renderPfMlModelDropdown();
-  });
-  pfMlModelSearchInput.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      hidePfMlModelDropdown();
-      return;
-    }
-    if (event.key === "Enter") {
-      event.preventDefault();
-      const first = pfMlModelDropdown?.querySelector(".dropdown-item");
-      if (!first) return;
-      setPfMlActiveModel(first.dataset.modelId);
-      hidePfMlModelDropdown();
-    }
-  });
-}
-
-if (pfMlModelDropdown) {
-  pfMlModelDropdown.addEventListener("mousedown", (event) => {
-    event.preventDefault();
-  });
-  pfMlModelDropdown.addEventListener("click", (event) => {
-    const button = event.target.closest(".dropdown-item");
-    if (!button) return;
-    setPfMlActiveModel(button.dataset.modelId);
-    hidePfMlModelDropdown();
-    pfMlModelSearchInput?.focus();
-  });
-}
-
-if (pfMlRunBtn) {
-  pfMlRunBtn.addEventListener("click", async () => {
-    await runPfMlExpectedReturnCalculation();
-  });
-}
-
-if (pfMlCancelBtn) {
-  pfMlCancelBtn.addEventListener("click", async () => {
-    if (!pfMlIsRunning) return;
-    pfMlCancelRequested = true;
-    setPfMlStatus("停止リクエストを送信中...");
-    await requestCancelActivePfMlJob();
-  });
-}
-
 setCatalogMeta("Loading saved symbol catalog...");
 restoreSymbolInsightsCache();
 restoreWatchlistRowsCache();
@@ -2759,9 +2372,6 @@ void hydrateInitialWatchlist().finally(() => {
 });
 startMarketClock();
 loadPortfolio();
-setPfMlActiveModel(pfMlActiveModelId);
-setPfMlActionState();
-loadPfMlModels();
 enableContextualScrollbar(watchlistEl);
 enableContextualScrollbar(centerPaneEl);
 renderActiveTab();
@@ -2788,29 +2398,34 @@ async function refreshWatchlistData() {
         refreshed.add(symbol);
         const latestClose = Number(item?.latest_close);
         const previousClose = Number(item?.previous_close);
+        const currentPrice = Number(item?.current_price);
+        const referenceClose = Number(item?.reference_close);
+        const changePct = Number(item?.change_pct);
         const trend = (Array.isArray(item?.trend_30d) ? item.trend_30d : [])
           .map((point) => Number(point))
           .filter((num) => Number.isFinite(num));
 
         symbolInsightsBySymbol.set(symbol, {
+          current_price: Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : null,
           latest_close: Number.isFinite(latestClose) ? latestClose : null,
           previous_close: Number.isFinite(previousClose) ? previousClose : null,
+          reference_close: Number.isFinite(referenceClose) && referenceClose > 0 ? referenceClose : null,
+          change_pct: Number.isFinite(changePct) ? changePct : null,
           trend_30d: trend,
         });
         saveSymbolInsightsCache();
 
-        // 現在価格が未取得の場合 → sparkline の latest_close を代替として使用
-        // (市場CLOSED時は latest_close ≈ 現在価格)
-        // SSEがすでに有効な価格を持っている場合は上書きしない
+        // 現在価格が未取得の場合は quote 現在値を優先し、なければ終値で補完する。
         const existingRow = latestRowsBySymbol.get(symbol);
         const hasValidPrice = existingRow && Number(existingRow.price) > 0;
-        if (!hasValidPrice && Number.isFinite(latestClose) && latestClose > 0) {
+        const fallbackPrice = (Number.isFinite(currentPrice) && currentPrice > 0) ? currentPrice : latestClose;
+        if (!hasValidPrice && Number.isFinite(fallbackPrice) && fallbackPrice > 0) {
           latestRowsBySymbol.set(symbol, {
             ...(existingRow ?? {}),
             symbol,
-            price: latestClose,
-            timestamp: item.latest_close_date ?? null,
-            source: "sparkline_close",
+            price: fallbackPrice,
+            timestamp: item.updated_at ?? item.latest_close_date ?? null,
+            source: Number.isFinite(currentPrice) && currentPrice > 0 ? "sparkline_quote" : "sparkline_close",
           });
           saveWatchlistRowsCache();
         }

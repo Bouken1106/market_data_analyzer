@@ -1674,6 +1674,18 @@ class MarketDataQueriesMixin:
             return None
 
         values.sort(key=lambda item: item[0], reverse=True)
+        quote = await self._fetch_quote(client, symbol)
+        current_price = self._pick_float(quote, "close", "price")
+        reference_close = self._pick_float(quote, "previous_close", "prev_close")
+        updated_at = self._best_updated_at(quote, [], [])
+        if reference_close is None and len(values) >= 2:
+            reference_close = values[1][1]
+        change_abs = None
+        change_pct = None
+        if current_price is not None and reference_close is not None and reference_close > 0:
+            change_abs = current_price - reference_close
+            change_pct = (change_abs / reference_close) * 100
+
         today_iso = date.today().isoformat()
         start_index = 1 if values[0][0].startswith(today_iso) and len(values) >= 2 else 0
         completed = values[start_index:]
@@ -1693,6 +1705,11 @@ class MarketDataQueriesMixin:
             "latest_close_date": completed[0][0],
             "previous_close": previous_completed_close,
             "previous_close_date": completed[1][0] if len(completed) >= 2 else None,
+            "current_price": current_price,
+            "reference_close": reference_close,
+            "change_abs": change_abs,
+            "change_pct": change_pct,
+            "updated_at": updated_at,
             "trend_30d": trend_values,
             "trend_from": recent_asc[0][0],
             "trend_to": recent_asc[-1][0],

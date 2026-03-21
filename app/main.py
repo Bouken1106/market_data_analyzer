@@ -19,21 +19,18 @@ from .config import (
     MAX_BASIC_SYMBOLS,
     PAPER_INITIAL_CASH,
     PAPER_PORTFOLIO_CACHE_PATH,
-    STOCK_ML_PAGE_STATE_CACHE_PATH,
     SYMBOL_CATALOG_CACHE_PATH,
     SYMBOL_CATALOG_TTL_SEC,
     TWELVE_DATA_API_KEY,
     UI_STATE_CACHE_PATH,
 )
 from .hub import MarketDataHub
-from .ml.job_store import MlJobStore
 from .routes import init_routes, router
 from .stores import (
     FmpReferenceStore,
     FullDailyHistoryStore,
     LastPriceStore,
     PaperPortfolioStore,
-    StockMlPageStore,
     SymbolCatalogStore,
     UiStateStore,
 )
@@ -44,16 +41,7 @@ STATIC_DIR = BASE_DIR / "static"
 NO_CACHE_PATHS = frozenset(
     {
         "/",
-        "/market-data-lab",
-        "/ml-lab",
-        "/static/app.js",
         "/static/app.terminal.js",
-        "/static/market_data_lab.js",
-        "/static/market_data_lab.html",
-        "/static/ml_lab.js",
-        "/static/page_menu.js",
-        "/static/app.monitor.20260211b.js",
-        "/static/page_menu.20260211b.js",
         "/static/styles.css",
         "/static/index.html",
     }
@@ -64,10 +52,8 @@ NO_CACHE_PATHS = frozenset(
 class AppServices:
     hub: MarketDataHub
     symbol_catalog_store: SymbolCatalogStore
-    ml_job_store: MlJobStore
     paper_portfolio_store: PaperPortfolioStore
     ui_state_store: UiStateStore
-    stock_ml_page_store: StockMlPageStore
 
 
 def resolve_default_symbols() -> list[str]:
@@ -119,9 +105,7 @@ def build_services() -> AppServices:
         cache_path=SYMBOL_CATALOG_CACHE_PATH,
         ttl_sec=SYMBOL_CATALOG_TTL_SEC,
     )
-    ml_job_store = MlJobStore(max_jobs=120)
     ui_state_store = UiStateStore(cache_path=UI_STATE_CACHE_PATH)
-    stock_ml_page_store = StockMlPageStore(cache_path=STOCK_ML_PAGE_STATE_CACHE_PATH)
     initial_symbols = resolve_initial_symbols(ui_state_store)
 
     hub = MarketDataHub(
@@ -137,10 +121,8 @@ def build_services() -> AppServices:
     return AppServices(
         hub=hub,
         symbol_catalog_store=symbol_catalog_store,
-        ml_job_store=ml_job_store,
         paper_portfolio_store=paper_portfolio_store,
         ui_state_store=ui_state_store,
-        stock_ml_page_store=stock_ml_page_store,
     )
 
 
@@ -175,10 +157,8 @@ def create_app(services: AppServices | None = None) -> FastAPI:
         app,
         hub=resolved_services.hub,
         symbol_catalog_store=resolved_services.symbol_catalog_store,
-        ml_job_store=resolved_services.ml_job_store,
         paper_portfolio_store=resolved_services.paper_portfolio_store,
         ui_state_store=resolved_services.ui_state_store,
-        stock_ml_page_store=resolved_services.stock_ml_page_store,
     )
     register_no_cache_middleware(app)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

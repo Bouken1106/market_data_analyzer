@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Market Data Analyzer</title>
+  <title>Live Monitor</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="/static/styles.css?v=20260219a" />
@@ -12,27 +12,15 @@
 
 <body class="monitor-page terminal-page">
   <nav class="nav-tabs" aria-label="Main navigation">
-    <a href="/" class="nav-tab" data-path="/">
-      <span class="nav-tab-icon">📊</span> Monitor
-    </a>
-    <a href="/market-data-lab" class="nav-tab" data-path="/market-data-lab">
-      <span class="nav-tab-icon">🧭</span> Market Data
-    </a>
-    <a href="/ml-lab" class="nav-tab" data-path="/ml-lab">
-      <span class="nav-tab-icon">🧠</span> ML Lab
-    </a>
-    <a href="/compare-lab" class="nav-tab" data-path="/compare-lab">
-      <span class="nav-tab-icon">⚖️</span> Compare
-    </a>
-    <a href="/strategy-lab" class="nav-tab" data-path="/strategy-lab">
-      <span class="nav-tab-icon">🎯</span> Strategy
+    <a href="/" class="nav-tab active" data-path="/">
+      <span class="nav-tab-icon">📊</span> Live Monitor
     </a>
   </nav>
 
   <main class="terminal-layout">
-    <section class="terminal-pane watch-pane" aria-label="ウィックリスト">
+    <section class="terminal-pane watch-pane" aria-label="ウォッチリスト">
       <header class="pane-head">
-        <h1>ウィックリスト</h1>
+        <h1>ウォッチリスト</h1>
         <span class="pane-sub">最大8銘柄</span>
         <button id="watchlist-refresh" type="button" class="minor-action watchlist-refresh-btn"
           title="株価と前日比を最新データで更新">↻ 更新</button>
@@ -57,7 +45,7 @@
         <p id="watch-llm-meta" class="watch-llm-meta">モデル: -</p>
       </details>
 
-      <div id="watchlist-head" class="watchlist-head" aria-label="ウィックリスト列ヘッダー">
+      <div id="watchlist-head" class="watchlist-head" aria-label="ウォッチリスト列ヘッダー">
         <button type="button" class="watch-sort-btn watch-sort-symbol" data-sort-key="symbol">銘柄</button>
         <button type="button" class="watch-sort-btn" data-sort-key="price">現在値</button>
         <button type="button" class="watch-sort-btn" data-sort-key="changePct">前日比%</button>
@@ -142,126 +130,88 @@
 
     <div class="trade-column">
       <section class="terminal-pane trade-pane" aria-label="仮想トレード">
-      <header class="pane-head">
-        <h2>仮想トレード</h2>
-        <p class="pane-sub">Paper Portfolio</p>
-      </header>
+        <header class="pane-head">
+          <h2>仮想トレード</h2>
+          <p class="pane-sub">Paper Portfolio</p>
+        </header>
 
-      <div class="portfolio-metrics terminal-portfolio-metrics">
-        <div class="status-box">
-          <span class="label">Cash</span>
-          <span id="pf-cash">-</span>
-        </div>
-        <div class="status-box">
-          <span class="label">Equity</span>
-          <span id="pf-equity">-</span>
-        </div>
-        <div class="status-box">
-          <span class="label">Unrealized</span>
-          <span id="pf-unrealized-pnl">-</span>
-        </div>
-        <div class="status-box">
-          <span class="label">Return</span>
-          <span id="pf-return">-</span>
-        </div>
-      </div>
-
-      <form id="pf-trade-form" class="portfolio-trade-form terminal-trade-form">
-        <label for="pf-symbol">Symbol</label>
-        <input id="pf-symbol" name="symbol" type="text" placeholder="AAPL" maxlength="15" required />
-        <label for="pf-side">Side</label>
-        <select id="pf-side" name="side">
-          <option value="buy">Buy</option>
-          <option value="sell">Sell</option>
-          <option value="short">Short</option>
-          <option value="cover">Cover</option>
-        </select>
-        <label for="pf-quantity">Quantity</label>
-        <input id="pf-quantity" name="quantity" type="number" min="0.0001" step="0.0001" placeholder="10" required />
-        <label for="pf-price">Price (optional)</label>
-        <input id="pf-price" name="price" type="number" min="0.0001" step="0.0001" placeholder="blank = market" />
-        <button id="pf-submit" type="submit">Submit</button>
-        <button id="pf-reset" type="button" class="danger-action">Reset</button>
-      </form>
-      <p id="pf-message" class="hint"></p>
-
-      <div class="portfolio-table compact-table">
-        <h3>Positions</h3>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Symbol</th>
-                <th>Qty</th>
-                <th>Avg Cost</th>
-                <th>Last</th>
-                <th>Unrealized</th>
-              </tr>
-            </thead>
-            <tbody id="pf-positions-body"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <div class="portfolio-table compact-table">
-        <h3>Recent Trades</h3>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Date/Time</th>
-                <th>Symbol</th>
-                <th>Side</th>
-                <th>Price</th>
-              </tr>
-            </thead>
-            <tbody id="pf-trades-body"></tbody>
-          </table>
-        </div>
-      </div>
-
-      <section class="portfolio-table compact-table pf-ml-estimator" aria-label="ML期待リターン">
-        <h3>ML Expected Return (Next Day q50)</h3>
-        <div class="pf-ml-controls">
-          <label for="pf-ml-model-search">Model</label>
-          <div id="pf-ml-model-search-area" class="symbol-search-area">
-            <input id="pf-ml-model-search" type="text" placeholder="Search model: lstm, patch..." autocomplete="off" />
-            <div id="pf-ml-model-dropdown" class="symbol-dropdown hidden"></div>
+        <div class="portfolio-metrics terminal-portfolio-metrics">
+          <div class="status-box">
+            <span class="label">Cash</span>
+            <span id="pf-cash">-</span>
           </div>
-          <div class="row pf-ml-actions">
-            <span id="pf-ml-model-pill" class="pill">-</span>
-            <button id="pf-ml-run" type="button">Calc Expected Return</button>
-            <button id="pf-ml-cancel" type="button" class="danger-action" disabled>停止</button>
+          <div class="status-box">
+            <span class="label">Equity</span>
+            <span id="pf-equity">-</span>
           </div>
-          <p id="pf-ml-status" class="hint">現在ポジションを対象に、次営業日のq50リターンを評価します。</p>
-          <p id="pf-ml-summary" class="hint"></p>
+          <div class="status-box">
+            <span class="label">Unrealized</span>
+            <span id="pf-unrealized-pnl">-</span>
+          </div>
+          <div class="status-box">
+            <span class="label">Return</span>
+            <span id="pf-return">-</span>
+          </div>
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Symbol</th>
-                <th>Qty</th>
-                <th>Last</th>
-                <th>q50 Return</th>
-                <th>Expected PnL</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody id="pf-ml-results-body">
-              <tr>
-                <td colspan="6" class="pf-empty">No calculation yet</td>
-              </tr>
-            </tbody>
-          </table>
+
+        <form id="pf-trade-form" class="portfolio-trade-form terminal-trade-form">
+          <label for="pf-symbol">Symbol</label>
+          <input id="pf-symbol" name="symbol" type="text" placeholder="AAPL" maxlength="15" required />
+          <label for="pf-side">Side</label>
+          <select id="pf-side" name="side">
+            <option value="buy">Buy</option>
+            <option value="sell">Sell</option>
+            <option value="short">Short</option>
+            <option value="cover">Cover</option>
+          </select>
+          <label for="pf-quantity">Quantity</label>
+          <input id="pf-quantity" name="quantity" type="number" min="0.0001" step="0.0001" placeholder="10" required />
+          <label for="pf-price">Price (optional)</label>
+          <input id="pf-price" name="price" type="number" min="0.0001" step="0.0001" placeholder="blank = market" />
+          <button id="pf-submit" type="submit">Submit</button>
+          <button id="pf-reset" type="button" class="danger-action">Reset</button>
+        </form>
+        <p id="pf-message" class="hint"></p>
+
+        <div class="portfolio-table compact-table">
+          <h3>Positions</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Qty</th>
+                  <th>Avg Cost</th>
+                  <th>Last</th>
+                  <th>Unrealized</th>
+                </tr>
+              </thead>
+              <tbody id="pf-positions-body"></tbody>
+            </table>
+          </div>
         </div>
-      </section>
+
+        <div class="portfolio-table compact-table">
+          <h3>Recent Trades</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date/Time</th>
+                  <th>Symbol</th>
+                  <th>Side</th>
+                  <th>Price</th>
+                </tr>
+              </thead>
+              <tbody id="pf-trades-body"></tbody>
+            </table>
+          </div>
+        </div>
       </section>
     </div>
   </main>
 
   <script src="/static/app.terminal.js?v=20260219i" defer></script>
-  <script src="/static/page_menu.20260211b.js?v=20260213i" defer></script>
 </body>
 
 </html>
