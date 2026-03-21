@@ -34,6 +34,8 @@ from ..config import (
     HISTORICAL_INTERVAL,
     HISTORICAL_MAX_POINTS,
     HISTORICAL_MAX_YEARS,
+    JQUANTS_API_KEY,
+    JQUANTS_DAILY_BARS_URL,
     LOGGER,
     MAX_BASIC_SYMBOLS,
     ML_HISTORY_MAX_MONTHS,
@@ -147,6 +149,23 @@ class MarketDataQueriesMixin:
         start_date: str,
         end_date: str,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        if self._should_use_jquants_for_symbol(symbol, interval):
+            points = await self._fetch_series_jquants(
+                client=client,
+                symbol=symbol,
+                interval=interval,
+                outputsize=outputsize,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            detail = {
+                "mode": "jquants",
+                "dataset": "historical_daily",
+                "provider": "jquants",
+                "points": len(points),
+            }
+            return points, detail
+
         if self.provider == "both":
             td_task = self._fetch_series_twelvedata(
                 client=client,
@@ -973,6 +992,15 @@ class MarketDataQueriesMixin:
         start_date: str | None = None,
         end_date: str | None = None,
     ) -> list[dict[str, Any]]:
+        if self._should_use_jquants_for_symbol(symbol, interval):
+            return await self._fetch_series_jquants(
+                client=client,
+                symbol=symbol,
+                interval=interval,
+                outputsize=outputsize,
+                start_date=start_date,
+                end_date=end_date,
+            )
         if self.provider == "both":
             return await self._fetch_series_both(
                 client=client,
@@ -999,6 +1027,95 @@ class MarketDataQueriesMixin:
             start_date=start_date,
             end_date=end_date,
         )
+
+    def _should_use_jquants_for_symbol(self, symbol: str, interval: str) -> bool:
+        if not JQUANTS_API_KEY:
+            return False
+        if str(interval or "").strip().lower() not in {"1day", "1d", "day"}:
+            return False
+        return infer_country_from_symbol(symbol) == "JAPAN" and self._normalize_jquants_code(symbol) is not None
+
+    @staticmethod
+    def _normalize_jquants_code(symbol: str) -> str | None:
+        normalized = str(symbol or "").strip().upper()
+        if normalized.endswith(".T"):
+            normalized = normalized[:-2]
+        normalized = normalized.strip()
+        if normalized.isdigit() and len(normalized) in {4, 5}:
+            return normalized
+        return None
+
+    async def _fetch_series_jquants(
+        self,
+        client: httpx.AsyncClient,
+        symbol: str,
+        interval: str,
+        outputsize: int,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        del outputsize
+        if str(interval or "").strip().lower() not in {"1day", "1d", "day"}:
+            return []
+
+        code = self._normalize_jquants_code(symbol)
+        if not code or not JQUANTS_API_KEY:
+            return []
+
+        headers = {"x-api-key": JQUANTS_API_KEY}
+        params: dict[str, Any] = {"code": code}
+        if start_date:
+            params["from"] = start_date
+        if end_date:
+            params["to"] = end_date
+
+        points: list[dict[str, Any]] = []
+        pagination_key: str | None = None
+        while True:
+            request_params = dict(params)
+            if pagination_key:
+                request_params["pagination_key"] = pagination_key
+
+            try:
+                response = await client.get(JQUANTS_DAILY_BARS_URL, params=request_params, headers=headers)
+                payload = response.json()
+            except Exception as exc:
+                LOGGER.warning("J-Quants daily bars fetch failed for %s: %s", symbol, exc)
+                return []
+
+            if response.status_code >= 400:
+                LOGGER.warning("J-Quants daily bars API error for %s: %s", symbol, payload)
+                return []
+
+            values = None
+            if isinstance(payload, dict):
+                for key in ("daily_quotes", "quotes", "bars", "dailyBars"):
+                    candidate = payload.get(key)
+                    if isinstance(candidate, list):
+                        values = candidate
+                        break
+            if not isinstance(values, list):
+                return []
+
+            for item in values:
+                point = normalize_ohlcv_point(
+                    item,
+                    timestamp_keys=("Date", "date"),
+                    open_keys=("Open", "open", "AdjustmentOpen", "adjustment_open"),
+                    high_keys=("High", "high", "AdjustmentHigh", "adjustment_high"),
+                    low_keys=("Low", "low", "AdjustmentLow", "adjustment_low"),
+                    close_keys=("Close", "close", "AdjustmentClose", "adjustment_close"),
+                    volume_keys=("Volume", "volume", "AdjustmentVolume", "adjustment_volume"),
+                    source="jquants",
+                )
+                if point is not None:
+                    points.append(point)
+
+            pagination_key = payload.get("pagination_key") if isinstance(payload, dict) else None
+            if not pagination_key:
+                break
+
+        return sorted(points, key=lambda item: str(item.get("t") or ""))
 
     async def _fetch_series_twelvedata(
         self,

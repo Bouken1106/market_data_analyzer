@@ -59,6 +59,7 @@ if DATA_PROVIDER not in SUPPORTED_DATA_PROVIDERS:
 
 TWELVE_DATA_API_KEY = os.getenv("TWELVE_DATA_API_KEY", "").strip()
 FMP_API_KEY = os.getenv("FMP_API_KEY", "").strip()
+JQUANTS_API_KEY = os.getenv("JQUANTS_API_KEY", "").strip()
 if DATA_PROVIDER == "twelvedata":
     API_KEY = TWELVE_DATA_API_KEY
 elif DATA_PROVIDER == "fmp":
@@ -93,6 +94,12 @@ FMP_QUOTE_URL = "https://financialmodelingprep.com/stable/quote"
 FMP_STOCK_LIST_URL = "https://financialmodelingprep.com/stable/stock-list"
 FMP_STOCK_LIST_LEGACY_URL = "https://financialmodelingprep.com/api/v3/stock/list"
 FMP_HISTORICAL_EOD_URL = "https://financialmodelingprep.com/stable/historical-price-eod/full"
+
+# ---------------------------------------------------------------------------
+# J-Quants API URLs
+# ---------------------------------------------------------------------------
+
+JQUANTS_DAILY_BARS_URL = "https://api.jquants.com/v2/equities/bars/daily"
 
 # ---------------------------------------------------------------------------
 # Rate-limiting / budget

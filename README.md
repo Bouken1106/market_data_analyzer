@@ -1,6 +1,6 @@
-# Market Data Analyzer (Twelve Data / FMP Free)
+# Market Data Analyzer (Twelve Data / FMP / J-Quants)
 
-Twelve Data の **Basic プラン**または Financial Modeling Prep の **Free プラン**を使って、米国株データを取得するローカルシステムです。
+Twelve Data の **Basic プラン**、Financial Modeling Prep の **Free プラン**、J-Quants の **Free プラン**を使って、米国株と日本株の日足データを取得するローカルシステムです。
 
 - 通常時: WebSocket で価格更新を受信
 - 接続不安定時: REST `/price` へ自動フォールバック
@@ -10,6 +10,7 @@ Twelve Data の **Basic プラン**または Financial Modeling Prep の **Free 
 
 - Python 3.11 or 3.12（`torch==2.5.1` のため 3.13 は未対応）
 - Twelve Data API キー または FMP API キー
+- 日本株の日足を取得する場合は J-Quants API キー
 - Basic プラン想定（WebSocket trial 枠と API クレジット制限に準拠）
 - 対応OS: Ubuntu（WSL 含む）/ macOS（Intel, Apple Silicon）
 
@@ -51,6 +52,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup_windows.ps1
 MARKET_DATA_PROVIDER=twelvedata
 TWELVE_DATA_API_KEY=your_twelve_data_api_key
 FMP_API_KEY=your_financial_modeling_prep_api_key
+JQUANTS_API_KEY=your_jquants_v2_api_key
 DEFAULT_SYMBOLS=AAPL,MSFT,NVDA,AMZN,GOOGL
 API_LIMIT_PER_MIN=8
 API_LIMIT_PER_DAY=800
@@ -88,8 +90,15 @@ STOCK_ML_PAGE_ROLE=admin
 - `MARKET_DATA_PROVIDER=twelvedata` のとき `TWELVE_DATA_API_KEY` が必須
 - `MARKET_DATA_PROVIDER=fmp` のとき `FMP_API_KEY` が必須
 - `MARKET_DATA_PROVIDER=both` のとき `TWELVE_DATA_API_KEY` と `FMP_API_KEY` が両方必須
+- `JQUANTS_API_KEY` を設定すると、日本株の日足履歴は `MARKET_DATA_PROVIDER` に関係なく J-Quants を優先
 - FMP選択時は WebSocket を使わず REST 取得（`mode=rest-only` / `rest-fallback`）で動作
 - `both` 選択時は Twelve Data と FMP を並列取得し、用途に応じて統合（WebSocket は Twelve Data を利用）
+
+J-Quants 無料枠の注意:
+
+- 日通し OHLC は取得可能
+- 履歴は直近 2 年、かつ 12 週間遅延
+- API キー認証は V2 の `x-api-key` を使用
 
 ## 起動
 
