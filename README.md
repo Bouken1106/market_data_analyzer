@@ -104,6 +104,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 右上の `Pages` ボタンから各ページに遷移できます。
 
 - `/`: US Stock Live Monitor（リアルタイム監視）
+- `/leadlag-lab`: Lead-Lag Lab（日米業種 ETF の部分空間正則化付き PCA 検証）
 - `/ml-lab`: 次営業日株価予測ページ（予測ダッシュボード、学習・検証、バックテスト、モデル管理、運用監視）
 - `/strategy-lab`: Strategy Lab（配分ルール + リバランス提案 + コスト込みバックテスト）
 - `/compare-lab`: Model Compare Lab（複数銘柄 × 複数モデルの一括比較）
@@ -155,6 +156,11 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 11. `/` の右側パネル上部に Watchlist Comment を表示
    - LM Studio (`LMSTUDIO_MODEL=ministral-3-3b`) に、監視中銘柄の前日比/30日リターン/30日ボラティリティを渡して短評を生成
    - 右上の `↻` ボタンで、指標再取得 + コメント再生成
+12. `/leadlag-lab` では、論文準拠の日米業種リードラグ戦略を検証
+   - 米国業種 ETF の当日 Close-to-Close を情報集合に利用
+   - 日本業種 ETF の翌営業日 Open-to-Close を予測対象に利用
+   - 部分空間正則化付き PCA から `latest_signal`, `factors`, `C0`, `D0`, `B_t` を表示
+   - 任意で上位/下位分位の等ウェイト long-short 評価を実行
 
 補足:
 - 起動時に `/api_usage` を1回呼び、日次残量を初期化します（1クレジット消費）。
@@ -197,6 +203,8 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `GET /api/portfolio`: 仮想ポートフォリオ状態（現金、保有、評価額、履歴）
 - `POST /api/portfolio/trades`: 仮想売買を記録（`{"symbol":"AAPL","side":"buy|sell","quantity":10,"price":null}`）
 - `POST /api/portfolio/reset`: 仮想ポートフォリオを初期化（`{"initial_cash":1000000}`）
+- `GET /api/leadlag/config`: Lead-Lag Lab の既定設定を取得
+- `POST /api/leadlag/analyze`: 日米業種 ETF の lead-lag 分析を実行し、signal / regularization / strategy summary を返却
 - `GET /api/historical/{symbol}?years=5`: 過去N年ヒストリカルデータ（デフォルト5年）
 - `GET /api/security-overview/{symbol}`: 銘柄詳細（`include_intraday` / `include_market` で取得項目を制御可能）
 - `GET /api/security-overview/{symbol}/intraday`: 1分/5分足とVWAPのみを取得

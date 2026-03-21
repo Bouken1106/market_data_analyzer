@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="ja">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lead-Lag Lab</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="/static/styles.css?v=20260321a" />
+  <link rel="stylesheet" href="/static/leadlag_lab.css?v=20260321a" />
+</head>
+
+<body class="llg-page">
+  <nav class="nav-tabs" aria-label="Main navigation">
+    <a href="/" class="nav-tab" data-path="/">
+      <span class="nav-tab-icon">📊</span> Live Monitor
+    </a>
+    <a href="/leadlag-lab" class="nav-tab" data-path="/leadlag-lab">
+      <span class="nav-tab-icon">🧩</span> Lead-Lag Lab
+    </a>
+  </nav>
+
+  <main class="container llg-layout">
+    <header class="header llg-header">
+      <div class="header-top">
+        <div>
+          <h1>Lead-Lag Lab</h1>
+          <p>日米業種 ETF を結合し、部分空間正則化付き PCA で翌営業日の日本側 Open-to-Close シグナルを作る検証ページです。</p>
+        </div>
+        <div class="live-monitor-chips">
+          <span class="pill chip-cyan">US close-to-close</span>
+          <span class="pill chip-green">JP next open-to-close</span>
+          <span class="pill chip-amber">Subspace PCA</span>
+        </div>
+      </div>
+    </header>
+
+    <section class="card llg-panel">
+      <div class="llg-panel-head">
+        <div>
+          <h2>設定</h2>
+          <p class="hint">既存データ取得を再利用し、独立モジュールで計算します。</p>
+        </div>
+        <button id="llg-run" type="button">Analyze</button>
+      </div>
+
+      <div class="llg-grid">
+        <label>
+          <span class="label">US Symbols</span>
+          <textarea id="llg-us-symbols" rows="3"></textarea>
+        </label>
+        <label>
+          <span class="label">JP Symbols</span>
+          <textarea id="llg-jp-symbols" rows="4"></textarea>
+        </label>
+        <label>
+          <span class="label">Cyclical Labels</span>
+          <textarea id="llg-cyclical-symbols" rows="3"></textarea>
+        </label>
+        <label>
+          <span class="label">Defensive Labels</span>
+          <textarea id="llg-defensive-symbols" rows="3"></textarea>
+        </label>
+      </div>
+
+      <div class="llg-form-grid">
+        <label>
+          <span class="label">Rolling Window L</span>
+          <input id="llg-window" type="number" min="2" step="1" />
+        </label>
+        <label>
+          <span class="label">Lambda</span>
+          <input id="llg-lambda" type="number" min="0" max="1" step="0.05" />
+        </label>
+        <label>
+          <span class="label">Components K</span>
+          <input id="llg-components" type="number" min="1" step="1" />
+        </label>
+        <label>
+          <span class="label">Quantile q</span>
+          <input id="llg-quantile" type="number" min="0.01" max="0.49" step="0.01" />
+        </label>
+        <label>
+          <span class="label">History Years</span>
+          <input id="llg-history-years" type="number" min="5" step="1" />
+        </label>
+        <label>
+          <span class="label">Cfull Start</span>
+          <input id="llg-cfull-start" type="date" />
+        </label>
+        <label>
+          <span class="label">Cfull End</span>
+          <input id="llg-cfull-end" type="date" />
+        </label>
+      </div>
+
+      <div class="llg-toggle-row">
+        <label class="ml-checkbox"><input id="llg-refresh" type="checkbox" /> Force refresh historical data</label>
+        <label class="ml-checkbox"><input id="llg-include-backtest" type="checkbox" checked /> Run long-short backtest</label>
+        <label class="ml-checkbox"><input id="llg-transfer-matrix" type="checkbox" /> Include latest transfer matrix</label>
+      </div>
+      <p id="llg-status" class="hint">初期設定を読み込み中です。</p>
+    </section>
+
+    <section class="llg-two-column">
+      <section class="card llg-panel">
+        <h2>データ要約</h2>
+        <div id="llg-summary-grid" class="llg-summary-grid"></div>
+
+        <div class="llg-subsection">
+          <h3>Active Universe</h3>
+          <div class="llg-chip-wrap">
+            <div>
+              <span class="label">US</span>
+              <div id="llg-active-us" class="llg-chip-list"></div>
+            </div>
+            <div>
+              <span class="label">JP</span>
+              <div id="llg-active-jp" class="llg-chip-list"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="llg-subsection">
+          <h3>Excluded Symbols</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Reason</th>
+                </tr>
+              </thead>
+              <tbody id="llg-excluded-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="card llg-panel">
+        <h2>Regularization</h2>
+        <p id="llg-regularization-meta" class="hint">-</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Direction</th>
+                <th>D0</th>
+              </tr>
+            </thead>
+            <tbody id="llg-d0-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section class="card llg-panel">
+      <h2>Latest Signal</h2>
+      <p id="llg-latest-meta" class="hint">-</p>
+      <div id="llg-factor-strip" class="llg-factor-strip"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Predicted z</th>
+              <th>Realized O-C</th>
+            </tr>
+          </thead>
+          <tbody id="llg-latest-body"></tbody>
+        </table>
+      </div>
+      <details id="llg-transfer-wrap" class="llg-transfer-wrap hidden">
+        <summary>Latest B_t Matrix</summary>
+        <pre id="llg-transfer-matrix-text"></pre>
+      </details>
+    </section>
+
+    <section class="llg-two-column">
+      <section class="card llg-panel">
+        <h2>Strategy Summary</h2>
+        <div id="llg-strategy-grid" class="llg-summary-grid"></div>
+      </section>
+
+      <section class="card llg-panel">
+        <h2>Recent Signals</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Signal Date</th>
+                <th>Target Date</th>
+                <th>Top</th>
+                <th>Bottom</th>
+              </tr>
+            </thead>
+            <tbody id="llg-recent-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script src="/static/leadlag_lab.js?v=20260321a" defer></script>
+  <script src="/static/page_menu.js?v=20260321a" defer></script>
+</body>
+
+</html>

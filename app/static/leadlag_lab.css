@@ -1,0 +1,128 @@
+.llg-page {
+  --llg-accent: #0d8c8c;
+  --llg-accent-soft: rgba(13, 140, 140, 0.12);
+  --llg-line: rgba(255, 255, 255, 0.08);
+}
+
+.llg-layout {
+  display: grid;
+  gap: 18px;
+  padding-bottom: 48px;
+}
+
+.llg-header {
+  background:
+    radial-gradient(circle at top right, rgba(13, 140, 140, 0.18), transparent 40%),
+    linear-gradient(135deg, rgba(8, 26, 38, 0.94), rgba(14, 32, 26, 0.92));
+}
+
+.llg-panel {
+  padding: 20px;
+}
+
+.llg-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.llg-grid,
+.llg-form-grid,
+.llg-two-column {
+  display: grid;
+  gap: 16px;
+}
+
+.llg-grid {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  margin-bottom: 16px;
+}
+
+.llg-form-grid {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.llg-two-column {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+.llg-panel textarea,
+.llg-panel input {
+  width: 100%;
+}
+
+.llg-toggle-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin-top: 14px;
+}
+
+.llg-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px;
+}
+
+.llg-metric {
+  border: 1px solid var(--llg-line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: var(--llg-accent-soft);
+}
+
+.llg-metric .label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.78rem;
+  color: var(--muted-text, #a9b7c0);
+}
+
+.llg-chip-wrap {
+  display: grid;
+  gap: 12px;
+}
+
+.llg-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.llg-subsection {
+  margin-top: 18px;
+}
+
+.llg-factor-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.llg-transfer-wrap {
+  margin-top: 14px;
+}
+
+.llg-transfer-wrap pre {
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid var(--llg-line);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+@media (max-width: 720px) {
+  .llg-panel {
+    padding: 16px;
+  }
+
+  .llg-panel-head {
+    flex-direction: column;
+  }
+}
