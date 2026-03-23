@@ -86,6 +86,14 @@ class LeadLagApiTest(unittest.TestCase):
         self.assertEqual(defaults_response.status_code, 200)
         self.assertEqual(analyze_response.status_code, 200)
         self.assertIn("history_years", defaults_response.json()["defaults"])
+        self.assertEqual(
+            defaults_response.json()["defaults"]["universe"]["us"],
+            defaults_response.json()["defaults"]["us_symbols"],
+        )
+        self.assertEqual(
+            defaults_response.json()["defaults"]["universe"]["jp"],
+            defaults_response.json()["defaults"]["jp_symbols"],
+        )
         self.assertTrue(analyze_response.json()["ok"])
 
 

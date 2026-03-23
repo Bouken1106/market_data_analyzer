@@ -28,6 +28,13 @@
   margin-bottom: 16px;
 }
 
+.llg-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .llg-grid,
 .llg-form-grid,
 .llg-two-column {
@@ -48,9 +55,84 @@
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
 }
 
-.llg-panel textarea,
 .llg-panel input {
   width: 100%;
+}
+
+.llg-selector-card {
+  border: 1px solid var(--llg-line);
+  border-radius: 14px;
+  padding: 14px;
+  background: rgba(5, 16, 25, 0.28);
+}
+
+.llg-selector-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.llg-selector-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.llg-mini-btn {
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.llg-option-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+}
+
+.llg-option-btn {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(160, 184, 196, 0.25);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-color, #f3f8fb);
+  text-align: left;
+  transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.llg-option-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(13, 140, 140, 0.55);
+  background: rgba(13, 140, 140, 0.1);
+}
+
+.llg-option-btn.is-active {
+  border-color: rgba(13, 140, 140, 0.9);
+  background: rgba(13, 140, 140, 0.2);
+  box-shadow: inset 0 0 0 1px rgba(13, 140, 140, 0.2);
+}
+
+.llg-option-btn.is-disabled,
+.llg-option-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.llg-option-empty {
+  padding: 10px 12px;
+  border: 1px dashed var(--llg-line);
+  border-radius: 12px;
+  color: var(--muted-text, #a9b7c0);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.llg-param-help p {
+  width: min(320px, calc(100vw - 48px));
+  white-space: normal;
 }
 
 .llg-toggle-row {
@@ -122,7 +204,12 @@
     padding: 16px;
   }
 
-  .llg-panel-head {
+  .llg-panel-head,
+  .llg-selector-head {
     flex-direction: column;
+  }
+
+  .llg-head-actions {
+    justify-content: flex-start;
   }
 }

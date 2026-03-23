@@ -7,8 +7,8 @@
   <title>Lead-Lag Lab</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="/static/styles.css?v=20260321a" />
-  <link rel="stylesheet" href="/static/leadlag_lab.css?v=20260321a" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260323a" />
+  <link rel="stylesheet" href="/static/leadlag_lab.css?v=20260323a" />
 </head>
 
 <body class="llg-page">
@@ -40,28 +40,89 @@
       <div class="llg-panel-head">
         <div>
           <h2>設定</h2>
-          <p class="hint">既存データ取得を再利用し、独立モジュールで計算します。</p>
+          <p class="hint">論文準拠の候補 universe をクリック選択し、既存データ取得を再利用して計算します。</p>
         </div>
-        <button id="llg-run" type="button">Analyze</button>
+        <div class="llg-head-actions">
+          <button id="llg-reset-defaults" type="button" class="secondary">Reset Defaults</button>
+          <button id="llg-run" type="button">Analyze</button>
+        </div>
       </div>
 
       <div class="llg-grid">
-        <label>
-          <span class="label">US Symbols</span>
-          <textarea id="llg-us-symbols" rows="3"></textarea>
-        </label>
-        <label>
-          <span class="label">JP Symbols</span>
-          <textarea id="llg-jp-symbols" rows="4"></textarea>
-        </label>
-        <label>
-          <span class="label">Cyclical Labels</span>
-          <textarea id="llg-cyclical-symbols" rows="3"></textarea>
-        </label>
-        <label>
-          <span class="label">Defensive Labels</span>
-          <textarea id="llg-defensive-symbols" rows="3"></textarea>
-        </label>
+        <section class="llg-selector-card">
+          <div class="llg-selector-head">
+            <div>
+              <span class="ml-label-row">
+                <span>US Symbols</span>
+                <details class="param-help llg-param-help">
+                  <summary>?</summary>
+                  <p id="llg-help-us"></p>
+                </details>
+              </span>
+              <p id="llg-us-summary" class="hint">-</p>
+            </div>
+            <div class="llg-selector-actions">
+              <button type="button" class="secondary llg-mini-btn" data-selector-target="us" data-selector-action="all">All</button>
+              <button type="button" class="secondary llg-mini-btn" data-selector-target="us" data-selector-action="clear">Clear</button>
+            </div>
+          </div>
+          <div id="llg-us-symbols" class="llg-option-grid"></div>
+        </section>
+        <section class="llg-selector-card">
+          <div class="llg-selector-head">
+            <div>
+              <span class="ml-label-row">
+                <span>JP Symbols</span>
+                <details class="param-help llg-param-help">
+                  <summary>?</summary>
+                  <p id="llg-help-jp"></p>
+                </details>
+              </span>
+              <p id="llg-jp-summary" class="hint">-</p>
+            </div>
+            <div class="llg-selector-actions">
+              <button type="button" class="secondary llg-mini-btn" data-selector-target="jp" data-selector-action="all">All</button>
+              <button type="button" class="secondary llg-mini-btn" data-selector-target="jp" data-selector-action="clear">Clear</button>
+            </div>
+          </div>
+          <div id="llg-jp-symbols" class="llg-option-grid"></div>
+        </section>
+        <section class="llg-selector-card">
+          <div class="llg-selector-head">
+            <div>
+              <span class="ml-label-row">
+                <span>Cyclical Labels</span>
+                <details class="param-help llg-param-help">
+                  <summary>?</summary>
+                  <p id="llg-help-cyclical"></p>
+                </details>
+              </span>
+              <p id="llg-cyclical-summary" class="hint">選択中の US/JP Symbols の中から指定します。</p>
+            </div>
+            <div class="llg-selector-actions">
+              <button type="button" class="secondary llg-mini-btn" data-selector-target="cyclical" data-selector-action="clear">Clear</button>
+            </div>
+          </div>
+          <div id="llg-cyclical-symbols" class="llg-option-grid"></div>
+        </section>
+        <section class="llg-selector-card">
+          <div class="llg-selector-head">
+            <div>
+              <span class="ml-label-row">
+                <span>Defensive Labels</span>
+                <details class="param-help llg-param-help">
+                  <summary>?</summary>
+                  <p id="llg-help-defensive"></p>
+                </details>
+              </span>
+              <p id="llg-defensive-summary" class="hint">同じ銘柄を cyclical / defensive の両方には入れません。</p>
+            </div>
+            <div class="llg-selector-actions">
+              <button type="button" class="secondary llg-mini-btn" data-selector-target="defensive" data-selector-action="clear">Clear</button>
+            </div>
+          </div>
+          <div id="llg-defensive-symbols" class="llg-option-grid"></div>
+        </section>
       </div>
 
       <div class="llg-form-grid">
@@ -202,8 +263,8 @@
     </section>
   </main>
 
-  <script src="/static/leadlag_lab.js?v=20260321a" defer></script>
-  <script src="/static/page_menu.js?v=20260321a" defer></script>
+  <script src="/static/leadlag_lab.js?v=20260323a" defer></script>
+  <script src="/static/page_menu.js?v=20260323a" defer></script>
 </body>
 
 </html>

@@ -43,6 +43,10 @@ async def leadlag_config() -> JSONResponse:
         defaults={
             "us_symbols": list(DEFAULT_US_SYMBOLS),
             "jp_symbols": list(DEFAULT_JP_SYMBOLS),
+            "universe": {
+                "us": list(DEFAULT_US_SYMBOLS),
+                "jp": list(DEFAULT_JP_SYMBOLS),
+            },
             "rolling_window_days": DEFAULT_ROLLING_WINDOW_DAYS,
             "lambda_reg": DEFAULT_LAMBDA_REG,
             "n_components": DEFAULT_N_COMPONENTS,
