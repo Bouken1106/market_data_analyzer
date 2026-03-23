@@ -1401,6 +1401,20 @@ tbody tr:hover {
   line-height: 1.5;
 }
 
+details.param-help[data-help-popover-active="true"] > p,
+details.mlops-inline-help[data-help-popover-active="true"] > div {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.help-popover-layer {
+  position: fixed;
+  margin: 0;
+  z-index: 1500;
+  overflow-y: auto;
+}
+
 /* Param guide */
 .param-guide {
   margin-top: 4px;

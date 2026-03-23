@@ -31,6 +31,7 @@
 - For strategy changes, preserve API response shape expected by `app/api/strategy.py` and the frontend.
 - For ML changes, keep train/val/test chronological and avoid leakage from future rows.
 - If the user gives a durable instruction, preference, or project-specific operating rule, treat it as project intent and update `agent.md` so the guidance persists for later work.
+- For any help mark / tooltip / popover UI, do not rely on naive absolute positioning inside the local container. Verify viewport-fit, scroll/resize repositioning, and z-index/overflow behavior so the popup cannot be clipped or hidden behind other layers on smaller screens.
 
 ## Local Commands
 
