@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import re
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -36,6 +37,8 @@ from ..config import (
     HISTORICAL_MAX_YEARS,
     JQUANTS_API_KEY,
     JQUANTS_DAILY_BARS_URL,
+    JQUANTS_MIN_REQUEST_INTERVAL_SEC,
+    JQUANTS_RATE_LIMIT_BACKOFF_SEC,
     LOGGER,
     MAX_BASIC_SYMBOLS,
     ML_HISTORY_MAX_MONTHS,
@@ -57,6 +60,8 @@ from ..utils import _datetime_from_unix, normalize_symbols, to_iso8601
 
 
 class MarketDataQueriesMixin:
+    _JQUANTS_COVERAGE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})\s*~\s*(\d{4}-\d{2}-\d{2})")
+
     async def historical_payload(
         self,
         symbol: str,
@@ -205,6 +210,29 @@ class MarketDataQueriesMixin:
             start_date=start_date,
             end_date=end_date,
         )
+        if (
+            not points
+            and self.provider == "twelvedata"
+            and self.fmp_api_key
+            and str(interval or "").strip().lower() in {"1day", "1d", "day"}
+        ):
+            fmp_points = await self._fetch_series_fmp(
+                client=client,
+                symbol=symbol,
+                interval=interval,
+                outputsize=outputsize,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            if fmp_points:
+                detail = {
+                    "mode": "twelvedata_with_fmp_fallback",
+                    "dataset": "historical_daily",
+                    "provider": "fmp",
+                    "points": len(fmp_points),
+                }
+                return fmp_points, detail
+
         provider_name = "fmp" if self.provider == "fmp" else "twelvedata"
         detail = {
             "mode": self.provider,
@@ -1045,6 +1073,94 @@ class MarketDataQueriesMixin:
             return normalized
         return None
 
+    @classmethod
+    def _extract_jquants_coverage_window(cls, message: Any) -> tuple[date, date] | None:
+        matched = cls._JQUANTS_COVERAGE_RE.search(str(message or ""))
+        if matched is None:
+            return None
+        try:
+            return date.fromisoformat(matched.group(1)), date.fromisoformat(matched.group(2))
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _bound_jquants_request_dates(
+        *,
+        start_date: str | None,
+        end_date: str | None,
+        coverage_window: tuple[date, date],
+    ) -> tuple[str, str] | None:
+        coverage_start, coverage_end = coverage_window
+        try:
+            requested_start = date.fromisoformat(start_date) if start_date else coverage_start
+            requested_end = date.fromisoformat(end_date) if end_date else coverage_end
+        except ValueError:
+            return None
+
+        bounded_start = max(requested_start, coverage_start)
+        bounded_end = min(requested_end, coverage_end)
+        if bounded_start > bounded_end:
+            return None
+        return bounded_start.isoformat(), bounded_end.isoformat()
+
+    @classmethod
+    def _clamp_jquants_request_dates(
+        cls,
+        *,
+        start_date: str | None,
+        end_date: str | None,
+        coverage_message: Any,
+    ) -> tuple[str, str] | None:
+        coverage_window = cls._extract_jquants_coverage_window(coverage_message)
+        if coverage_window is None:
+            return None
+
+        bounded_dates = cls._bound_jquants_request_dates(
+            start_date=start_date,
+            end_date=end_date,
+            coverage_window=coverage_window,
+        )
+        if bounded_dates is None:
+            return None
+
+        clamped_start, clamped_end = bounded_dates
+        if clamped_start == str(start_date or "") and clamped_end == str(end_date or ""):
+            return None
+        return clamped_start, clamped_end
+
+    @staticmethod
+    def _is_jquants_rate_limit_message(message: Any) -> bool:
+        return "rate limit exceeded" in str(message or "").strip().lower()
+
+    async def _await_jquants_request_slot(self) -> None:
+        spacing = max(0.0, float(JQUANTS_MIN_REQUEST_INTERVAL_SEC))
+        if spacing <= 0.0:
+            return
+
+        lock = getattr(self, "_jquants_request_lock", None)
+        if not isinstance(lock, asyncio.Lock):
+            lock = asyncio.Lock()
+            setattr(self, "_jquants_request_lock", lock)
+
+        async with lock:
+            now = time.monotonic()
+            next_request_at = float(getattr(self, "_jquants_next_request_at", 0.0) or 0.0)
+            if next_request_at > now:
+                await asyncio.sleep(next_request_at - now)
+                now = time.monotonic()
+            setattr(self, "_jquants_next_request_at", now + spacing)
+
+    async def _delay_future_jquants_requests(self, delay_sec: float) -> None:
+        lock = getattr(self, "_jquants_request_lock", None)
+        if not isinstance(lock, asyncio.Lock):
+            lock = asyncio.Lock()
+            setattr(self, "_jquants_request_lock", lock)
+
+        async with lock:
+            now = time.monotonic()
+            next_request_at = float(getattr(self, "_jquants_next_request_at", 0.0) or 0.0)
+            setattr(self, "_jquants_next_request_at", max(next_request_at, now + max(0.0, delay_sec)))
+
     async def _fetch_series_jquants(
         self,
         client: httpx.AsyncClient,
@@ -1063,59 +1179,105 @@ class MarketDataQueriesMixin:
             return []
 
         headers = {"x-api-key": JQUANTS_API_KEY}
-        params: dict[str, Any] = {"code": code}
-        if start_date:
-            params["from"] = start_date
-        if end_date:
-            params["to"] = end_date
+        cached_coverage = getattr(self, "_jquants_coverage_window", None)
+        bounded_dates = None
+        if (
+            isinstance(cached_coverage, tuple)
+            and len(cached_coverage) == 2
+            and isinstance(cached_coverage[0], date)
+            and isinstance(cached_coverage[1], date)
+        ):
+            bounded_dates = self._bound_jquants_request_dates(
+                start_date=start_date,
+                end_date=end_date,
+                coverage_window=(cached_coverage[0], cached_coverage[1]),
+            )
+        request_start, request_end = bounded_dates if bounded_dates is not None else (start_date, end_date)
+        adjusted_to_coverage = False
+        rate_limit_attempts = 0
 
-        points: list[dict[str, Any]] = []
-        pagination_key: str | None = None
         while True:
-            request_params = dict(params)
-            if pagination_key:
-                request_params["pagination_key"] = pagination_key
+            params: dict[str, Any] = {"code": code}
+            if request_start:
+                params["from"] = request_start
+            if request_end:
+                params["to"] = request_end
 
-            try:
-                response = await client.get(JQUANTS_DAILY_BARS_URL, params=request_params, headers=headers)
-                payload = response.json()
-            except Exception as exc:
-                LOGGER.warning("J-Quants daily bars fetch failed for %s: %s", symbol, exc)
-                return []
+            points: list[dict[str, Any]] = []
+            pagination_key: str | None = None
+            should_retry = False
 
-            if response.status_code >= 400:
-                LOGGER.warning("J-Quants daily bars API error for %s: %s", symbol, payload)
-                return []
+            while True:
+                request_params = dict(params)
+                if pagination_key:
+                    request_params["pagination_key"] = pagination_key
 
-            values = None
-            if isinstance(payload, dict):
-                for key in ("daily_quotes", "quotes", "bars", "dailyBars"):
-                    candidate = payload.get(key)
-                    if isinstance(candidate, list):
-                        values = candidate
+                try:
+                    await self._await_jquants_request_slot()
+                    response = await client.get(JQUANTS_DAILY_BARS_URL, params=request_params, headers=headers)
+                    payload = response.json()
+                except Exception as exc:
+                    LOGGER.warning("J-Quants daily bars fetch failed for %s: %s", symbol, exc)
+                    return []
+
+                if response.status_code >= 400:
+                    message = payload.get("message") if isinstance(payload, dict) else payload
+                    coverage_window = self._extract_jquants_coverage_window(message)
+                    if coverage_window is not None:
+                        setattr(self, "_jquants_coverage_window", coverage_window)
+                    clamped_dates = None
+                    if not adjusted_to_coverage:
+                        clamped_dates = self._clamp_jquants_request_dates(
+                            start_date=request_start,
+                            end_date=request_end,
+                            coverage_message=message,
+                        )
+                    if clamped_dates is not None:
+                        request_start, request_end = clamped_dates
+                        adjusted_to_coverage = True
+                        should_retry = True
                         break
-            if not isinstance(values, list):
-                return []
 
-            for item in values:
-                point = normalize_ohlcv_point(
-                    item,
-                    timestamp_keys=("Date", "date"),
-                    open_keys=("Open", "open", "AdjustmentOpen", "adjustment_open"),
-                    high_keys=("High", "high", "AdjustmentHigh", "adjustment_high"),
-                    low_keys=("Low", "low", "AdjustmentLow", "adjustment_low"),
-                    close_keys=("Close", "close", "AdjustmentClose", "adjustment_close"),
-                    volume_keys=("Volume", "volume", "AdjustmentVolume", "adjustment_volume"),
-                    source="jquants",
-                )
-                if point is not None:
-                    points.append(point)
+                    if self._is_jquants_rate_limit_message(message) and rate_limit_attempts < 3:
+                        rate_limit_attempts += 1
+                        await self._delay_future_jquants_requests(JQUANTS_RATE_LIMIT_BACKOFF_SEC * rate_limit_attempts)
+                        should_retry = True
+                        break
 
-            pagination_key = payload.get("pagination_key") if isinstance(payload, dict) else None
-            if not pagination_key:
-                break
+                    LOGGER.warning("J-Quants daily bars API error for %s: %s", symbol, payload)
+                    return []
 
-        return sorted(points, key=lambda item: str(item.get("t") or ""))
+                values = None
+                if isinstance(payload, dict):
+                    for key in ("daily_quotes", "quotes", "bars", "dailyBars"):
+                        candidate = payload.get(key)
+                        if isinstance(candidate, list):
+                            values = candidate
+                            break
+                if not isinstance(values, list):
+                    return []
+
+                for item in values:
+                    point = normalize_ohlcv_point(
+                        item,
+                        timestamp_keys=("Date", "date"),
+                        open_keys=("Open", "open", "AdjustmentOpen", "adjustment_open"),
+                        high_keys=("High", "high", "AdjustmentHigh", "adjustment_high"),
+                        low_keys=("Low", "low", "AdjustmentLow", "adjustment_low"),
+                        close_keys=("Close", "close", "AdjustmentClose", "adjustment_close"),
+                        volume_keys=("Volume", "volume", "AdjustmentVolume", "adjustment_volume"),
+                        source="jquants",
+                    )
+                    if point is not None:
+                        points.append(point)
+
+                pagination_key = payload.get("pagination_key") if isinstance(payload, dict) else None
+                if not pagination_key:
+                    break
+
+            if should_retry:
+                continue
+            return sorted(points, key=lambda item: str(item.get("t") or ""))
 
     async def _fetch_series_twelvedata(
         self,
@@ -1351,6 +1513,11 @@ class MarketDataQueriesMixin:
             interval="1day",
             outputsize=max(1300, HISTORICAL_MAX_POINTS),
         )
+        if self._should_use_jquants_for_symbol(symbol, "1day"):
+            if fallback_points:
+                await self.full_daily_history_store.upsert(symbol, fallback_points)
+            return fallback_points
+
         earliest = await self._fetch_earliest_date(client, symbol=symbol, interval="1day")
         if earliest is None:
             if fallback_points:

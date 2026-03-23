@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 DEFAULT_US_SYMBOLS: tuple[str, ...] = (
     "XLB",
     "XLC",
@@ -63,10 +65,15 @@ DEFAULT_DEFENSIVE_SYMBOLS = frozenset(
     }
 )
 
-DEFAULT_CFULL_START = "2010-01-01"
-DEFAULT_CFULL_END = "2014-12-31"
+# Keep the default Cfull window inside the recent history most providers expose
+# for Japan ETFs, while still leaving the setting fully user-configurable.
+_DEFAULT_CFULL_END_DATE = date.today() - timedelta(days=120)
+_DEFAULT_CFULL_START_DATE = _DEFAULT_CFULL_END_DATE - timedelta(days=365)
+
+DEFAULT_CFULL_START = _DEFAULT_CFULL_START_DATE.isoformat()
+DEFAULT_CFULL_END = _DEFAULT_CFULL_END_DATE.isoformat()
 DEFAULT_ROLLING_WINDOW_DAYS = 60
 DEFAULT_LAMBDA_REG = 0.9
 DEFAULT_N_COMPONENTS = 3
 DEFAULT_QUANTILE_Q = 0.3
-DEFAULT_HISTORY_YEARS = 30
+DEFAULT_HISTORY_YEARS = 5

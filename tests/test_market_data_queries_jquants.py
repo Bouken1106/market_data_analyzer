@@ -12,6 +12,27 @@ class _DummyQueries(MarketDataQueriesMixin):
         self.provider = "twelvedata"
 
 
+class _MemoryDailyHistoryStore:
+    def __init__(self) -> None:
+        self.cleared: list[str] = []
+        self.upserts: dict[str, list[dict[str, object]]] = {}
+
+    async def clear(self, symbol: str | None = None) -> int:
+        if symbol:
+            self.cleared.append(symbol)
+        return 0
+
+    async def get(self, symbol: str, *, copy: bool = True) -> list[dict[str, object]]:
+        points = self.upserts.get(symbol, [])
+        return [dict(item) for item in points] if copy else points
+
+    async def upsert(self, symbol: str, points: list[dict[str, object]]) -> None:
+        self.upserts[symbol] = [dict(item) for item in points]
+
+    async def last_updated_epoch(self, symbol: str) -> float | None:
+        return None
+
+
 class MarketDataQueriesJQuantsTest(unittest.TestCase):
     def test_normalize_jquants_code_accepts_tse_suffix(self) -> None:
         self.assertEqual(_DummyQueries._normalize_jquants_code("1617.T"), "1617")
@@ -89,6 +110,163 @@ class MarketDataQueriesJQuantsTest(unittest.TestCase):
             self.assertIn("from=2024-01-01", seen_queries[0])
             self.assertIn("to=2024-01-31", seen_queries[0])
             self.assertIn("pagination_key=next-page", seen_queries[1])
+
+        asyncio.run(run_test())
+
+    def test_fetch_series_jquants_retries_with_subscription_window(self) -> None:
+        async def run_test() -> None:
+            responses = [
+                httpx.Response(
+                    status_code=400,
+                    content=json.dumps(
+                        {
+                            "message": (
+                                "Your subscription covers the following dates: "
+                                "2023-12-29 ~ 2025-12-29. If you want more data, please check other plans."
+                            )
+                        }
+                    ),
+                    headers={"content-type": "application/json"},
+                ),
+                httpx.Response(
+                    status_code=200,
+                    content=json.dumps(
+                        {
+                            "daily_quotes": [
+                                {
+                                    "Date": "2024-01-04",
+                                    "Open": 100.0,
+                                    "High": 101.0,
+                                    "Low": 99.0,
+                                    "Close": 100.5,
+                                    "Volume": 1000.0,
+                                }
+                            ]
+                        }
+                    ),
+                    headers={"content-type": "application/json"},
+                ),
+            ]
+            seen_queries: list[str] = []
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                seen_queries.append(str(request.url))
+                response = responses[len(seen_queries) - 1]
+                response.request = request
+                return response
+
+            transport = httpx.MockTransport(handler)
+            client = httpx.AsyncClient(transport=transport)
+            queries = _DummyQueries()
+
+            from app.services import market_data_queries as module
+
+            original_key = module.JQUANTS_API_KEY
+            original_interval = module.JQUANTS_MIN_REQUEST_INTERVAL_SEC
+            original_backoff = module.JQUANTS_RATE_LIMIT_BACKOFF_SEC
+            module.JQUANTS_API_KEY = "test-jquants-key"
+            module.JQUANTS_MIN_REQUEST_INTERVAL_SEC = 0.0
+            module.JQUANTS_RATE_LIMIT_BACKOFF_SEC = 0.0
+            try:
+                points = await queries._fetch_series_jquants(
+                    client=client,
+                    symbol="1617.T",
+                    interval="1day",
+                    outputsize=500,
+                    start_date="2020-01-01",
+                    end_date="2026-03-23",
+                )
+            finally:
+                module.JQUANTS_API_KEY = original_key
+                module.JQUANTS_MIN_REQUEST_INTERVAL_SEC = original_interval
+                module.JQUANTS_RATE_LIMIT_BACKOFF_SEC = original_backoff
+                await client.aclose()
+
+            self.assertEqual(len(points), 1)
+            self.assertEqual(points[0]["t"], "2024-01-04")
+            self.assertIn("from=2020-01-01", seen_queries[0])
+            self.assertIn("to=2026-03-23", seen_queries[0])
+            self.assertIn("from=2023-12-29", seen_queries[1])
+            self.assertIn("to=2025-12-29", seen_queries[1])
+
+        asyncio.run(run_test())
+
+    def test_fetch_full_daily_series_uses_jquants_fallback_without_earliest_lookup(self) -> None:
+        class _JQuantsOnlyQueries(_DummyQueries):
+            def __init__(self) -> None:
+                super().__init__()
+                self.full_daily_history_store = _MemoryDailyHistoryStore()
+
+            def _should_use_jquants_for_symbol(self, symbol: str, interval: str) -> bool:
+                return True
+
+            async def _fetch_series(
+                self,
+                client: httpx.AsyncClient,
+                symbol: str,
+                interval: str,
+                outputsize: int,
+                start_date: str | None = None,
+                end_date: str | None = None,
+            ) -> list[dict[str, object]]:
+                del client, interval, outputsize, start_date, end_date
+                return [{"t": "2024-01-04", "o": 100.0, "h": 101.0, "l": 99.0, "c": 100.5, "v": 1000.0}]
+
+            async def _fetch_earliest_date(self, client: httpx.AsyncClient, symbol: str, interval: str):
+                raise AssertionError("earliest timestamp lookup should be skipped for J-Quants symbols")
+
+        async def run_test() -> None:
+            queries = _JQuantsOnlyQueries()
+            points = await queries._fetch_full_daily_series(client=None, symbol="1617.T", refresh=True)
+            self.assertEqual(len(points), 1)
+            self.assertEqual(points[0]["t"], "2024-01-04")
+            self.assertEqual(queries.full_daily_history_store.upserts["1617.T"][0]["c"], 100.5)
+
+        asyncio.run(run_test())
+
+    def test_historical_points_fall_back_to_fmp_when_twelvedata_returns_no_daily_series(self) -> None:
+        class _TwelvedataFallbackQueries(_DummyQueries):
+            def __init__(self) -> None:
+                super().__init__()
+                self.fmp_api_key = "has-fmp"
+
+            async def _fetch_series(
+                self,
+                client: httpx.AsyncClient,
+                symbol: str,
+                interval: str,
+                outputsize: int,
+                start_date: str | None = None,
+                end_date: str | None = None,
+            ) -> list[dict[str, object]]:
+                del client, symbol, interval, outputsize, start_date, end_date
+                return []
+
+            async def _fetch_series_fmp(
+                self,
+                client: httpx.AsyncClient,
+                symbol: str,
+                interval: str,
+                outputsize: int,
+                start_date: str | None = None,
+                end_date: str | None = None,
+            ) -> list[dict[str, object]]:
+                del client, symbol, interval, outputsize, start_date, end_date
+                return [{"t": "2024-01-04", "o": 100.0, "h": 101.0, "l": 99.0, "c": 100.5, "v": 1000.0}]
+
+        async def run_test() -> None:
+            queries = _TwelvedataFallbackQueries()
+            points, detail = await queries._fetch_historical_points_with_detail(
+                client=None,
+                symbol="XLK",
+                interval="1day",
+                outputsize=500,
+                start_date="2024-01-01",
+                end_date="2024-12-31",
+            )
+            self.assertEqual(len(points), 1)
+            self.assertEqual(detail["provider"], "fmp")
+            self.assertEqual(detail["mode"], "twelvedata_with_fmp_fallback")
 
         asyncio.run(run_test())
 

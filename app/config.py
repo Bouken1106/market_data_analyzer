@@ -60,6 +60,8 @@ if DATA_PROVIDER not in SUPPORTED_DATA_PROVIDERS:
 TWELVE_DATA_API_KEY = os.getenv("TWELVE_DATA_API_KEY", "").strip()
 FMP_API_KEY = os.getenv("FMP_API_KEY", "").strip()
 JQUANTS_API_KEY = os.getenv("JQUANTS_API_KEY", "").strip()
+JQUANTS_MIN_REQUEST_INTERVAL_SEC = _float_env("JQUANTS_MIN_REQUEST_INTERVAL_SEC", default=12.0, minimum=0.0)
+JQUANTS_RATE_LIMIT_BACKOFF_SEC = _float_env("JQUANTS_RATE_LIMIT_BACKOFF_SEC", default=30.0, minimum=1.0)
 if DATA_PROVIDER == "twelvedata":
     API_KEY = TWELVE_DATA_API_KEY
 elif DATA_PROVIDER == "fmp":
