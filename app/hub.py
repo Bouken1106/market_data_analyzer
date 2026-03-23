@@ -64,7 +64,7 @@ class MarketDataHub(MarketDataRealtimeMixin, MarketDataQueriesMixin, MarketDataS
         self._restart_ws_event = asyncio.Event()
         self._state_lock = asyncio.Lock()
         self._credits_lock = asyncio.Lock()
-        self._historical_cache: dict[tuple[str, int], dict[str, Any]] = {}
+        self._historical_cache: dict[tuple[str, str, str], dict[str, Any]] = {}
         self._historical_lock = asyncio.Lock()
         self._sparkline_cache: dict[str, dict[str, Any]] = {}
         self._sparkline_lock = asyncio.Lock()

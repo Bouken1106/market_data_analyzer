@@ -56,6 +56,7 @@ from ..ohlcv import (
     merge_points_by_timestamp as merge_ohlcv_points,
     normalize_ohlcv_point,
 )
+from ..stooq import fetch_stooq_daily_history
 from ..utils import _datetime_from_unix, normalize_symbols, to_iso8601
 
 
@@ -68,19 +69,26 @@ class MarketDataQueriesMixin:
         years: int = HISTORICAL_DEFAULT_YEARS,
         months: int | None = None,
         refresh: bool = False,
+        source_preference: str | None = None,
+        allow_api_fallback: bool = True,
     ) -> dict[str, Any]:
         normalized = symbol.upper().strip()
         if not SYMBOL_PATTERN.match(normalized):
             raise HTTPException(status_code=400, detail="Invalid symbol format.")
+        source_mode = str(source_preference or "").strip().lower() or "provider"
         requested_years = max(1, int(years))
         fetch_full_history = months is None and requested_years > HISTORICAL_MAX_YEARS
         years = requested_years if fetch_full_history else max(1, min(requested_years, HISTORICAL_MAX_YEARS))
         months = None if months is None else max(1, min(int(months), ML_HISTORY_MAX_MONTHS))
 
         if months is None:
-            cache_key = (normalized, "years:max") if fetch_full_history else (normalized, f"years:{years}")
+            cache_key = (
+                (normalized, "years:max", f"source:{source_mode}")
+                if fetch_full_history
+                else (normalized, f"years:{years}", f"source:{source_mode}")
+            )
         else:
-            cache_key = (normalized, f"months:{months}")
+            cache_key = (normalized, f"months:{months}", f"source:{source_mode}")
         async with self._historical_lock:
             cached = self._historical_cache.get(cache_key)
             if cached and not refresh and self._is_cache_fresh(cached.get("cached_epoch"), HISTORICAL_CACHE_TTL_SEC):
@@ -91,27 +99,55 @@ class MarketDataQueriesMixin:
         end_date = date.today()
         if months is None:
             start_date = end_date - timedelta(days=(365 * years) + (years // 4))
+            requested_days = (365 * years) + (years // 4)
         else:
             start_date = end_date - timedelta(days=(31 * months) + 7)
+            requested_days = (31 * months) + 7
+        estimated_points = max(200, int(requested_days * 0.8))
+        outputsize = (
+            0
+            if fetch_full_history
+            else min(
+                TIME_SERIES_MAX_OUTPUTSIZE,
+                max(HISTORICAL_MAX_POINTS, estimated_points),
+            )
+        )
 
         timeout = httpx.Timeout(40.0, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
-            if fetch_full_history and str(HISTORICAL_INTERVAL).strip().lower() in {"1day", "1d", "day"}:
+            use_stooq = months is None and str(HISTORICAL_INTERVAL).strip().lower() in {"1day", "1d", "day"} and source_mode == "stooq"
+            if use_stooq:
+                points, source_detail = await self._fetch_stooq_daily_points_with_detail(
+                    client,
+                    symbol=normalized,
+                    outputsize=outputsize,
+                    start_date=start_date.isoformat(),
+                    end_date=end_date.isoformat(),
+                    refresh=refresh,
+                )
+                if not points and allow_api_fallback:
+                    if fetch_full_history:
+                        points = await self._fetch_full_daily_series(client, symbol=normalized, refresh=refresh)
+                        source_detail = {
+                            "provider": self.provider,
+                            "mode": "full_daily_history",
+                        }
+                    else:
+                        points, source_detail = await self._fetch_historical_points_with_detail(
+                            client,
+                            symbol=normalized,
+                            interval=HISTORICAL_INTERVAL,
+                            outputsize=max(HISTORICAL_MAX_POINTS, outputsize),
+                            start_date=start_date.isoformat(),
+                            end_date=end_date.isoformat(),
+                        )
+            elif fetch_full_history and str(HISTORICAL_INTERVAL).strip().lower() in {"1day", "1d", "day"}:
                 points = await self._fetch_full_daily_series(client, symbol=normalized, refresh=refresh)
                 source_detail = {
                     "provider": self.provider,
                     "mode": "full_daily_history",
                 }
             else:
-                if months is None:
-                    requested_days = (365 * years) + (years // 4)
-                else:
-                    requested_days = (31 * months) + 7
-                estimated_points = max(200, int(requested_days * 0.8))
-                outputsize = min(
-                    TIME_SERIES_MAX_OUTPUTSIZE,
-                    max(HISTORICAL_MAX_POINTS, estimated_points),
-                )
                 points, source_detail = await self._fetch_historical_points_with_detail(
                     client,
                     symbol=normalized,
@@ -133,7 +169,11 @@ class MarketDataQueriesMixin:
             "to": points[-1]["t"],
             "count": len(points),
             "points": points,
-            "source": f"{self.provider}-live",
+            "source": (
+                "stooq-live"
+                if str(source_detail.get("provider") or "").strip().lower() == "stooq"
+                else f"{self.provider}-live"
+            ),
             "source_detail": source_detail,
         }
 
@@ -144,6 +184,104 @@ class MarketDataQueriesMixin:
             }
 
         return historical_payload
+
+    @staticmethod
+    def _slice_daily_points(
+        points: list[dict[str, Any]],
+        *,
+        start_date: str | None,
+        end_date: str | None,
+        outputsize: int,
+    ) -> list[dict[str, Any]]:
+        filtered: list[dict[str, Any]] = []
+        for item in points:
+            point_date = str(item.get("t") or "").split(" ")[0]
+            if not point_date:
+                continue
+            if start_date and point_date < start_date:
+                continue
+            if end_date and point_date > end_date:
+                continue
+            filtered.append(dict(item))
+        if outputsize > 0 and len(filtered) > outputsize:
+            filtered = filtered[-outputsize:]
+        return filtered
+
+    async def _fetch_stooq_daily_points_with_detail(
+        self,
+        client: httpx.AsyncClient,
+        *,
+        symbol: str,
+        outputsize: int,
+        start_date: str | None,
+        end_date: str | None,
+        refresh: bool = False,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        cached_full_points = await self.full_daily_history_store.get(symbol, copy=False)
+        cached_updated_epoch = await self.full_daily_history_store.last_updated_epoch(symbol)
+        if (
+            cached_full_points
+            and not refresh
+            and cached_updated_epoch is not None
+            and self._is_cache_fresh(cached_updated_epoch, HISTORICAL_CACHE_TTL_SEC)
+        ):
+            cached_slice = self._slice_daily_points(
+                cached_full_points,
+                start_date=start_date,
+                end_date=end_date,
+                outputsize=outputsize,
+            )
+            if cached_slice:
+                return cached_slice, {
+                    "mode": "stooq_cached",
+                    "dataset": "historical_daily",
+                    "provider": "stooq",
+                    "points": len(cached_slice),
+                }
+
+        try:
+            full_points = await fetch_stooq_daily_history(symbol, client=client)
+        except Exception as exc:
+            LOGGER.warning("Stooq daily CSV fetch failed for %s: %s", symbol, exc)
+            full_points = []
+
+        if full_points:
+            await self.full_daily_history_store.upsert(symbol, full_points)
+            fetched_slice = self._slice_daily_points(
+                full_points,
+                start_date=start_date,
+                end_date=end_date,
+                outputsize=outputsize,
+            )
+            if fetched_slice:
+                return fetched_slice, {
+                    "mode": "stooq_live",
+                    "dataset": "historical_daily",
+                    "provider": "stooq",
+                    "points": len(fetched_slice),
+                }
+
+        if cached_full_points:
+            stale_slice = self._slice_daily_points(
+                cached_full_points,
+                start_date=start_date,
+                end_date=end_date,
+                outputsize=outputsize,
+            )
+            if stale_slice:
+                return stale_slice, {
+                    "mode": "stooq_cached_stale",
+                    "dataset": "historical_daily",
+                    "provider": "stooq",
+                    "points": len(stale_slice),
+                }
+
+        return [], {
+            "mode": "stooq_empty",
+            "dataset": "historical_daily",
+            "provider": "stooq",
+            "points": 0,
+        }
 
     async def _fetch_historical_points_with_detail(
         self,

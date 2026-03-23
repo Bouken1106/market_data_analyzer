@@ -10,6 +10,8 @@ from app.services.market_data_queries import MarketDataQueriesMixin
 class _DummyQueries(MarketDataQueriesMixin):
     def __init__(self) -> None:
         self.provider = "twelvedata"
+        self._historical_cache = {}
+        self._historical_lock = asyncio.Lock()
 
 
 class _MemoryDailyHistoryStore:
@@ -267,6 +269,50 @@ class MarketDataQueriesJQuantsTest(unittest.TestCase):
             self.assertEqual(len(points), 1)
             self.assertEqual(detail["provider"], "fmp")
             self.assertEqual(detail["mode"], "twelvedata_with_fmp_fallback")
+
+        asyncio.run(run_test())
+
+    def test_historical_payload_can_use_stooq_without_api_fallback(self) -> None:
+        class _StooqOnlyQueries(_DummyQueries):
+            def __init__(self) -> None:
+                super().__init__()
+                self.full_daily_history_store = _MemoryDailyHistoryStore()
+
+            async def _fetch_historical_points_with_detail(self, *args, **kwargs):
+                raise AssertionError("API historical fetch should not be used when source_preference=stooq")
+
+        async def run_test() -> None:
+            queries = _StooqOnlyQueries()
+
+            from app.services import market_data_queries as module
+
+            original_fetch = module.fetch_stooq_daily_history
+
+            async def fake_fetch(symbol: str, *, client=None, timeout_sec: float = 25.0):
+                del client, timeout_sec
+                self.assertEqual(symbol, "XLB")
+                return [
+                    {"t": "2024-01-02", "o": 100.0, "h": 101.0, "l": 99.0, "c": 100.5, "v": 1000.0, "_src": "stooq"},
+                    {"t": "2024-01-03", "o": 101.0, "h": 102.0, "l": 100.0, "c": 101.5, "v": 1100.0, "_src": "stooq"},
+                ]
+
+            module.fetch_stooq_daily_history = fake_fetch
+            try:
+                payload = await queries.historical_payload(
+                    symbol="XLB",
+                    years=5,
+                    refresh=True,
+                    source_preference="stooq",
+                    allow_api_fallback=False,
+                )
+            finally:
+                module.fetch_stooq_daily_history = original_fetch
+
+            self.assertEqual(payload["symbol"], "XLB")
+            self.assertEqual(payload["count"], 2)
+            self.assertEqual(payload["source_detail"]["provider"], "stooq")
+            self.assertEqual(payload["source_detail"]["mode"], "stooq_live")
+            self.assertEqual(queries.full_daily_history_store.upserts["XLB"][0]["_src"], "stooq")
 
         asyncio.run(run_test())
 

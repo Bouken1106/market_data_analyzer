@@ -168,6 +168,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 12. `/leadlag-lab` では、論文準拠の日米業種リードラグ戦略を検証
    - 米国業種 ETF の当日 Close-to-Close を情報集合に利用
    - 日本業種 ETF の翌営業日 Open-to-Close を予測対象に利用
+   - 履歴日足は API ではなく Stooq の公開CSVを優先し、`app/cache/daily_history/` へ保存して再利用
    - `US Symbols` / `JP Symbols` / `Cyclical Labels` / `Defensive Labels` は、候補 universe を一覧表示し、クリックで選択
    - 部分空間正則化付き PCA から `latest_signal`, `factors`, `C0`, `D0`, `B_t` を表示
    - 任意で上位/下位分位の等ウェイト long-short 評価を実行

@@ -15,8 +15,17 @@ def _build_points(dates, opens, closes):
 class _FakeHub:
     def __init__(self, payloads):
         self.payloads = payloads
+        self.calls = []
 
-    async def historical_payload(self, symbol: str, years: int = 30, refresh: bool = False):
+    async def historical_payload(self, symbol: str, years: int = 30, refresh: bool = False, **kwargs):
+        self.calls.append(
+            {
+                "symbol": symbol,
+                "years": years,
+                "refresh": refresh,
+                **kwargs,
+            }
+        )
         return {"symbol": symbol, "points": self.payloads[symbol]}
 
 
@@ -41,7 +50,8 @@ class LeadLagServiceTest(unittest.TestCase):
             "JP3.T": _build_points(dates, [80, 80.4, 80.8, 81.2, 81.6, 82.0, 82.4, 82.8, 83.2], [80.2, 80.7, 81.0, 81.4, 81.9, 82.2, 82.6, 83.0, 83.4]),
             "JP4.T": _build_points(dates, [70, 69.8, 70.2, 70.6, 71.0, 71.4, 71.8, 72.1, 72.5], [69.9, 70.1, 70.5, 70.9, 71.2, 71.6, 72.0, 72.4, 72.7]),
         }
-        service = LeadLagService(_FakeHub(payloads))
+        hub = _FakeHub(payloads)
+        service = LeadLagService(hub)
         config = LeadLagConfig(
             us_symbols=("USA1", "USA2"),
             jp_symbols=("JP1.T", "JP2.T", "JP3.T", "JP4.T"),
@@ -65,6 +75,9 @@ class LeadLagServiceTest(unittest.TestCase):
         self.assertIn("strategy", result)
         self.assertTrue(result["latest_signal"]["predicted_rows"])
         self.assertIsNotNone(result["strategy"]["summary"]["signal_days"])
+        self.assertTrue(hub.calls)
+        self.assertTrue(all(call.get("source_preference") == "stooq" for call in hub.calls))
+        self.assertTrue(all(call.get("allow_api_fallback") is False for call in hub.calls))
 
 
 if __name__ == "__main__":

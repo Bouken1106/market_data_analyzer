@@ -23,6 +23,7 @@ except Exception:  # pragma: no cover - import guard for incomplete local envs
     lgb = None
 
 from ..config import HISTORICAL_CACHE_TTL_SEC, LOGGER, STOCK_ML_PAGE_ROLE
+from ..stooq import fetch_stooq_daily_history
 from ..stores import FullDailyHistoryStore, StockMlPageStore
 
 _TOP_N = 10
@@ -968,7 +969,7 @@ class StockMlPageService:
             return cached, None
 
         try:
-            points = await asyncio.to_thread(self._fetch_stooq_csv, symbol_meta.code)
+            points = await fetch_stooq_daily_history(symbol_meta.symbol, timeout_sec=_STOOQ_TIMEOUT_SEC)
         except Exception as exc:
             LOGGER.warning("Failed to fetch Stooq CSV for %s: %s", normalized_symbol, exc)
             return (cached, None) if cached else ([], "fetch_failed")
@@ -978,45 +979,6 @@ class StockMlPageService:
         if cached:
             return cached, None
         return [], "empty_response"
-
-    @staticmethod
-    def _fetch_stooq_csv(code: str) -> list[dict[str, Any]]:
-        url = f"https://stooq.com/q/d/l/?s={code.lower()}.jp&i=d"
-        with httpx.Client(timeout=_STOOQ_TIMEOUT_SEC, follow_redirects=True) as client:
-            response = client.get(
-                url,
-                headers={
-                    "User-Agent": "Mozilla/5.0",
-                    "Accept": "text/csv,text/plain;q=0.9,*/*;q=0.8",
-                },
-            )
-            response.raise_for_status()
-            payload = response.text
-        reader = csv.DictReader(io.StringIO(payload))
-        points: list[dict[str, Any]] = []
-        for row in reader:
-            date_text = str(row.get("Date") or "").strip()
-            if not date_text:
-                continue
-            open_value = _safe_float(row.get("Open"))
-            high_value = _safe_float(row.get("High"))
-            low_value = _safe_float(row.get("Low"))
-            close_value = _safe_float(row.get("Close"))
-            volume_value = _safe_float(row.get("Volume"))
-            if close_value is None or close_value <= 0:
-                continue
-            point = {
-                "t": date_text,
-                "o": open_value if open_value is not None and open_value > 0 else close_value,
-                "h": high_value if high_value is not None and high_value > 0 else close_value,
-                "l": low_value if low_value is not None and low_value > 0 else close_value,
-                "c": close_value,
-                "v": volume_value if volume_value is not None and volume_value >= 0 else 0.0,
-                "_src": "stooq",
-            }
-            points.append(point)
-        points.sort(key=lambda item: str(item["t"]))
-        return points
 
     def _build_dataset(
         self,

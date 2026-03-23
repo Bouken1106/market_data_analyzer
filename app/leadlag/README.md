@@ -26,6 +26,7 @@
 - U.S. 側の情報集合: 当日 `Close-to-Close`
 - Japan 側の評価対象: 翌営業日 `Open-to-Close`
 - 既存取得系の OHLC 形式: `{"t","o","h","l","c","v"}`
+- 履歴日足の取得は `hub.historical_payload(..., source_preference="stooq", allow_api_fallback=False)` を使い、公開CSV + ローカルキャッシュ前提で動かします
 
 ## 安全側の実装上の扱い
 

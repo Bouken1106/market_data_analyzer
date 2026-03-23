@@ -7,8 +7,8 @@
   <title>Lead-Lag Lab</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="/static/styles.css?v=20260323a" />
-  <link rel="stylesheet" href="/static/leadlag_lab.css?v=20260323a" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260323b" />
+  <link rel="stylesheet" href="/static/leadlag_lab.css?v=20260323b" />
 </head>
 
 <body class="llg-page">
@@ -39,7 +39,15 @@
     <section class="card llg-panel">
       <div class="llg-panel-head">
         <div>
-          <h2>設定</h2>
+          <h2>
+            <span class="llg-heading-row">
+              <span>設定</span>
+              <details class="param-help llg-param-help">
+                <summary>?</summary>
+                <p>このブロックでは、どの銘柄群を使い、どの期間・どの強さで正則化付き PCA を回すかを決めます。迷ったら既定値のまま Analyze を押せば基本形を確認できます。</p>
+              </details>
+            </span>
+          </h2>
           <p class="hint">論文準拠の候補 universe をクリック選択し、既存データ取得を再利用して計算します。</p>
         </div>
         <div class="llg-head-actions">
@@ -127,50 +135,129 @@
 
       <div class="llg-form-grid">
         <label>
-          <span class="label">Rolling Window L</span>
+          <span class="ml-label-row">
+            <span>Rolling Window L</span>
+            <details class="param-help llg-param-help">
+              <summary>?</summary>
+              <p>直近 L 営業日を 1 つの窓として、z-score や相関行列を計算します。小さいと変化に敏感、大きいと安定しますが反応は鈍くなります。</p>
+            </details>
+          </span>
           <input id="llg-window" type="number" min="2" step="1" />
         </label>
         <label>
-          <span class="label">Lambda</span>
+          <span class="ml-label-row">
+            <span>Lambda</span>
+            <details class="param-help llg-param-help">
+              <summary>?</summary>
+              <p>観測相関と事前相関をどれだけ混ぜるかの重みです。1 に近いほど事前構造を強く信じ、0 に近いほど足元データをそのまま使います。</p>
+            </details>
+          </span>
           <input id="llg-lambda" type="number" min="0" max="1" step="0.05" />
         </label>
         <label>
-          <span class="label">Components K</span>
+          <span class="ml-label-row">
+            <span>Components K</span>
+            <details class="param-help llg-param-help">
+              <summary>?</summary>
+              <p>PCA で残す主成分の本数です。K を増やすと多くの動きを拾えますが、ノイズも入りやすくなります。</p>
+            </details>
+          </span>
           <input id="llg-components" type="number" min="1" step="1" />
         </label>
         <label>
-          <span class="label">Quantile q</span>
+          <span class="ml-label-row">
+            <span>Quantile q</span>
+            <details class="param-help llg-param-help">
+              <summary>?</summary>
+              <p>バックテストで上位何割を買い、下位何割を売るかの分位点です。たとえば 0.30 なら上位 30% を long、下位 30% を short に使います。</p>
+            </details>
+          </span>
           <input id="llg-quantile" type="number" min="0.01" max="0.49" step="0.01" />
         </label>
         <label>
-          <span class="label">History Years</span>
+          <span class="ml-label-row">
+            <span>History Years</span>
+            <details class="param-help llg-param-help">
+              <summary>?</summary>
+              <p>計算に使う履歴年数です。長いほどサンプルは増えますが、古い市場環境も混ざります。</p>
+            </details>
+          </span>
           <input id="llg-history-years" type="number" min="5" step="1" />
         </label>
         <label>
-          <span class="label">Cfull Start</span>
+          <span class="ml-label-row">
+            <span>Cfull Start</span>
+            <details class="param-help llg-param-help">
+              <summary>?</summary>
+              <p>事前相関 Cfull を作る基準期間の開始日です。この期間から「市場の通常の結びつき方」を作ります。</p>
+            </details>
+          </span>
           <input id="llg-cfull-start" type="date" />
         </label>
         <label>
-          <span class="label">Cfull End</span>
+          <span class="ml-label-row">
+            <span>Cfull End</span>
+            <details class="param-help llg-param-help">
+              <summary>?</summary>
+              <p>事前相関 Cfull を作る基準期間の終了日です。Start と End で切り出した期間全体の相関を regularization の土台に使います。</p>
+            </details>
+          </span>
           <input id="llg-cfull-end" type="date" />
         </label>
       </div>
 
       <div class="llg-toggle-row">
-        <label class="ml-checkbox"><input id="llg-refresh" type="checkbox" /> Force refresh historical data</label>
-        <label class="ml-checkbox"><input id="llg-include-backtest" type="checkbox" checked /> Run long-short backtest</label>
-        <label class="ml-checkbox"><input id="llg-transfer-matrix" type="checkbox" /> Include latest transfer matrix</label>
+        <label class="ml-checkbox">
+          <input id="llg-refresh" type="checkbox" />
+          <span>Force refresh historical data</span>
+          <details class="param-help llg-param-help">
+            <summary>?</summary>
+            <p>保存済みの日足キャッシュを使わず、履歴を取り直します。通常はオフのままで十分です。</p>
+          </details>
+        </label>
+        <label class="ml-checkbox">
+          <input id="llg-include-backtest" type="checkbox" checked />
+          <span>Run long-short backtest</span>
+          <details class="param-help llg-param-help">
+            <summary>?</summary>
+            <p>シグナルを使って、上位銘柄を買い、下位銘柄を売る単純な long-short 戦略の成績を計算します。</p>
+          </details>
+        </label>
+        <label class="ml-checkbox">
+          <input id="llg-transfer-matrix" type="checkbox" />
+          <span>Include latest transfer matrix</span>
+          <details class="param-help llg-param-help">
+            <summary>?</summary>
+            <p>最新時点の B_t 行列をレスポンスに含めます。US 側の因子が JP 側予測へどう写るかを見る上級者向けの診断情報です。</p>
+          </details>
+        </label>
       </div>
       <p id="llg-status" class="hint">初期設定を読み込み中です。</p>
     </section>
 
     <section class="llg-two-column">
       <section class="card llg-panel">
-        <h2>データ要約</h2>
+        <h2>
+          <span class="llg-heading-row">
+            <span>データ要約</span>
+            <details class="param-help llg-param-help">
+              <summary>?</summary>
+              <p>今回の分析で実際に使えた銘柄数、生成されたシグナル本数、対象期間を要約します。まずここでデータが十分そろっているかを確認します。</p>
+            </details>
+          </span>
+        </h2>
         <div id="llg-summary-grid" class="llg-summary-grid"></div>
 
         <div class="llg-subsection">
-          <h3>Active Universe</h3>
+          <h3>
+            <span class="llg-heading-row">
+              <span>Active Universe</span>
+              <details class="param-help llg-param-help">
+                <summary>?</summary>
+                <p>最終的に分析へ投入された銘柄一覧です。選択はしていても履歴不足などで除外された銘柄はここに出ません。</p>
+              </details>
+            </span>
+          </h3>
           <div class="llg-chip-wrap">
             <div>
               <span class="label">US</span>
@@ -184,13 +271,37 @@
         </div>
 
         <div class="llg-subsection">
-          <h3>Excluded Symbols</h3>
+          <h3>
+            <span class="llg-heading-row">
+              <span>Excluded Symbols</span>
+              <details class="param-help llg-param-help">
+                <summary>?</summary>
+                <p>選択したが分析から外れた銘柄です。Reason に、履歴不足・取得失敗・系列欠損などの除外理由が表示されます。</p>
+              </details>
+            </span>
+          </h3>
           <div class="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Symbol</th>
-                  <th>Reason</th>
+                  <th>
+                    <span class="llg-th-help">
+                      <span>Symbol</span>
+                      <details class="param-help llg-param-help">
+                        <summary>?</summary>
+                        <p>銘柄コードです。US はセクター ETF、JP は日本業種 ETF を示します。</p>
+                      </details>
+                    </span>
+                  </th>
+                  <th>
+                    <span class="llg-th-help">
+                      <span>Reason</span>
+                      <details class="param-help llg-param-help">
+                        <summary>?</summary>
+                        <p>その銘柄が今回の計算から外れた理由です。まずここを見ると、何が足りずに除外されたか分かります。</p>
+                      </details>
+                    </span>
+                  </th>
                 </tr>
               </thead>
               <tbody id="llg-excluded-body"></tbody>
@@ -200,14 +311,38 @@
       </section>
 
       <section class="card llg-panel">
-        <h2>Regularization</h2>
+        <h2>
+          <span class="llg-heading-row">
+            <span>Regularization</span>
+            <details class="param-help llg-param-help">
+              <summary>?</summary>
+              <p>足元の相関だけでなく、事前に想定した市場構造を混ぜて相関行列を安定化する処理です。Cfull, C0, D0, prior subspace はその中身を示します。</p>
+            </details>
+          </span>
+        </h2>
         <p id="llg-regularization-meta" class="hint">-</p>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Direction</th>
-                <th>D0</th>
+                <th>
+                  <span class="llg-th-help">
+                    <span>Direction</span>
+                    <details class="param-help llg-param-help">
+                      <summary>?</summary>
+                      <p>prior subspace を構成する仮説方向です。市場全体、US vs JP、景気敏感 vs defensive のような軸を表します。</p>
+                    </details>
+                  </span>
+                </th>
+                <th>
+                  <span class="llg-th-help">
+                    <span>D0</span>
+                    <details class="param-help llg-param-help">
+                      <summary>?</summary>
+                      <p>各 prior 方向に対して与える固有値の強さです。大きいほど、その方向を相関構造として強く持たせます。</p>
+                    </details>
+                  </span>
+                </th>
               </tr>
             </thead>
             <tbody id="llg-d0-body"></tbody>
@@ -217,16 +352,48 @@
     </section>
 
     <section class="card llg-panel">
-      <h2>Latest Signal</h2>
+      <h2>
+        <span class="llg-heading-row">
+          <span>Latest Signal</span>
+          <details class="param-help llg-param-help">
+            <summary>?</summary>
+            <p>直近で計算できた 1 回分の予測結果です。Predicted z が高い銘柄ほど相対的に強い上昇シグナル、低いほど弱いシグナルと解釈します。</p>
+          </details>
+        </span>
+      </h2>
       <p id="llg-latest-meta" class="hint">-</p>
       <div id="llg-factor-strip" class="llg-factor-strip"></div>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>Symbol</th>
-              <th>Predicted z</th>
-              <th>Realized O-C</th>
+              <th>
+                <span class="llg-th-help">
+                  <span>Symbol</span>
+                  <details class="param-help llg-param-help">
+                    <summary>?</summary>
+                    <p>予測対象の日本 ETF 銘柄です。</p>
+                  </details>
+                </span>
+              </th>
+              <th>
+                <span class="llg-th-help">
+                  <span>Predicted z</span>
+                  <details class="param-help llg-param-help">
+                    <summary>?</summary>
+                    <p>モデルが出した翌営業日の相対スコアです。平均 0、標準偏差 1 に近い尺度で、プラスほど強気、マイナスほど弱気です。</p>
+                  </details>
+                </span>
+              </th>
+              <th>
+                <span class="llg-th-help">
+                  <span>Realized O-C</span>
+                  <details class="param-help llg-param-help">
+                    <summary>?</summary>
+                    <p>実際の翌営業日の Open-to-Close リターンです。予測と結果を見比べるための答え合わせ欄です。</p>
+                  </details>
+                </span>
+              </th>
             </tr>
           </thead>
           <tbody id="llg-latest-body"></tbody>
@@ -240,20 +407,68 @@
 
     <section class="llg-two-column">
       <section class="card llg-panel">
-        <h2>Strategy Summary</h2>
+        <h2>
+          <span class="llg-heading-row">
+            <span>Strategy Summary</span>
+            <details class="param-help llg-param-help">
+              <summary>?</summary>
+              <p>Predicted z を使って組んだ単純な long-short 戦略の成績要約です。実運用の成績ではなく、シグナルの効き方を見るための検証結果です。</p>
+            </details>
+          </span>
+        </h2>
         <div id="llg-strategy-grid" class="llg-summary-grid"></div>
       </section>
 
       <section class="card llg-panel">
-        <h2>Recent Signals</h2>
+        <h2>
+          <span class="llg-heading-row">
+            <span>Recent Signals</span>
+            <details class="param-help llg-param-help">
+              <summary>?</summary>
+              <p>直近の signal date ごとの上位・下位シグナル銘柄の履歴です。シグナルの入れ替わり方や一貫性をざっと確認できます。</p>
+            </details>
+          </span>
+        </h2>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Signal Date</th>
-                <th>Target Date</th>
-                <th>Top</th>
-                <th>Bottom</th>
+                <th>
+                  <span class="llg-th-help">
+                    <span>Signal Date</span>
+                    <details class="param-help llg-param-help">
+                      <summary>?</summary>
+                      <p>US 側の情報がそろって予測を作った日です。ここで見えている US データを使って、次の JP 営業日を予測します。</p>
+                    </details>
+                  </span>
+                </th>
+                <th>
+                  <span class="llg-th-help">
+                    <span>Target Date</span>
+                    <details class="param-help llg-param-help">
+                      <summary>?</summary>
+                      <p>予測の当たり外れを評価する日本側の対象日です。通常は Signal Date の次の日本営業日になります。</p>
+                    </details>
+                  </span>
+                </th>
+                <th>
+                  <span class="llg-th-help">
+                    <span>Top</span>
+                    <details class="param-help llg-param-help">
+                      <summary>?</summary>
+                      <p>Predicted z が高かった銘柄群です。long 候補として使われます。</p>
+                    </details>
+                  </span>
+                </th>
+                <th>
+                  <span class="llg-th-help">
+                    <span>Bottom</span>
+                    <details class="param-help llg-param-help">
+                      <summary>?</summary>
+                      <p>Predicted z が低かった銘柄群です。short 候補として使われます。</p>
+                    </details>
+                  </span>
+                </th>
               </tr>
             </thead>
             <tbody id="llg-recent-body"></tbody>
@@ -263,8 +478,8 @@
     </section>
   </main>
 
-  <script src="/static/leadlag_lab.js?v=20260323a" defer></script>
-  <script src="/static/page_menu.js?v=20260323a" defer></script>
+  <script src="/static/leadlag_lab.js?v=20260323b" defer></script>
+  <script src="/static/page_menu.js?v=20260323b" defer></script>
 </body>
 
 </html>

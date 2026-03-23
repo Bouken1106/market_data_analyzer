@@ -55,6 +55,28 @@ const selectorState = {
   },
 };
 
+const summaryMetricHelp = {
+  "Included US": "今回の計算で実際に使えた US 銘柄数です。選択していても履歴不足などで除外された銘柄は含みません。",
+  "Included JP": "今回の計算で実際に使えた JP 銘柄数です。最終的な予測対象になった日本 ETF の本数を示します。",
+  Signals: "生成できた signal date の本数です。十分な履歴がある日だけシグナルが作られます。",
+  Range: "今回の分析で実際に使ったデータ期間です。前処理後に使えた最初の日から最後の日までを表します。",
+};
+
+const strategyMetricHelp = {
+  "Annual Return": "long-short バックテストの年率リターンです。複利換算で 1 年あたりどれだけ増減したかを示します。",
+  "Annual Volatility": "戦略リターンの年率換算の値動きの大きさです。高いほど成績のブレが大きいです。",
+  "Return / Risk": "年率リターンを年率ボラティリティで割った比率です。大きいほど、同じリスクに対して効率よく稼げています。",
+  "Max Drawdown": "運用期間中の最大の落ち込み幅です。ピークからどれだけ深く下げたかを示します。",
+  "Signal Days": "実際に売買シグナルを出せた日数です。",
+  "Average Breadth": "1 回の signal date あたりに long/short へ配分された平均銘柄数です。広いほど分散が効きます。",
+};
+
+const priorDirectionHelp = {
+  global_equal_weight: "全銘柄が同じ向きに動く、市場全体の共通因子を表す prior 方向です。",
+  country_spread: "US 群と JP 群の強弱差を表す prior 方向です。国ごとの相対優位を捉えます。",
+  cyclical_defensive: "景気敏感群と defensive 群の差を表す prior 方向です。",
+};
+
 function setStatus(message, isError = false) {
   statusEl.textContent = message || "";
   statusEl.classList.toggle("error", Boolean(isError));
@@ -97,6 +119,31 @@ function closeParamHelpPopovers(exceptDetail = null) {
     if (detail === exceptDetail) return;
     detail.removeAttribute("open");
   });
+}
+
+function buildHelpDetails(text) {
+  if (!text) return null;
+  const details = document.createElement("details");
+  details.className = "param-help llg-param-help";
+  const summary = document.createElement("summary");
+  summary.textContent = "?";
+  const body = document.createElement("p");
+  body.textContent = text;
+  details.append(summary, body);
+  return details;
+}
+
+function buildLabeledHelpRow(label, helpText, className = "") {
+  const row = document.createElement("span");
+  row.className = ["llg-heading-row", className].filter(Boolean).join(" ");
+  const labelEl = document.createElement("span");
+  labelEl.textContent = label;
+  row.appendChild(labelEl);
+  const details = buildHelpDetails(helpText);
+  if (details) {
+    row.appendChild(details);
+  }
+  return row;
 }
 
 function summarizeSelection(values, limit = 6) {
@@ -342,7 +389,12 @@ function renderSummaryCards(items) {
   items.forEach((item) => {
     const card = document.createElement("div");
     card.className = "llg-metric";
-    card.innerHTML = `<span class="label">${item.label}</span><strong>${item.value}</strong>`;
+    const labelEl = document.createElement("span");
+    labelEl.className = "label";
+    labelEl.appendChild(buildLabeledHelpRow(item.label, item.help || null));
+    const valueEl = document.createElement("strong");
+    valueEl.textContent = String(item.value ?? "-");
+    card.append(labelEl, valueEl);
     summaryGridEl.appendChild(card);
   });
 }
@@ -389,7 +441,11 @@ function renderRegularization(regularization, latestSignal) {
   }
   names.forEach((name, index) => {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${name}</td><td>${fmtNum(d0[index], 6)}</td>`;
+    const nameTd = document.createElement("td");
+    nameTd.appendChild(buildLabeledHelpRow(name, priorDirectionHelp[name] || null, "llg-th-help"));
+    const valueTd = document.createElement("td");
+    valueTd.textContent = fmtNum(d0[index], 6);
+    tr.append(nameTd, valueTd);
     d0BodyEl.appendChild(tr);
   });
 }
@@ -450,7 +506,12 @@ function renderStrategy(strategy) {
   ].forEach(([label, value]) => {
     const card = document.createElement("div");
     card.className = "llg-metric";
-    card.innerHTML = `<span class="label">${label}</span><strong>${value}</strong>`;
+    const labelEl = document.createElement("span");
+    labelEl.className = "label";
+    labelEl.appendChild(buildLabeledHelpRow(label, strategyMetricHelp[label] || null));
+    const valueEl = document.createElement("strong");
+    valueEl.textContent = String(value ?? "-");
+    card.append(labelEl, valueEl);
     strategyGridEl.appendChild(card);
   });
 }
@@ -478,10 +539,26 @@ function renderResult(result) {
   const summary = result?.data_summary || {};
   const range = summary.range || {};
   renderSummaryCards([
-    { label: "Included US", value: Array.isArray(summary.included_us_symbols) ? summary.included_us_symbols.length : 0 },
-    { label: "Included JP", value: Array.isArray(summary.included_jp_symbols) ? summary.included_jp_symbols.length : 0 },
-    { label: "Signals", value: range.generated_signals ?? "-" },
-    { label: "Range", value: range.from && range.to ? `${range.from} -> ${range.to}` : "-" },
+    {
+      label: "Included US",
+      value: Array.isArray(summary.included_us_symbols) ? summary.included_us_symbols.length : 0,
+      help: summaryMetricHelp["Included US"],
+    },
+    {
+      label: "Included JP",
+      value: Array.isArray(summary.included_jp_symbols) ? summary.included_jp_symbols.length : 0,
+      help: summaryMetricHelp["Included JP"],
+    },
+    {
+      label: "Signals",
+      value: range.generated_signals ?? "-",
+      help: summaryMetricHelp.Signals,
+    },
+    {
+      label: "Range",
+      value: range.from && range.to ? `${range.from} -> ${range.to}` : "-",
+      help: summaryMetricHelp.Range,
+    },
   ]);
   renderChipList(activeUsEl, summary.included_us_symbols);
   renderChipList(activeJpEl, summary.included_jp_symbols);

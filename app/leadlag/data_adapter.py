@@ -30,7 +30,13 @@ class HubHistoricalLeadLagAdapter:
         refresh: bool = False,
     ) -> HistoricalPointBatch:
         tasks = [
-            self.hub.historical_payload(symbol=symbol, years=self.history_years, refresh=refresh)
+            self.hub.historical_payload(
+                symbol=symbol,
+                years=self.history_years,
+                refresh=refresh,
+                source_preference="stooq",
+                allow_api_fallback=False,
+            )
             for symbol in symbols
         ]
         responses = await asyncio.gather(*tasks, return_exceptions=True)

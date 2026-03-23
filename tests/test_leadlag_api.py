@@ -26,7 +26,7 @@ class _FakeHub:
     async def stop(self) -> None:
         return None
 
-    async def historical_payload(self, symbol: str, years: int = 30, refresh: bool = False):
+    async def historical_payload(self, symbol: str, years: int = 30, refresh: bool = False, **kwargs):
         return {"symbol": symbol, "points": self.payloads[symbol]}
 
 
@@ -85,6 +85,7 @@ class LeadLagApiTest(unittest.TestCase):
         self.assertEqual(page_response.status_code, 200)
         self.assertEqual(defaults_response.status_code, 200)
         self.assertEqual(analyze_response.status_code, 200)
+        self.assertIn("直近 L 営業日を 1 つの窓として", page_response.text)
         self.assertIn("history_years", defaults_response.json()["defaults"])
         self.assertEqual(
             defaults_response.json()["defaults"]["universe"]["us"],
