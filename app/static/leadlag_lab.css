@@ -120,6 +120,8 @@
   background: rgba(255, 255, 255, 0.03);
   color: var(--text-color, #f3f8fb);
   text-align: left;
+  line-height: 1.25;
+  font-size: 0.85rem;
   transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
 }
 
@@ -202,6 +204,12 @@
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 8px;
+}
+
+.llg-chip-list .pill {
+  max-width: 100%;
+  white-space: normal;
+  line-height: 1.2;
 }
 
 .llg-subsection {

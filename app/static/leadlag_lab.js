@@ -79,6 +79,37 @@ const priorDirectionHelp = {
   cyclical_defensive: "景気敏感群と defensive 群の差を表す prior 方向です。",
 };
 
+const SYMBOL_DISPLAY_NAMES = {
+  XLB: "Materials",
+  XLC: "Communication Services",
+  XLE: "Energy",
+  XLF: "Financials",
+  XLI: "Industrials",
+  XLK: "Technology",
+  XLP: "Consumer Staples",
+  XLRE: "Real Estate",
+  XLU: "Utilities",
+  XLV: "Health Care",
+  XLY: "Consumer Discretionary",
+  "1617.T": "食品",
+  "1618.T": "エネルギー資源",
+  "1619.T": "建設・資材",
+  "1620.T": "素材・化学",
+  "1621.T": "医薬品",
+  "1622.T": "自動車・輸送機",
+  "1623.T": "鉄鋼・非鉄",
+  "1624.T": "機械",
+  "1625.T": "電機・精密",
+  "1626.T": "情報通信・サービスその他",
+  "1627.T": "電力・ガス",
+  "1628.T": "運輸・物流",
+  "1629.T": "商社・卸売",
+  "1630.T": "小売",
+  "1631.T": "銀行",
+  "1632.T": "金融（除く銀行）",
+  "1633.T": "不動産",
+};
+
 const STRATEGY_CHART_WIDTH = 880;
 const STRATEGY_CHART_HEIGHT = 320;
 const STRATEGY_CHART_PAD_X = 62;
@@ -150,6 +181,13 @@ function formatChartDateLabel(value) {
     return dt.toLocaleDateString("ja-JP", { year: "2-digit", month: "2-digit", day: "2-digit" });
   }
   return raw.includes(" ") ? raw.split(" ")[0] : raw;
+}
+
+function formatSymbolDisplay(symbol) {
+  const normalized = String(symbol || "").trim().toUpperCase();
+  if (!normalized) return "-";
+  const name = SYMBOL_DISPLAY_NAMES[normalized];
+  return name ? `${normalized} (${name})` : normalized;
 }
 
 function fetchJson(url, options) {
@@ -274,7 +312,8 @@ function renderOptionGrid(targetEl, symbols, selectedSet, kind) {
     if (selectedSet.has(symbol)) {
       button.classList.add("is-active");
     }
-    button.textContent = symbol;
+    button.textContent = formatSymbolDisplay(symbol);
+    button.title = symbol;
     targetEl.appendChild(button);
   });
 }
@@ -467,7 +506,8 @@ function renderChipList(targetEl, symbols) {
   values.forEach((symbol) => {
     const chip = document.createElement("span");
     chip.className = "pill chip-cyan";
-    chip.textContent = symbol;
+    chip.textContent = formatSymbolDisplay(symbol);
+    chip.title = symbol;
     targetEl.appendChild(chip);
   });
 }
