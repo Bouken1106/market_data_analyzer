@@ -101,7 +101,7 @@ class StrategyEvaluationRequest(BaseModel):
     refresh: bool = False
 
 
-class StockMlPageActionRequest(BaseModel):
+class StockMlPageRequestBase(BaseModel):
     prediction_date: str | None = None
     universe_filter: str = "jp_large_cap_stooq_v1"
     model_family: str = "LightGBM Classifier"
@@ -113,31 +113,25 @@ class StockMlPageActionRequest(BaseModel):
     random_seed: int = 42
     train_note: str = ""
     run_note: str = ""
-    search_query: str = ""
-    confirm_regenerate: bool = False
     refresh: bool = False
 
     def stock_page_params(self) -> StockMlPageParams:
-        return StockMlPageParams(
-            prediction_date=self.prediction_date,
-            universe_filter=self.universe_filter,
-            model_family=self.model_family,
-            feature_set=self.feature_set,
-            cost_buffer=self.cost_buffer,
-            train_window_months=self.train_window_months,
-            gap_days=self.gap_days,
-            valid_window_months=self.valid_window_months,
-            random_seed=self.random_seed,
-            train_note=self.train_note,
-            run_note=self.run_note,
-            refresh=self.refresh,
-        )
+        return StockMlPageParams.from_mapping(self.model_dump())
 
     def stock_page_kwargs(self) -> dict[str, Any]:
         return self.stock_page_params().service_kwargs()
 
     def stock_page_config_hash(self) -> str:
         return self.stock_page_params().config_hash()
+
+
+class StockMlPageQueryRequest(StockMlPageRequestBase):
+    pass
+
+
+class StockMlPageActionRequest(StockMlPageRequestBase):
+    search_query: str = ""
+    confirm_regenerate: bool = False
 
 
 class StockMlModelAdoptionRequest(StockMlPageActionRequest):

@@ -48,6 +48,7 @@ class ApplicationRoutesTest(unittest.TestCase):
             "/compare-lab",
             "/leadlag-lab",
             "/historical/{symbol}",
+            "/api/ml/models",
             "/api/strategy/evaluate",
             "/api/ml/jobs/{job_id}",
         }
@@ -60,6 +61,7 @@ class ApplicationRoutesTest(unittest.TestCase):
             self.assertEqual(client.get("/compare-lab").status_code, 200)
             self.assertEqual(client.get("/leadlag-lab").status_code, 200)
             self.assertEqual(client.get("/historical/AAPL").status_code, 200)
+            self.assertEqual(client.get("/api/ml/models").status_code, 200)
 
             ml_job_response = client.get("/api/ml/jobs/missing-job")
             self.assertEqual(ml_job_response.status_code, 404)

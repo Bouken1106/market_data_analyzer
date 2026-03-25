@@ -3,18 +3,15 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from .api.deps import init_routes
 from .bootstrap import AppServices, build_services
+from .paths import STATIC_DIR
 from .routes import router
 from .static_pages import is_no_cache_path
-
-BASE_DIR = Path(__file__).resolve().parent
-STATIC_DIR = BASE_DIR / "static"
 
 
 def create_lifespan(hub):

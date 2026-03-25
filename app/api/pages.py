@@ -2,21 +2,17 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from fastapi import APIRouter
 from fastapi.responses import FileResponse
 
-from ..static_pages import HISTORICAL_PAGE_ROUTE, STATIC_PAGES
+from ..paths import static_file_path
+from ..static_pages import HISTORICAL_PAGE_FILE, HISTORICAL_PAGE_ROUTE, STATIC_PAGES
 
 router = APIRouter()
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-STATIC_DIR = BASE_DIR / "static"
-
 
 def _static_page(filename: str) -> FileResponse:
-    return FileResponse(STATIC_DIR / filename)
+    return FileResponse(static_file_path(filename))
 
 
 def _build_static_page_handler(filename: str):
@@ -39,4 +35,4 @@ for page in STATIC_PAGES:
 @router.get(HISTORICAL_PAGE_ROUTE, include_in_schema=False)
 async def historical_page(symbol: str) -> FileResponse:
     del symbol
-    return _static_page("historical.html")
+    return _static_page(HISTORICAL_PAGE_FILE)

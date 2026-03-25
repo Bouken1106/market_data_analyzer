@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
 from ..config import LOGGER, ML_HISTORY_DEFAULT_MONTHS
@@ -25,6 +25,7 @@ from ..models import (
     QuantileLstmJobRequest,
     StockMlModelAdoptionRequest,
     StockMlPageActionRequest,
+    StockMlPageQueryRequest,
 )
 from ..stock_ml_page_params import StockMlPageParams
 from ..utils import normalize_ml_history_months, normalize_symbols, ok_json_response, utc_now_iso
@@ -32,6 +33,7 @@ from .deps import HubDep, MlJobStoreDep, StockMlPageStoreDep
 from .validators import require_symbol
 
 router = APIRouter()
+StockMlPageQueryDep = Annotated[StockMlPageQueryRequest, Depends()]
 
 
 def _spec_job_status(status: str | None) -> str:
@@ -78,37 +80,6 @@ def _stock_ml_page_service(hub: HubDep, stock_ml_page_store: StockMlPageStoreDep
 
 def _normalize_job_symbol(raw_symbol: str) -> str:
     return require_symbol(raw_symbol, detail="Symbolを入力してください。")
-
-
-def _build_stock_page_params(
-    *,
-    prediction_date: str | None,
-    universe_filter: str,
-    model_family: str,
-    feature_set: str,
-    cost_buffer: float,
-    train_window_months: int,
-    gap_days: int,
-    valid_window_months: int,
-    random_seed: int,
-    train_note: str,
-    run_note: str,
-    refresh: bool = False,
-) -> StockMlPageParams:
-    return StockMlPageParams(
-        prediction_date=prediction_date,
-        universe_filter=universe_filter,
-        model_family=model_family,
-        feature_set=feature_set,
-        cost_buffer=cost_buffer,
-        train_window_months=train_window_months,
-        gap_days=gap_days,
-        valid_window_months=valid_window_months,
-        random_seed=random_seed,
-        train_note=train_note,
-        run_note=run_note,
-        refresh=refresh,
-    )
 
 
 async def _call_stock_page_service(
@@ -321,38 +292,14 @@ async def _run_stock_page_job(
 async def ml_models(
     hub: HubDep,
     stock_ml_page_store: StockMlPageStoreDep,
+    query: StockMlPageQueryDep,
     scope: str | None = None,
-    prediction_date: str | None = None,
-    universe_filter: str = "jp_large_cap_stooq_v1",
-    model_family: str = "LightGBM Classifier",
-    feature_set: str = "base_v1",
-    cost_buffer: float = 0.0,
-    train_window_months: int = 12,
-    gap_days: int = 5,
-    valid_window_months: int = 1,
-    random_seed: int = 42,
-    train_note: str = "",
-    run_note: str = "",
-    refresh: bool = False,
 ) -> JSONResponse:
     normalized_scope = str(scope or "").strip().lower()
     if normalized_scope not in {"stock", "stock-page", "registry"}:
         return ok_json_response(models=ML_MODEL_CATALOG)
 
-    params = _build_stock_page_params(
-        prediction_date=prediction_date,
-        universe_filter=universe_filter,
-        model_family=model_family,
-        feature_set=feature_set,
-        cost_buffer=cost_buffer,
-        train_window_months=train_window_months,
-        gap_days=gap_days,
-        valid_window_months=valid_window_months,
-        random_seed=random_seed,
-        train_note=train_note,
-        run_note=run_note,
-        refresh=refresh,
-    )
+    params = query.stock_page_params()
     service = _stock_ml_page_service(hub, stock_ml_page_store)
     snapshot = await _call_stock_page_service(service.build_snapshot, params=params)
     return ok_json_response(**_stock_model_registry_payload(snapshot))
@@ -362,33 +309,9 @@ async def ml_models(
 async def stock_ml_prediction_daily(
     hub: HubDep,
     stock_ml_page_store: StockMlPageStoreDep,
-    prediction_date: str | None = None,
-    universe_filter: str = "jp_large_cap_stooq_v1",
-    model_family: str = "LightGBM Classifier",
-    feature_set: str = "base_v1",
-    cost_buffer: float = 0.0,
-    train_window_months: int = 12,
-    gap_days: int = 5,
-    valid_window_months: int = 1,
-    random_seed: int = 42,
-    train_note: str = "",
-    run_note: str = "",
-    refresh: bool = False,
+    query: StockMlPageQueryDep,
 ) -> JSONResponse:
-    params = _build_stock_page_params(
-        prediction_date=prediction_date,
-        universe_filter=universe_filter,
-        model_family=model_family,
-        feature_set=feature_set,
-        cost_buffer=cost_buffer,
-        train_window_months=train_window_months,
-        gap_days=gap_days,
-        valid_window_months=valid_window_months,
-        random_seed=random_seed,
-        train_note=train_note,
-        run_note=run_note,
-        refresh=refresh,
-    )
+    params = query.stock_page_params()
     service = _stock_ml_page_service(hub, stock_ml_page_store)
     snapshot = await _call_stock_page_service(service.build_snapshot, params=params)
     return ok_json_response(**_prediction_daily_payload(snapshot))
@@ -479,33 +402,9 @@ async def stock_ml_training_job_status(job_id: str, ml_job_store: MlJobStoreDep)
 async def stock_ml_backtests(
     hub: HubDep,
     stock_ml_page_store: StockMlPageStoreDep,
-    prediction_date: str | None = None,
-    universe_filter: str = "jp_large_cap_stooq_v1",
-    model_family: str = "LightGBM Classifier",
-    feature_set: str = "base_v1",
-    cost_buffer: float = 0.0,
-    train_window_months: int = 12,
-    gap_days: int = 5,
-    valid_window_months: int = 1,
-    random_seed: int = 42,
-    train_note: str = "",
-    run_note: str = "",
-    refresh: bool = False,
+    query: StockMlPageQueryDep,
 ) -> JSONResponse:
-    params = _build_stock_page_params(
-        prediction_date=prediction_date,
-        universe_filter=universe_filter,
-        model_family=model_family,
-        feature_set=feature_set,
-        cost_buffer=cost_buffer,
-        train_window_months=train_window_months,
-        gap_days=gap_days,
-        valid_window_months=valid_window_months,
-        random_seed=random_seed,
-        train_note=train_note,
-        run_note=run_note,
-        refresh=refresh,
-    )
+    params = query.stock_page_params()
     service = _stock_ml_page_service(hub, stock_ml_page_store)
     snapshot = await _call_stock_page_service(service.build_snapshot, params=params)
     return ok_json_response(**_backtest_payload(snapshot))
@@ -563,33 +462,9 @@ async def stock_ml_model_adopt_alias(
 async def stock_ml_ops_status(
     hub: HubDep,
     stock_ml_page_store: StockMlPageStoreDep,
-    prediction_date: str | None = None,
-    universe_filter: str = "jp_large_cap_stooq_v1",
-    model_family: str = "LightGBM Classifier",
-    feature_set: str = "base_v1",
-    cost_buffer: float = 0.0,
-    train_window_months: int = 12,
-    gap_days: int = 5,
-    valid_window_months: int = 1,
-    random_seed: int = 42,
-    train_note: str = "",
-    run_note: str = "",
-    refresh: bool = False,
+    query: StockMlPageQueryDep,
 ) -> JSONResponse:
-    params = _build_stock_page_params(
-        prediction_date=prediction_date,
-        universe_filter=universe_filter,
-        model_family=model_family,
-        feature_set=feature_set,
-        cost_buffer=cost_buffer,
-        train_window_months=train_window_months,
-        gap_days=gap_days,
-        valid_window_months=valid_window_months,
-        random_seed=random_seed,
-        train_note=train_note,
-        run_note=run_note,
-        refresh=refresh,
-    )
+    params = query.stock_page_params()
     service = _stock_ml_page_service(hub, stock_ml_page_store)
     snapshot = await _call_stock_page_service(service.build_snapshot, params=params)
     return ok_json_response(**_ops_status_payload(snapshot))
@@ -599,33 +474,9 @@ async def stock_ml_ops_status(
 async def stock_ml_page_snapshot(
     hub: HubDep,
     stock_ml_page_store: StockMlPageStoreDep,
-    prediction_date: str | None = None,
-    universe_filter: str = "jp_large_cap_stooq_v1",
-    model_family: str = "LightGBM Classifier",
-    feature_set: str = "base_v1",
-    cost_buffer: float = 0.0,
-    train_window_months: int = 12,
-    gap_days: int = 5,
-    valid_window_months: int = 1,
-    random_seed: int = 42,
-    train_note: str = "",
-    run_note: str = "",
-    refresh: bool = False,
+    query: StockMlPageQueryDep,
 ) -> JSONResponse:
-    params = _build_stock_page_params(
-        prediction_date=prediction_date,
-        universe_filter=universe_filter,
-        model_family=model_family,
-        feature_set=feature_set,
-        cost_buffer=cost_buffer,
-        train_window_months=train_window_months,
-        gap_days=gap_days,
-        valid_window_months=valid_window_months,
-        random_seed=random_seed,
-        train_note=train_note,
-        run_note=run_note,
-        refresh=refresh,
-    )
+    params = query.stock_page_params()
     service = _stock_ml_page_service(hub, stock_ml_page_store)
     payload = await _call_stock_page_service(service.build_snapshot, params=params)
     return ok_json_response(**payload)

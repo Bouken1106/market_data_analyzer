@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass
-from typing import Any
+from dataclasses import asdict, dataclass, fields
+from typing import Any, Mapping
 
 
 def stock_ml_page_config_hash(
@@ -49,6 +49,14 @@ class StockMlPageParams:
     train_note: str = ""
     run_note: str = ""
     refresh: bool = False
+
+    @classmethod
+    def field_names(cls) -> tuple[str, ...]:
+        return tuple(field.name for field in fields(cls))
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, Any]) -> "StockMlPageParams":
+        return cls(**{name: mapping[name] for name in cls.field_names() if name in mapping})
 
     def service_kwargs(self) -> dict[str, Any]:
         return asdict(self)

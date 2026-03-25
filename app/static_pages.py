@@ -24,14 +24,20 @@ STATIC_PAGES: tuple[StaticPage, ...] = (
     StaticPage("/leadlag-lab", "leadlag_lab.html"),
 )
 
+HISTORICAL_PAGE_FILE = "historical.html"
 HISTORICAL_PAGE_ROUTE = "/historical/{symbol}"
 HISTORICAL_PAGE_PATH_PREFIX = "/historical/"
-NO_CACHE_PATHS = frozenset(
+STATIC_ASSET_NO_CACHE_PATHS = frozenset(
     {
-        *(page.route_path for page in STATIC_PAGES),
         "/static/app.terminal.js",
         "/static/styles.css",
         "/static/index.html",
+    }
+)
+NO_CACHE_PATHS = frozenset(
+    {
+        *(page.route_path for page in STATIC_PAGES),
+        *STATIC_ASSET_NO_CACHE_PATHS,
     }
 )
 

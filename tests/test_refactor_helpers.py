@@ -1,11 +1,45 @@
 import unittest
 
-from app.models import StockMlPageActionRequest
+from app.models import StockMlPageActionRequest, StockMlPageQueryRequest
 from app.static_pages import HISTORICAL_PAGE_PATH_PREFIX, STATIC_PAGES, is_no_cache_path
 from app.stock_ml_page_params import StockMlPageParams
 
 
 class StockMlPageRequestHelpersTest(unittest.TestCase):
+    def test_query_request_builds_snapshot_kwargs_from_shared_fields(self) -> None:
+        req = StockMlPageQueryRequest(
+            prediction_date="2026-03-18",
+            universe_filter="jp_large_cap_stooq_v1",
+            model_family="LightGBM Classifier",
+            feature_set="base_v1",
+            cost_buffer=0.002,
+            train_window_months=24,
+            gap_days=3,
+            valid_window_months=2,
+            random_seed=7,
+            train_note="train memo",
+            run_note="run memo",
+            refresh=True,
+        )
+
+        self.assertEqual(
+            req.stock_page_kwargs(),
+            StockMlPageParams(
+                prediction_date="2026-03-18",
+                universe_filter="jp_large_cap_stooq_v1",
+                model_family="LightGBM Classifier",
+                feature_set="base_v1",
+                cost_buffer=0.002,
+                train_window_months=24,
+                gap_days=3,
+                valid_window_months=2,
+                random_seed=7,
+                train_note="train memo",
+                run_note="run memo",
+                refresh=True,
+            ).service_kwargs(),
+        )
+
     def test_action_request_builds_snapshot_kwargs_without_action_only_fields(self) -> None:
         req = StockMlPageActionRequest(
             prediction_date="2026-03-18",
@@ -40,6 +74,44 @@ class StockMlPageRequestHelpersTest(unittest.TestCase):
                 run_note="run memo",
                 refresh=True,
             ).service_kwargs(),
+        )
+
+    def test_stock_page_params_from_mapping_ignores_action_only_fields(self) -> None:
+        params = StockMlPageParams.from_mapping(
+            {
+                "prediction_date": "2026-03-18",
+                "universe_filter": "jp_large_cap_stooq_v1",
+                "model_family": "LightGBM Classifier",
+                "feature_set": "base_v1",
+                "cost_buffer": 0.002,
+                "train_window_months": 24,
+                "gap_days": 3,
+                "valid_window_months": 2,
+                "random_seed": 7,
+                "train_note": "train memo",
+                "run_note": "run memo",
+                "refresh": True,
+                "search_query": "7203",
+                "confirm_regenerate": True,
+            }
+        )
+
+        self.assertEqual(
+            params,
+            StockMlPageParams(
+                prediction_date="2026-03-18",
+                universe_filter="jp_large_cap_stooq_v1",
+                model_family="LightGBM Classifier",
+                feature_set="base_v1",
+                cost_buffer=0.002,
+                train_window_months=24,
+                gap_days=3,
+                valid_window_months=2,
+                random_seed=7,
+                train_note="train memo",
+                run_note="run memo",
+                refresh=True,
+            ),
         )
 
     def test_action_request_config_hash_ignores_notes_and_action_flags(self) -> None:
