@@ -229,6 +229,138 @@
   background: rgba(0, 0, 0, 0.25);
 }
 
+.llg-page .chart-wrap {
+  flex: 0 0 auto;
+  min-height: auto;
+  border: 1px solid rgba(68, 99, 130, 0.45);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(12, 18, 26, 0.95), rgba(9, 14, 20, 0.95));
+  padding: 6px;
+  overflow: visible;
+  position: relative;
+}
+
+.llg-page .chart-caption {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  font-family: var(--font-mono);
+  margin-bottom: 4px;
+}
+
+.llg-page .chart-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.llg-page .chart-zoom-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.llg-page .chart-zoom-actions .minor-action {
+  min-width: 34px;
+  padding: 2px 8px;
+}
+
+.llg-page .chart-controls {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding-bottom: 4px;
+  background: linear-gradient(180deg, rgba(12, 18, 26, 0.98), rgba(12, 18, 26, 0.9));
+}
+
+.llg-page .chart-hint {
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+
+.llg-page .chart-scroll-shell {
+  min-height: 300px;
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: visible;
+  border: 1px solid rgba(68, 99, 130, 0.35);
+  border-radius: 8px;
+  background: rgba(8, 14, 22, 0.35);
+}
+
+.llg-page .chart-canvas-host {
+  position: relative;
+  min-width: 640px;
+}
+
+.llg-page .symbol-chart {
+  width: 100%;
+  min-height: 300px;
+}
+
+.llg-page .symbol-chart.interactive {
+  cursor: grab;
+}
+
+.llg-page .symbol-chart.interactive.dragging {
+  cursor: grabbing;
+}
+
+.llg-page .symbol-chart-bg {
+  fill: transparent;
+}
+
+.llg-page .symbol-chart-line {
+  fill: none;
+  stroke: #39d2c0;
+  stroke-width: 2;
+  filter: drop-shadow(0 0 5px rgba(57, 210, 192, 0.35));
+}
+
+.llg-page .symbol-chart-point {
+  fill: #39d2c0;
+}
+
+.llg-page .llg-chart-hit-point {
+  fill: transparent;
+  stroke: transparent;
+  pointer-events: all;
+}
+
+.llg-page .symbol-chart-grid-line {
+  stroke: rgba(90, 118, 146, 0.32);
+  stroke-width: 1;
+}
+
+.llg-page .llg-chart-zero-line {
+  stroke: rgba(238, 176, 91, 0.5);
+}
+
+.llg-page .symbol-chart-axis-line {
+  stroke: rgba(128, 156, 184, 0.55);
+  stroke-width: 1;
+}
+
+.llg-page .symbol-chart-axis-tick {
+  stroke: rgba(128, 156, 184, 0.7);
+  stroke-width: 1;
+}
+
+.llg-page .symbol-chart-axis-label {
+  fill: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.llg-page .chart-empty {
+  min-height: 220px;
+  display: grid;
+  place-items: center;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+
 @media (max-width: 720px) {
   .llg-panel {
     padding: 16px;
@@ -241,5 +373,9 @@
 
   .llg-head-actions {
     justify-content: flex-start;
+  }
+
+  .llg-page .chart-canvas-host {
+    min-width: 560px;
   }
 }

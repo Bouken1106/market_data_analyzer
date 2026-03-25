@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="/static/styles.css?v=20260323c" />
-  <link rel="stylesheet" href="/static/leadlag_lab.css?v=20260323b" />
+  <link rel="stylesheet" href="/static/leadlag_lab.css?v=20260325c" />
 </head>
 
 <body class="llg-page">
@@ -417,6 +417,19 @@
           </span>
         </h2>
         <div id="llg-strategy-grid" class="llg-summary-grid"></div>
+        <div class="llg-subsection">
+          <h3>
+            <span class="llg-heading-row">
+              <span>Annual Return Trace</span>
+              <details class="param-help llg-param-help">
+                <summary>?</summary>
+                <p>観測できた target date ごとに、その日までの平均日次 long-short リターンを年率換算した推移を描きます。最終点は Strategy Summary の Annual Return と整合します。</p>
+              </details>
+            </span>
+          </h3>
+          <p id="llg-strategy-chart-meta" class="hint">観測できた営業日があれば、ここに年率リターンの推移を表示します。</p>
+          <div id="llg-strategy-chart" class="chart-wrap llg-strategy-chart"></div>
+        </div>
       </section>
 
       <section class="card llg-panel">
@@ -478,7 +491,7 @@
     </section>
   </main>
 
-  <script src="/static/leadlag_lab.js?v=20260323b" defer></script>
+  <script src="/static/leadlag_lab.js?v=20260325c" defer></script>
   <script src="/static/help_popover.js?v=20260323a" defer></script>
   <script src="/static/page_menu.js?v=20260323b" defer></script>
 </body>
