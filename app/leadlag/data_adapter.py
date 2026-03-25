@@ -6,6 +6,8 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
+from fastapi import HTTPException
+
 
 @dataclass(frozen=True)
 class HistoricalPointBatch:
@@ -48,7 +50,7 @@ class HubHistoricalLeadLagAdapter:
         for index, response in enumerate(responses):
             symbol = symbols[index]
             if isinstance(response, Exception):
-                failures[symbol] = str(response)
+                failures[symbol] = self._format_failure_reason(response)
                 continue
 
             points = response.get("points") if isinstance(response, dict) else None
@@ -69,3 +71,12 @@ class HubHistoricalLeadLagAdapter:
             point_counts=point_counts,
             failures=failures,
         )
+
+    @staticmethod
+    def _format_failure_reason(error: Exception) -> str:
+        if isinstance(error, HTTPException):
+            detail = error.detail
+            if isinstance(detail, str) and detail.strip():
+                return detail.strip()
+            return f"HTTP {error.status_code}"
+        return str(error).strip() or error.__class__.__name__

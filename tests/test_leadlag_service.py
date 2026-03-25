@@ -1,6 +1,9 @@
 import asyncio
 import unittest
 
+from fastapi import HTTPException
+
+from app.leadlag.data_adapter import HubHistoricalLeadLagAdapter
 from app.leadlag.schemas import LeadLagConfig
 from app.leadlag.service import LeadLagService
 
@@ -78,6 +81,33 @@ class LeadLagServiceTest(unittest.TestCase):
         self.assertTrue(hub.calls)
         self.assertTrue(all(call.get("source_preference") == "stooq" for call in hub.calls))
         self.assertTrue(all(call.get("allow_api_fallback") is False for call in hub.calls))
+
+    def test_adapter_exposes_specific_fetch_failure_reason(self) -> None:
+        class _FailingHub:
+            async def historical_payload(self, symbol: str, years: int = 30, refresh: bool = False, **kwargs):
+                del years, refresh, kwargs
+                if symbol == "JP2.T":
+                    raise HTTPException(status_code=404, detail="Stooq daily CSV fetch failed for JP2.T. All connection attempts failed")
+                return {
+                    "symbol": symbol,
+                    "points": _build_points(
+                        [
+                            "2024-01-01",
+                            "2024-01-02",
+                            "2024-01-03",
+                        ],
+                        [100, 101, 102],
+                        [101, 102, 103],
+                    ),
+                }
+
+        adapter = HubHistoricalLeadLagAdapter(_FailingHub(), history_years=10)
+        batch = asyncio.run(adapter.fetch_points(("USA1", "JP1.T", "JP2.T")))
+        excluded = batch.failures
+        self.assertEqual(
+            excluded["JP2.T"],
+            "Stooq daily CSV fetch failed for JP2.T. All connection attempts failed",
+        )
 
 
 if __name__ == "__main__":

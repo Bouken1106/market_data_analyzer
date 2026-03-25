@@ -50,6 +50,36 @@ def _runtime_value(name: str, default: Any) -> Any:
 class MarketDataHistoricalMixin:
     _JQUANTS_COVERAGE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})\s*~\s*(\d{4}-\d{2}-\d{2})")
 
+    @staticmethod
+    def _build_no_historical_data_detail(
+        *,
+        symbol: str,
+        source_mode: str,
+        source_detail: dict[str, Any] | None,
+        allow_api_fallback: bool,
+    ) -> str:
+        detail = source_detail if isinstance(source_detail, dict) else {}
+        provider = str(detail.get("provider") or source_mode or "provider").strip().lower() or "provider"
+        mode = str(detail.get("mode") or "").strip().lower()
+        error_text = str(detail.get("error") or "").strip()
+
+        if provider == "stooq":
+            if mode == "stooq_fetch_failed":
+                return (
+                    f"Stooq daily CSV fetch failed for {symbol}."
+                    + (f" {error_text}" if error_text else "")
+                )
+            if mode == "stooq_empty":
+                return f"Stooq daily CSV returned no rows for {symbol}."
+            if mode == "stooq_empty_range":
+                return f"Stooq daily CSV had no rows in the requested date range for {symbol}."
+            if not allow_api_fallback:
+                return f"Stooq daily data unavailable for {symbol}, and API fallback is disabled."
+
+        if error_text:
+            return error_text
+        return "No historical data found for this symbol."
+
     async def historical_payload(
         self,
         symbol: str,
@@ -101,6 +131,10 @@ class MarketDataHistoricalMixin:
         )
 
         timeout = httpx.Timeout(40.0, connect=10.0)
+        source_detail: dict[str, Any] = {
+            "provider": source_mode or self.provider,
+            "mode": "uninitialized",
+        }
         async with httpx.AsyncClient(timeout=timeout) as client:
             use_stooq = (
                 months is None
@@ -149,7 +183,15 @@ class MarketDataHistoricalMixin:
                 )
 
         if not points:
-            raise HTTPException(status_code=404, detail="No historical data found for this symbol.")
+            raise HTTPException(
+                status_code=404,
+                detail=self._build_no_historical_data_detail(
+                    symbol=normalized,
+                    source_mode=source_mode,
+                    source_detail=source_detail,
+                    allow_api_fallback=allow_api_fallback,
+                ),
+            )
 
         historical_payload = {
             "symbol": normalized,
@@ -238,7 +280,13 @@ class MarketDataHistoricalMixin:
             full_points = await fetch_stooq_daily_history(symbol, client=client)
         except Exception as exc:
             LOGGER.warning("Stooq daily CSV fetch failed for %s: %s", symbol, exc)
-            full_points = []
+            return [], {
+                "mode": "stooq_fetch_failed",
+                "dataset": "historical_daily",
+                "provider": "stooq",
+                "points": 0,
+                "error": str(exc).strip(),
+            }
 
         if full_points:
             await self.full_daily_history_store.upsert(symbol, full_points)
@@ -272,7 +320,7 @@ class MarketDataHistoricalMixin:
                 }
 
         return [], {
-            "mode": "stooq_empty",
+            "mode": "stooq_empty_range" if (start_date or end_date) else "stooq_empty",
             "dataset": "historical_daily",
             "provider": "stooq",
             "points": 0,

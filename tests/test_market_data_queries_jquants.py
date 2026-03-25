@@ -3,6 +3,7 @@ import json
 import unittest
 
 import httpx
+from fastapi import HTTPException
 
 from app.services.market_data_queries import MarketDataQueriesMixin
 
@@ -313,6 +314,84 @@ class MarketDataQueriesJQuantsTest(unittest.TestCase):
             self.assertEqual(payload["source_detail"]["provider"], "stooq")
             self.assertEqual(payload["source_detail"]["mode"], "stooq_live")
             self.assertEqual(queries.full_daily_history_store.upserts["XLB"][0]["_src"], "stooq")
+
+        asyncio.run(run_test())
+
+    def test_historical_payload_reports_stooq_empty_response_detail(self) -> None:
+        class _StooqEmptyQueries(_DummyQueries):
+            def __init__(self) -> None:
+                super().__init__()
+                self.full_daily_history_store = _MemoryDailyHistoryStore()
+
+            async def _fetch_historical_points_with_detail(self, *args, **kwargs):
+                raise AssertionError("API historical fetch should not run for Stooq-only mode")
+
+        async def run_test() -> None:
+            queries = _StooqEmptyQueries()
+
+            from app.services import market_data_queries as module
+
+            original_fetch = module.fetch_stooq_daily_history
+
+            async def fake_fetch(symbol: str, *, client=None, timeout_sec: float = 25.0):
+                del symbol, client, timeout_sec
+                return []
+
+            module.fetch_stooq_daily_history = fake_fetch
+            try:
+                with self.assertRaises(HTTPException) as ctx:
+                    await queries.historical_payload(
+                        symbol="XLB",
+                        years=5,
+                        refresh=True,
+                        source_preference="stooq",
+                        allow_api_fallback=False,
+                    )
+            finally:
+                module.fetch_stooq_daily_history = original_fetch
+
+            self.assertEqual(ctx.exception.status_code, 404)
+            self.assertIn("Stooq daily CSV", str(ctx.exception.detail))
+            self.assertIn("requested date range", str(ctx.exception.detail))
+
+        asyncio.run(run_test())
+
+    def test_historical_payload_reports_stooq_fetch_failure_detail(self) -> None:
+        class _StooqFailureQueries(_DummyQueries):
+            def __init__(self) -> None:
+                super().__init__()
+                self.full_daily_history_store = _MemoryDailyHistoryStore()
+
+            async def _fetch_historical_points_with_detail(self, *args, **kwargs):
+                raise AssertionError("API historical fetch should not run for Stooq-only mode")
+
+        async def run_test() -> None:
+            queries = _StooqFailureQueries()
+
+            from app.services import market_data_queries as module
+
+            original_fetch = module.fetch_stooq_daily_history
+
+            async def fake_fetch(symbol: str, *, client=None, timeout_sec: float = 25.0):
+                del symbol, client, timeout_sec
+                raise httpx.ConnectError("All connection attempts failed")
+
+            module.fetch_stooq_daily_history = fake_fetch
+            try:
+                with self.assertRaises(HTTPException) as ctx:
+                    await queries.historical_payload(
+                        symbol="XLB",
+                        years=5,
+                        refresh=True,
+                        source_preference="stooq",
+                        allow_api_fallback=False,
+                    )
+            finally:
+                module.fetch_stooq_daily_history = original_fetch
+
+            self.assertEqual(ctx.exception.status_code, 404)
+            self.assertIn("Stooq daily CSV fetch failed", str(ctx.exception.detail))
+            self.assertIn("All connection attempts failed", str(ctx.exception.detail))
 
         asyncio.run(run_test())
 
