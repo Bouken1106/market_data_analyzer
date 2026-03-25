@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..config import (
     HISTORICAL_DEFAULT_YEARS,
+    LOGGER,
     LMSTUDIO_MODEL,
     MAX_BASIC_SYMBOLS,
 )
@@ -17,6 +18,7 @@ from ..models import SymbolUpdateRequest
 from ..services.watchlist_commentary import build_watchlist_commentary_payload
 from ..utils import normalize_symbols, ok_json_response
 from .deps import HubDep, SymbolCatalogStoreDep, UiStateStoreDep
+from .validators import require_symbols
 
 router = APIRouter()
 
@@ -98,11 +100,11 @@ async def security_overview(
 
 @router.get("/api/sparkline")
 async def sparkline(symbols: str, hub: HubDep, refresh: bool = False) -> JSONResponse:
-    target_symbols = normalize_symbols(symbols)
-    if not target_symbols:
-        raise HTTPException(status_code=400, detail="At least one valid symbol is required.")
-    if len(target_symbols) > MAX_BASIC_SYMBOLS:
-        raise HTTPException(status_code=400, detail=f"You can request up to {MAX_BASIC_SYMBOLS} symbols at once.")
+    target_symbols = require_symbols(
+        symbols,
+        max_count=MAX_BASIC_SYMBOLS,
+        max_detail=f"You can request up to {MAX_BASIC_SYMBOLS} symbols at once.",
+    )
 
     items = await hub.sparkline_payload(target_symbols, refresh=refresh)
     return ok_json_response(
@@ -118,17 +120,19 @@ async def watchlist_commentary(
     ui_state_store: UiStateStoreDep,
     refresh: bool = False,
 ) -> JSONResponse:
-    target_symbols = normalize_symbols(symbols)
-    if len(target_symbols) < 2:
-        raise HTTPException(status_code=400, detail="At least two valid symbols are required.")
-    if len(target_symbols) > MAX_BASIC_SYMBOLS:
-        raise HTTPException(status_code=400, detail=f"You can request up to {MAX_BASIC_SYMBOLS} symbols at once.")
+    target_symbols = require_symbols(
+        symbols,
+        min_count=2,
+        max_count=MAX_BASIC_SYMBOLS,
+        empty_detail="At least two valid symbols are required.",
+        max_detail=f"You can request up to {MAX_BASIC_SYMBOLS} symbols at once.",
+    )
 
     payload = await build_watchlist_commentary_payload(hub, target_symbols, refresh=refresh)
     try:
         ui_state_store.set_watchlist_commentary(payload)
-    except Exception:
-        pass
+    except Exception as exc:
+        LOGGER.warning("Failed to persist watchlist commentary: %s", exc)
     return ok_json_response(**payload)
 
 

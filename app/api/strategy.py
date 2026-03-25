@@ -22,6 +22,7 @@ from ..strategy_engine import (
 )
 from ..utils import normalize_symbols, ok_json_response
 from .deps import HubDep, PaperPortfolioStoreDep
+from .validators import require_non_negative_float, require_positive_float, require_symbols
 
 router = APIRouter()
 
@@ -175,16 +176,14 @@ async def strategy_evaluate(
     hub: HubDep,
     paper_portfolio_store: PaperPortfolioStoreDep,
 ) -> JSONResponse:
-    symbols = normalize_symbols(req.symbols)
-    if len(symbols) < 2:
-        raise HTTPException(status_code=400, detail="At least two symbols are required.")
+    symbols = require_symbols(req.symbols, min_count=2, empty_detail="At least two symbols are required.")
 
     method = _normalize_strategy_method(req.method)
     rebalance_frequency = _normalize_rebalance_frequency(req.rebalance_frequency)
     months = max(3, min(int(req.months), 60))
     lookback_days = max(20, min(int(req.lookback_days), 756))
-    max_weight = float(req.max_weight)
-    if not math.isfinite(max_weight) or max_weight <= 0 or max_weight > 1:
+    max_weight = require_positive_float(req.max_weight, detail="max_weight must be in (0, 1].")
+    if max_weight > 1:
         raise HTTPException(status_code=400, detail="max_weight must be in (0, 1].")
     if max_weight * len(symbols) < 1.0:
         raise HTTPException(
@@ -192,16 +191,10 @@ async def strategy_evaluate(
             detail=f"max_weight={max_weight} is too small for {len(symbols)} symbols.",
         )
 
-    initial_capital = float(req.initial_capital)
-    if not math.isfinite(initial_capital) or initial_capital <= 0:
-        raise HTTPException(status_code=400, detail="initial_capital must be greater than 0.")
+    initial_capital = require_positive_float(req.initial_capital, detail="initial_capital must be greater than 0.")
 
-    commission_bps = float(req.commission_bps)
-    slippage_bps = float(req.slippage_bps)
-    if not math.isfinite(commission_bps) or commission_bps < 0:
-        raise HTTPException(status_code=400, detail="commission_bps must be >= 0.")
-    if not math.isfinite(slippage_bps) or slippage_bps < 0:
-        raise HTTPException(status_code=400, detail="slippage_bps must be >= 0.")
+    commission_bps = require_non_negative_float(req.commission_bps, detail="commission_bps must be >= 0.")
+    slippage_bps = require_non_negative_float(req.slippage_bps, detail="slippage_bps must be >= 0.")
     transaction_cost_rate = (commission_bps + slippage_bps) / 10_000.0
     rebalance_threshold_pct = max(0.0, float(req.rebalance_threshold_pct))
     min_trade_value = max(0.0, float(req.min_trade_value))

@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 
 from ..leadlag import (
     DEFAULT_CFULL_END,
@@ -27,14 +25,6 @@ from ..utils import ok_json_response
 from .deps import HubDep
 
 router = APIRouter()
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-STATIC_DIR = BASE_DIR / "static"
-
-
-@router.get("/leadlag-lab", include_in_schema=False)
-async def leadlag_lab_page() -> FileResponse:
-    return FileResponse(STATIC_DIR / "leadlag_lab.html")
 
 
 @router.get("/api/leadlag/config")

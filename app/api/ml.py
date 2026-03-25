@@ -29,6 +29,7 @@ from ..models import (
 )
 from ..utils import normalize_ml_history_months, normalize_symbols, ok_json_response, utc_now_iso
 from .deps import HubDep, MlJobStoreDep, StockMlPageStoreDep
+from .validators import require_symbol
 
 router = APIRouter()
 
@@ -76,10 +77,7 @@ def _stock_ml_page_service(hub: HubDep, stock_ml_page_store: StockMlPageStoreDep
 
 
 def _normalize_job_symbol(raw_symbol: str) -> str:
-    symbols = normalize_symbols([raw_symbol])
-    if not symbols:
-        raise HTTPException(status_code=400, detail="Symbolを入力してください。")
-    return symbols[0]
+    return require_symbol(raw_symbol, detail="Symbolを入力してください。")
 
 
 def _stock_page_kwargs(

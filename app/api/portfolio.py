@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import math
-
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from ..models import PaperPortfolioResetRequest, PaperTradeRequest
 from ..services.paper_portfolio import paper_portfolio_payload, resolve_trade_price
-from ..utils import normalize_symbols, ok_json_response
+from ..utils import ok_json_response
 from .deps import HubDep, PaperPortfolioStoreDep
+from .validators import require_positive_float, require_symbol
 
 router = APIRouter()
 
@@ -27,18 +26,9 @@ async def paper_trade(
     hub: HubDep,
     paper_portfolio_store: PaperPortfolioStoreDep,
 ) -> JSONResponse:
-    symbols = normalize_symbols([req.symbol])
-    if not symbols:
-        raise HTTPException(status_code=400, detail="Invalid symbol format.")
-    symbol = symbols[0]
+    symbol = require_symbol(req.symbol, detail="Invalid symbol format.")
     side = str(req.side or "").lower().strip()
-
-    try:
-        quantity = float(req.quantity)
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="quantity must be greater than 0.") from None
-    if not math.isfinite(quantity) or quantity <= 0:
-        raise HTTPException(status_code=400, detail="quantity must be greater than 0.")
+    quantity = require_positive_float(req.quantity, detail="quantity must be greater than 0.")
 
     execution_price, execution_source = await resolve_trade_price(hub, symbol, req.price)
     try:
@@ -64,13 +54,9 @@ async def paper_portfolio_reset(
     hub: HubDep,
     paper_portfolio_store: PaperPortfolioStoreDep,
 ) -> JSONResponse:
+    initial_cash = None
     if req.initial_cash is not None:
-        try:
-            initial_cash = float(req.initial_cash)
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="initial_cash must be greater than 0.") from None
-        if not math.isfinite(initial_cash) or initial_cash <= 0:
-            raise HTTPException(status_code=400, detail="initial_cash must be greater than 0.")
-    await paper_portfolio_store.reset(initial_cash=req.initial_cash)
+        initial_cash = require_positive_float(req.initial_cash, detail="initial_cash must be greater than 0.")
+    await paper_portfolio_store.reset(initial_cash=initial_cash)
     payload = await paper_portfolio_payload(hub, paper_portfolio_store)
     return ok_json_response(**payload)
