@@ -7,7 +7,6 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-
 from .signals import SignalObservation
 
 _TRADING_DAYS_PER_YEAR = 252.0
@@ -21,6 +20,7 @@ def _safe_pct(value: float) -> float | None:
 
 def _empty_summary() -> dict[str, Any]:
     return {
+        "period_return_pct": None,
         "annual_return_pct": None,
         "annual_volatility_pct": None,
         "return_risk_ratio": None,
@@ -67,6 +67,7 @@ def _summarize_daily_rows(daily_rows: list[dict[str, Any]]) -> dict[str, Any]:
     max_drawdown = float(np.min(drawdowns)) if drawdowns.size else np.nan
 
     return {
+        "period_return_pct": _safe_pct(equity - 1.0),
         "annual_return_pct": _safe_pct(annual_return),
         "annual_volatility_pct": _safe_pct(annual_volatility),
         "return_risk_ratio": float(return_risk_ratio) if np.isfinite(return_risk_ratio) else None,
@@ -86,18 +87,6 @@ def _summarize_daily_rows(daily_rows: list[dict[str, Any]]) -> dict[str, Any]:
             "to": daily_rows[-1].get("target_date"),
         },
     }
-
-
-def _select_recent_rows(daily_rows: list[dict[str, Any]], *, months: int = 1) -> list[dict[str, Any]]:
-    if not daily_rows:
-        return []
-
-    latest_signal_date = pd.Timestamp(daily_rows[-1]["signal_date"])
-    cutoff = latest_signal_date - pd.DateOffset(months=months)
-    recent_rows = [row for row in daily_rows if pd.Timestamp(row["signal_date"]) >= cutoff]
-    return recent_rows or daily_rows[-1:]
-
-
 def evaluate_long_short(
     observations: tuple[SignalObservation, ...],
     *,
@@ -155,18 +144,14 @@ def evaluate_long_short(
     if not gross_returns:
         return {
             "summary": _empty_summary(),
-            "recent_1m_summary": _empty_summary(),
             "daily_rows": daily_rows,
             "equity_curve": equity_curve,
         }
 
     summary = _summarize_daily_rows(daily_rows)
-    recent_1m_rows = _select_recent_rows(daily_rows, months=1)
-    recent_1m_summary = _summarize_daily_rows(recent_1m_rows)
 
     return {
         "summary": summary,
-        "recent_1m_summary": recent_1m_summary,
         "daily_rows": daily_rows,
         "equity_curve": equity_curve,
     }

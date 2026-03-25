@@ -39,8 +39,11 @@ const transferWrapEl = document.getElementById("llg-transfer-wrap");
 const transferTextEl = document.getElementById("llg-transfer-matrix-text");
 
 const strategyGridEl = document.getElementById("llg-strategy-grid");
-const strategyRecentGridEl = document.getElementById("llg-strategy-recent-grid");
-const strategyRecentMetaEl = document.getElementById("llg-strategy-recent-meta");
+const strategyRangeFromEl = document.getElementById("llg-strategy-range-from");
+const strategyRangeToEl = document.getElementById("llg-strategy-range-to");
+const strategyRangeApplyEl = document.getElementById("llg-strategy-range-apply");
+const strategyRangeResetEl = document.getElementById("llg-strategy-range-reset");
+const strategyPeriodMetaEl = document.getElementById("llg-strategy-period-meta");
 const strategyChartMetaEl = document.getElementById("llg-strategy-chart-meta");
 const strategyChartEl = document.getElementById("llg-strategy-chart");
 const strategyDailyChartMetaEl = document.getElementById("llg-strategy-daily-chart-meta");
@@ -60,6 +63,11 @@ const selectorState = {
     defensive: new Set(),
   },
 };
+const strategyResultState = {
+  rawStrategy: null,
+  signalDateMin: "",
+  signalDateMax: "",
+};
 
 const summaryMetricHelp = {
   "Included US": "今回の計算で実際に使えた US 銘柄数です。選択していても履歴不足などで除外された銘柄は含みません。",
@@ -69,6 +77,7 @@ const summaryMetricHelp = {
 };
 
 const strategyMetricHelp = {
+  "Period Return": "選択した期間にこの long-short 戦略をそのまま複利で回したと仮定したときの実際の増減率です。年率換算はしていません。",
   "Annual Return": "観測できた signal day の平均日次 long-short リターンを年率換算した値です。期間全体の CAGR ではありません。",
   "Annual Volatility": "戦略リターンの年率換算の値動きの大きさです。高いほど成績のブレが大きいです。",
   "Return / Risk": "年率リターンを年率ボラティリティで割った比率です。大きいほど、同じリスクに対して効率よく稼げています。",
@@ -129,7 +138,6 @@ const strategyChartState = {
   viewportStart: 0,
   viewportEnd: 0,
   seriesKey: "",
-  recentAnnualReturnPct: Number.NaN,
 };
 const strategyDailyChartState = {
   points: [],
@@ -196,6 +204,11 @@ function formatChartDateLabel(value) {
     return dt.toLocaleDateString("ja-JP", { year: "2-digit", month: "2-digit", day: "2-digit" });
   }
   return raw.includes(" ") ? raw.split(" ")[0] : raw;
+}
+
+function normalizeIsoDate(value) {
+  const raw = String(value || "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : "";
 }
 
 function formatSymbolDisplay(symbol) {
@@ -622,9 +635,9 @@ function renderLatestSignal(latestSignal) {
   }
 }
 
-function buildStrategyAnnualReturnSeries(strategy) {
-  const rows = Array.isArray(strategy?.daily_rows) ? strategy.daily_rows : [];
-  const orderedRows = rows
+function buildStrategyAnnualReturnSeries(rows) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const orderedRows = safeRows
     .map((row) => ({
       targetDate: String(row?.target_date || "").trim(),
       grossReturn: Number(row?.gross_return),
@@ -649,19 +662,114 @@ function buildStrategyAnnualReturnSeries(strategy) {
   });
 }
 
-function buildStrategyDailyReturnSeries(strategy) {
-  const rows = Array.isArray(strategy?.daily_rows) ? strategy.daily_rows : [];
-  return rows
-    .map((row, index) => ({
-      t: String(row?.target_date || "").trim(),
-      c: Number(row?.gross_return) * 100.0,
-      gross_return_pct: Number(row?.gross_return) * 100.0,
+function buildStrategyDailyReturnSeries(rows) {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  return safeRows
+    .map((row) => ({
+      signal_date: normalizeIsoDate(row?.signal_date),
+      target_date: normalizeIsoDate(row?.target_date),
+      gross_return: Number(row?.gross_return),
       breadth: Number(row?.breadth),
       bucket_size: Number(row?.bucket_size),
-      observation_index: index + 1,
     }))
-    .filter((row) => row.t && Number.isFinite(row.c))
-    .sort((left, right) => left.t.localeCompare(right.t));
+    .filter((row) => row.signal_date && row.target_date && Number.isFinite(row.gross_return))
+    .sort((left, right) => left.target_date.localeCompare(right.target_date))
+    .map((row, index) => ({
+      t: row.target_date,
+      c: row.gross_return * 100.0,
+      gross_return_pct: row.gross_return * 100.0,
+      breadth: row.breadth,
+      bucket_size: row.bucket_size,
+      observation_index: index + 1,
+    }));
+}
+
+function summarizeStrategyRows(rows) {
+  const safeRows = (Array.isArray(rows) ? rows : [])
+    .map((row) => ({
+      signal_date: normalizeIsoDate(row?.signal_date),
+      target_date: normalizeIsoDate(row?.target_date),
+      gross_return: Number(row?.gross_return),
+      breadth: Number(row?.breadth),
+    }))
+    .filter((row) => row.signal_date && row.target_date && Number.isFinite(row.gross_return));
+
+  if (!safeRows.length) {
+    return {
+      period_return_pct: null,
+      annual_return_pct: null,
+      annual_volatility_pct: null,
+      return_risk_ratio: null,
+      max_drawdown_pct: null,
+      signal_days: 0,
+      average_breadth: null,
+      range: { from: null, to: null },
+      signal_range: { from: null, to: null },
+      target_range: { from: null, to: null },
+    };
+  }
+
+  const grossReturns = safeRows.map((row) => row.gross_return);
+  const mean = grossReturns.reduce((sum, value) => sum + value, 0) / grossReturns.length;
+  const annualReturnPct = mean * 252.0 * 100.0;
+
+  let annualVolatilityPct = null;
+  if (grossReturns.length >= 2) {
+    const variance = grossReturns.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / (grossReturns.length - 1);
+    annualVolatilityPct = Math.sqrt(Math.max(variance, 0)) * Math.sqrt(252.0) * 100.0;
+  }
+
+  const returnRiskRatio = annualVolatilityPct && Number.isFinite(annualVolatilityPct) && annualVolatilityPct !== 0
+    ? annualReturnPct / annualVolatilityPct
+    : null;
+
+  let equity = 1.0;
+  let runningMax = 1.0;
+  let maxDrawdown = 0.0;
+  grossReturns.forEach((value) => {
+    equity *= 1.0 + value;
+    runningMax = Math.max(runningMax, equity);
+    maxDrawdown = Math.min(maxDrawdown, (equity / runningMax) - 1.0);
+  });
+
+  const breadthValues = safeRows.map((row) => row.breadth).filter((value) => Number.isFinite(value));
+  const averageBreadth = breadthValues.length
+    ? breadthValues.reduce((sum, value) => sum + value, 0) / breadthValues.length
+    : null;
+
+  return {
+    period_return_pct: Number.isFinite(equity) ? (equity - 1.0) * 100.0 : null,
+    annual_return_pct: Number.isFinite(annualReturnPct) ? annualReturnPct : null,
+    annual_volatility_pct: Number.isFinite(annualVolatilityPct) ? annualVolatilityPct : null,
+    return_risk_ratio: Number.isFinite(returnRiskRatio) ? returnRiskRatio : null,
+    max_drawdown_pct: Number.isFinite(maxDrawdown) ? maxDrawdown * 100.0 : null,
+    signal_days: safeRows.length,
+    average_breadth: averageBreadth,
+    range: {
+      from: safeRows[0].signal_date,
+      to: safeRows[safeRows.length - 1].signal_date,
+    },
+    signal_range: {
+      from: safeRows[0].signal_date,
+      to: safeRows[safeRows.length - 1].signal_date,
+    },
+    target_range: {
+      from: safeRows[0].target_date,
+      to: safeRows[safeRows.length - 1].target_date,
+    },
+  };
+}
+
+function filterStrategyRows(rows, fromDate, toDate) {
+  const from = normalizeIsoDate(fromDate);
+  const to = normalizeIsoDate(toDate);
+  return (Array.isArray(rows) ? rows : []).filter((row) => {
+    const signalDate = normalizeIsoDate(row?.signal_date);
+    if (!signalDate) return false;
+    if (from && signalDate < from) return false;
+    if (to && signalDate > to) return false;
+    return true;
+  });
 }
 
 function buildStrategySeriesKey(points) {
@@ -1022,7 +1130,6 @@ function buildStrategyDailyChartHtml(points) {
 function renderStrategyChartFromState() {
   if (!strategyChartEl || !strategyChartMetaEl) return;
   const points = Array.isArray(strategyChartState.points) ? strategyChartState.points : [];
-  const recentAnnualReturnPct = Number(strategyChartState.recentAnnualReturnPct);
   if (!points.length) {
     strategyChartMetaEl.textContent = "バックテストが無効か、観測できた営業日がありません。";
     strategyChartEl.innerHTML = buildStrategyChartHtml(points);
@@ -1031,10 +1138,7 @@ function renderStrategyChartFromState() {
 
   const firstPoint = points[0];
   const latestPoint = points[points.length - 1];
-  const recentLabel = Number.isFinite(recentAnnualReturnPct)
-    ? ` / recent 1M ${fmtSignedPct(recentAnnualReturnPct)}`
-    : "";
-  strategyChartMetaEl.textContent = `${points.length} observed target dates / ${firstPoint.t} -> ${latestPoint.t} / latest full-sample ${fmtSignedPct(latestPoint.c)}${recentLabel}`;
+  strategyChartMetaEl.textContent = `${points.length} observed target dates / ${firstPoint.t} -> ${latestPoint.t} / latest selected-period ${fmtSignedPct(latestPoint.c)}`;
   strategyChartEl.innerHTML = buildStrategyChartHtml(points);
 
   const safe = points;
@@ -1086,7 +1190,7 @@ function renderStrategyChartFromState() {
     "wheel",
     (event) => {
       event.preventDefault();
-      const factor = event.deltaY < 0 ? STRATEGY_CHART_ZOOM_IN_FACTOR : STRATEGY_CHART_ZOOM_OUT_FACTOR;
+      const factor = event.deltaY < 0 ? STRATEGY_CHART_ZOOM_OUT_FACTOR : STRATEGY_CHART_ZOOM_IN_FACTOR;
       zoomAtClientX(event.clientX, factor);
     },
     { passive: false }
@@ -1107,9 +1211,8 @@ function renderStrategyChartFromState() {
   });
 }
 
-function renderStrategyChart(strategy) {
-  const points = buildStrategyAnnualReturnSeries(strategy);
-  strategyChartState.recentAnnualReturnPct = Number(strategy?.recent_1m_summary?.annual_return_pct);
+function renderStrategyChart(rows) {
+  const points = buildStrategyAnnualReturnSeries(rows);
   const nextSeriesKey = buildStrategySeriesKey(points);
   if (strategyChartState.seriesKey !== nextSeriesKey) {
     strategyChartState.seriesKey = nextSeriesKey;
@@ -1187,7 +1290,7 @@ function renderStrategyDailyChartFromState() {
     "wheel",
     (event) => {
       event.preventDefault();
-      const factor = event.deltaY < 0 ? STRATEGY_CHART_ZOOM_IN_FACTOR : STRATEGY_CHART_ZOOM_OUT_FACTOR;
+      const factor = event.deltaY < 0 ? STRATEGY_CHART_ZOOM_OUT_FACTOR : STRATEGY_CHART_ZOOM_IN_FACTOR;
       zoomAtClientX(event.clientX, factor);
     },
     { passive: false }
@@ -1209,8 +1312,8 @@ function renderStrategyDailyChartFromState() {
   });
 }
 
-function renderStrategyDailyChart(strategy) {
-  const points = buildStrategyDailyReturnSeries(strategy);
+function renderStrategyDailyChart(rows) {
+  const points = buildStrategyDailyReturnSeries(rows);
   const nextSeriesKey = buildStrategySeriesKey(points);
   if (strategyDailyChartState.seriesKey !== nextSeriesKey) {
     strategyDailyChartState.seriesKey = nextSeriesKey;
@@ -1225,11 +1328,46 @@ function renderStrategyDailyChart(strategy) {
   renderStrategyDailyChartFromState();
 }
 
-function renderStrategy(strategy) {
-  const summary = strategy?.summary || {};
-  const recent1mSummary = strategy?.recent_1m_summary || {};
-  const recentRange = recent1mSummary.signal_range || recent1mSummary.range || {};
+function configureStrategyPeriodInputs(strategy) {
+  const rows = Array.isArray(strategy?.daily_rows) ? strategy.daily_rows : [];
+  const signalDates = rows
+    .map((row) => normalizeIsoDate(row?.signal_date))
+    .filter(Boolean)
+    .sort();
+  const min = signalDates[0] || "";
+  const max = signalDates[signalDates.length - 1] || "";
+  strategyResultState.rawStrategy = strategy || null;
+  strategyResultState.signalDateMin = min;
+  strategyResultState.signalDateMax = max;
+
+  if (strategyRangeFromEl) {
+    strategyRangeFromEl.min = min;
+    strategyRangeFromEl.max = max;
+    strategyRangeFromEl.value = min;
+    strategyRangeFromEl.disabled = !min;
+  }
+  if (strategyRangeToEl) {
+    strategyRangeToEl.min = min;
+    strategyRangeToEl.max = max;
+    strategyRangeToEl.value = max;
+    strategyRangeToEl.disabled = !max;
+  }
+  if (strategyRangeApplyEl) {
+    strategyRangeApplyEl.disabled = !rows.length;
+  }
+  if (strategyRangeResetEl) {
+    strategyRangeResetEl.disabled = !rows.length;
+  }
+}
+
+function renderStrategy(strategy, fromDate = "", toDate = "") {
+  const allRows = Array.isArray(strategy?.daily_rows) ? strategy.daily_rows : [];
+  const filteredRows = filterStrategyRows(allRows, fromDate, toDate);
+  const summary = summarizeStrategyRows(filteredRows);
+  const signalRange = summary.signal_range || summary.range || {};
+  const targetRange = summary.target_range || {};
   const cards = [
+    ["Period Return", fmtPct(summary.period_return_pct)],
     ["Annual Return", fmtPct(summary.annual_return_pct)],
     ["Annual Volatility", fmtPct(summary.annual_volatility_pct)],
     ["Return / Risk", summary.return_risk_ratio === null || summary.return_risk_ratio === undefined ? "-" : fmtNum(summary.return_risk_ratio, 3)],
@@ -1237,23 +1375,38 @@ function renderStrategy(strategy) {
     ["Signal Days", summary.signal_days ?? "-"],
     ["Average Breadth", summary.average_breadth === null || summary.average_breadth === undefined ? "-" : fmtNum(summary.average_breadth, 2)],
   ].map(([label, value]) => ({ label, value, help: strategyMetricHelp[label] || null }));
-  const recentCards = [
-    ["Annual Return", fmtPct(recent1mSummary.annual_return_pct)],
-    ["Annual Volatility", fmtPct(recent1mSummary.annual_volatility_pct)],
-    ["Return / Risk", recent1mSummary.return_risk_ratio === null || recent1mSummary.return_risk_ratio === undefined ? "-" : fmtNum(recent1mSummary.return_risk_ratio, 3)],
-    ["Max Drawdown", fmtPct(recent1mSummary.max_drawdown_pct)],
-    ["Signal Days", recent1mSummary.signal_days ?? "-"],
-    ["Average Breadth", recent1mSummary.average_breadth === null || recent1mSummary.average_breadth === undefined ? "-" : fmtNum(recent1mSummary.average_breadth, 2)],
-  ].map(([label, value]) => ({ label, value, help: strategyMetricHelp[label] || null }));
-  if (strategyRecentMetaEl) {
-    strategyRecentMetaEl.textContent = recentRange.from && recentRange.to
-      ? `対象 signal date: ${recentRange.from} -> ${recentRange.to}`
-      : "直近 1 ヶ月に入る signal day を集計します。";
+  if (strategyPeriodMetaEl) {
+    if (signalRange.from && signalRange.to) {
+      strategyPeriodMetaEl.textContent = `対象 signal date: ${signalRange.from} -> ${signalRange.to} / target date: ${targetRange.from || "-"} -> ${targetRange.to || "-"}`;
+    } else if (allRows.length) {
+      strategyPeriodMetaEl.textContent = "指定期間に入る signal day がありません。";
+    } else {
+      strategyPeriodMetaEl.textContent = "バックテスト結果がありません。";
+    }
   }
   renderMetricCards(strategyGridEl, cards);
-  renderMetricCards(strategyRecentGridEl, recentCards);
-  renderStrategyChart(strategy);
-  renderStrategyDailyChart(strategy);
+  renderStrategyChart(filteredRows);
+  renderStrategyDailyChart(filteredRows);
+}
+
+function applyStrategyRange() {
+  const strategy = strategyResultState.rawStrategy;
+  if (!strategy) return;
+
+  const min = strategyResultState.signalDateMin;
+  const max = strategyResultState.signalDateMax;
+  let from = normalizeIsoDate(strategyRangeFromEl?.value || min);
+  let to = normalizeIsoDate(strategyRangeToEl?.value || max);
+  if (!from) from = min;
+  if (!to) to = max;
+  if (from && min && from < min) from = min;
+  if (to && max && to > max) to = max;
+  if (from && to && from > to) {
+    [from, to] = [to, from];
+  }
+  if (strategyRangeFromEl) strategyRangeFromEl.value = from;
+  if (strategyRangeToEl) strategyRangeToEl.value = to;
+  renderStrategy(strategy, from, to);
 }
 
 function renderRecent(rows) {
@@ -1305,7 +1458,8 @@ function renderResult(result) {
   renderExcluded(summary.excluded_symbols);
   renderRegularization(result?.regularization, result?.latest_signal);
   renderLatestSignal(result?.latest_signal);
-  renderStrategy(result?.strategy);
+  configureStrategyPeriodInputs(result?.strategy);
+  applyStrategyRange();
   renderRecent(result?.recent_signals);
 }
 
@@ -1395,6 +1549,30 @@ resetDefaultsBtn?.addEventListener("click", async () => {
   }
   setDefaults(result.defaults || {});
   setStatus("既定の候補選択へ戻しました。");
+});
+
+strategyRangeApplyEl?.addEventListener("click", () => {
+  applyStrategyRange();
+});
+
+strategyRangeResetEl?.addEventListener("click", () => {
+  if (strategyRangeFromEl) strategyRangeFromEl.value = strategyResultState.signalDateMin;
+  if (strategyRangeToEl) strategyRangeToEl.value = strategyResultState.signalDateMax;
+  applyStrategyRange();
+});
+
+strategyRangeFromEl?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    applyStrategyRange();
+  }
+});
+
+strategyRangeToEl?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    applyStrategyRange();
+  }
 });
 
 window.addEventListener("DOMContentLoaded", () => {

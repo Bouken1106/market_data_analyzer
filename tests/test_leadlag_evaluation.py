@@ -8,7 +8,7 @@ from app.leadlag.signals import SignalObservation
 
 
 class LeadLagEvaluationTest(unittest.TestCase):
-    def test_recent_1m_summary_uses_signal_date_boundary(self) -> None:
+    def test_summary_range_uses_signal_dates_and_target_range_is_separate(self) -> None:
         observations = []
         for signal_date, target_date, realized_top in (
             ("2024-01-31", "2024-02-01", 0.01),
@@ -30,12 +30,13 @@ class LeadLagEvaluationTest(unittest.TestCase):
             )
 
         result = evaluate_long_short(tuple(observations), quantile_q=0.25)
-        recent = result["recent_1m_summary"]
+        summary = result["summary"]
 
-        self.assertEqual(recent["signal_days"], 2)
-        self.assertEqual(recent["range"], {"from": "2024-02-01", "to": "2024-03-01"})
-        self.assertEqual(recent["signal_range"], {"from": "2024-02-01", "to": "2024-03-01"})
-        self.assertEqual(recent["target_range"], {"from": "2024-02-02", "to": "2024-03-04"})
+        self.assertAlmostEqual(summary["period_return_pct"], 12.4448, places=4)
+        self.assertEqual(summary["signal_days"], 3)
+        self.assertEqual(summary["range"], {"from": "2024-01-31", "to": "2024-03-01"})
+        self.assertEqual(summary["signal_range"], {"from": "2024-01-31", "to": "2024-03-01"})
+        self.assertEqual(summary["target_range"], {"from": "2024-02-01", "to": "2024-03-04"})
 
 
 if __name__ == "__main__":

@@ -87,7 +87,7 @@ class LeadLagApiTest(unittest.TestCase):
         self.assertEqual(defaults_response.status_code, 200)
         self.assertEqual(analyze_response.status_code, 200)
         self.assertIn("直近 L 営業日を 1 つの窓として", page_response.text)
-        self.assertIn("Recent 1M Summary", page_response.text)
+        self.assertIn("Strategy Period", page_response.text)
         self.assertIn("history_years", defaults_response.json()["defaults"])
         self.assertEqual(
             defaults_response.json()["defaults"]["universe"]["us"],
@@ -97,7 +97,7 @@ class LeadLagApiTest(unittest.TestCase):
             defaults_response.json()["defaults"]["universe"]["jp"],
             defaults_response.json()["defaults"]["jp_symbols"],
         )
-        self.assertIn("recent_1m_summary", analyze_response.json()["strategy"])
+        self.assertIn("daily_rows", analyze_response.json()["strategy"])
         self.assertTrue(analyze_response.json()["ok"])
 
 

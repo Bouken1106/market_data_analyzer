@@ -412,35 +412,51 @@
             <span>Strategy Summary</span>
             <details class="param-help llg-param-help">
               <summary>?</summary>
-              <p>Predicted z を使って組んだ単純な long-short 戦略の成績要約です。実運用の成績ではなく、シグナルの効き方を見るための検証結果です。</p>
+              <p>Predicted z を使って組んだ単純な long-short 戦略の成績要約です。解析後に signal date の期間を切り替えると、その範囲だけで数値とグラフを再計算します。</p>
             </details>
           </span>
         </h2>
-        <div id="llg-strategy-grid" class="llg-summary-grid"></div>
         <div class="llg-subsection">
           <h3>
             <span class="llg-heading-row">
-              <span>Recent 1M Summary</span>
+              <span>Strategy Period</span>
               <details class="param-help llg-param-help">
                 <summary>?</summary>
-                <p>直近 1 ヶ月に入る signal day だけを切り出した戦略要約です。短期の効き方や直近の調子を確認したいときに使います。</p>
+                <p>解析済みの signal day から見たい期間を signal date ベースで絞り込みます。期間を変えると下の summary とグラフがまとめて更新されます。</p>
               </details>
             </span>
           </h3>
-          <p id="llg-strategy-recent-meta" class="hint">直近 1 ヶ月に入る signal day を集計します。</p>
-          <div id="llg-strategy-recent-grid" class="llg-summary-grid"></div>
+          <div class="llg-chip-wrap">
+            <label>
+              <span class="label">From</span>
+              <input id="llg-strategy-range-from" type="date" />
+            </label>
+            <label>
+              <span class="label">To</span>
+              <input id="llg-strategy-range-to" type="date" />
+            </label>
+            <div>
+              <span class="label">Actions</span>
+              <div class="llg-selector-actions">
+                <button type="button" id="llg-strategy-range-apply" class="minor-action">Apply</button>
+                <button type="button" id="llg-strategy-range-reset" class="minor-action">Full Range</button>
+              </div>
+            </div>
+          </div>
+          <p id="llg-strategy-period-meta" class="hint">解析後に signal date の期間を指定できます。</p>
         </div>
+        <div id="llg-strategy-grid" class="llg-summary-grid"></div>
         <div class="llg-subsection">
           <h3>
             <span class="llg-heading-row">
               <span>Annual Return Trace</span>
               <details class="param-help llg-param-help">
                 <summary>?</summary>
-                <p>全期間の signal day を先頭から順に積み上げ、その時点までの平均日次 long-short リターンを年率換算した推移です。最終点は Strategy Summary の Annual Return と整合します。Recent 1M Summary の Annual Return とは別指標です。</p>
+                <p>選択した期間の signal day を先頭から順に積み上げ、その時点までの平均日次 long-short リターンを年率換算した推移です。最終点は上の Strategy Summary の Annual Return と整合します。</p>
               </details>
             </span>
           </h3>
-          <p id="llg-strategy-chart-meta" class="hint">全期間ベースの cumulative annualized return を表示します。</p>
+          <p id="llg-strategy-chart-meta" class="hint">選択期間ベースの cumulative annualized return を表示します。</p>
           <div id="llg-strategy-chart" class="chart-wrap llg-strategy-chart"></div>
         </div>
         <div class="llg-subsection">
@@ -449,7 +465,7 @@
               <span>Daily Return Trace</span>
               <details class="param-help llg-param-help">
                 <summary>?</summary>
-                <p>各 target date の long-short 日次リターンをそのまま表示します。Recent 1M Summary や Annual Return Trace よりも、日ごとの当たり外れを直接確認したいときに使います。</p>
+                <p>選択した期間に含まれる各 target date の long-short 日次リターンをそのまま表示します。日ごとの当たり外れを直接確認したいときに使います。</p>
               </details>
             </span>
           </h3>
