@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import csv
-import hashlib
 import io
 import json
 import math
@@ -23,6 +22,7 @@ except Exception:  # pragma: no cover - import guard for incomplete local envs
     lgb = None
 
 from ..config import HISTORICAL_CACHE_TTL_SEC, LOGGER, STOCK_ML_PAGE_ROLE
+from ..stock_ml_page_params import stock_ml_page_config_hash
 from ..stooq import fetch_stooq_daily_history
 from ..stores import FullDailyHistoryStore, StockMlPageStore
 
@@ -169,33 +169,6 @@ def _to_jst_timestamp(value: str | None) -> str:
         parsed = parsed.replace(tzinfo=timezone.utc)
     jst = parsed.astimezone(timezone(timedelta(hours=9)))
     return jst.strftime("%Y-%m-%d %H:%M JST")
-
-
-def _config_hash(
-    *,
-    prediction_date: str,
-    universe_filter: str,
-    model_family: str,
-    feature_set: str,
-    cost_buffer: float,
-    train_window_months: int,
-    gap_days: int,
-    valid_window_months: int,
-    random_seed: int,
-) -> str:
-    payload = {
-        "prediction_date": prediction_date,
-        "universe_filter": universe_filter,
-        "model_family": model_family,
-        "feature_set": feature_set,
-        "cost_buffer": round(float(cost_buffer), 6),
-        "train_window_months": int(train_window_months),
-        "gap_days": int(gap_days),
-        "valid_window_months": int(valid_window_months),
-        "random_seed": int(random_seed),
-    }
-    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
-    return digest[:12]
 
 
 def _normalize_choice(value: Any, *, allowed: tuple[int, ...], default: int) -> int:
@@ -531,7 +504,7 @@ class StockMlPageService:
         selected_feature_set = feature_set if feature_set in {_FEATURE_VERSION} else _FEATURE_VERSION
         selected_universe = universe_filter if universe_filter in {_UNIVERSE_VALUE} else _UNIVERSE_VALUE
         latest_market_date = dataset["latest_market_date"]
-        config_hash = _config_hash(
+        config_hash = stock_ml_page_config_hash(
             prediction_date=selected_prediction_date,
             universe_filter=selected_universe,
             model_family=selected_model_family,

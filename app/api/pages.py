@@ -7,18 +7,12 @@ from pathlib import Path
 from fastapi import APIRouter
 from fastapi.responses import FileResponse
 
+from ..static_pages import HISTORICAL_PAGE_ROUTE, STATIC_PAGES
+
 router = APIRouter()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "static"
-STATIC_PAGES = (
-    ("/", "index.html"),
-    ("/market-data-lab", "market_data_lab.html"),
-    ("/ml-lab", "ml_lab.html"),
-    ("/strategy-lab", "strategy_lab.html"),
-    ("/compare-lab", "compare_lab.html"),
-    ("/leadlag-lab", "leadlag_lab.html"),
-)
 
 
 def _static_page(filename: str) -> FileResponse:
@@ -32,17 +26,17 @@ def _build_static_page_handler(filename: str):
     return _handler
 
 
-for route_path, filename in STATIC_PAGES:
+for page in STATIC_PAGES:
     router.add_api_route(
-        route_path,
-        _build_static_page_handler(filename),
+        page.route_path,
+        _build_static_page_handler(page.filename),
         methods=["GET"],
         include_in_schema=False,
-        name=filename.removesuffix(".html"),
+        name=page.route_name,
     )
 
 
-@router.get("/historical/{symbol}", include_in_schema=False)
+@router.get(HISTORICAL_PAGE_ROUTE, include_in_schema=False)
 async def historical_page(symbol: str) -> FileResponse:
     del symbol
     return _static_page("historical.html")

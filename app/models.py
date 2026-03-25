@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
 
 from .config import ML_HISTORY_DEFAULT_MONTHS
+from .stock_ml_page_params import StockMlPageParams
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +116,28 @@ class StockMlPageActionRequest(BaseModel):
     search_query: str = ""
     confirm_regenerate: bool = False
     refresh: bool = False
+
+    def stock_page_params(self) -> StockMlPageParams:
+        return StockMlPageParams(
+            prediction_date=self.prediction_date,
+            universe_filter=self.universe_filter,
+            model_family=self.model_family,
+            feature_set=self.feature_set,
+            cost_buffer=self.cost_buffer,
+            train_window_months=self.train_window_months,
+            gap_days=self.gap_days,
+            valid_window_months=self.valid_window_months,
+            random_seed=self.random_seed,
+            train_note=self.train_note,
+            run_note=self.run_note,
+            refresh=self.refresh,
+        )
+
+    def stock_page_kwargs(self) -> dict[str, Any]:
+        return self.stock_page_params().service_kwargs()
+
+    def stock_page_config_hash(self) -> str:
+        return self.stock_page_params().config_hash()
 
 
 class StockMlModelAdoptionRequest(StockMlPageActionRequest):

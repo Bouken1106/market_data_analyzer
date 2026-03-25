@@ -11,22 +11,10 @@ from fastapi.staticfiles import StaticFiles
 from .api.deps import init_routes
 from .bootstrap import AppServices, build_services
 from .routes import router
+from .static_pages import is_no_cache_path
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-NO_CACHE_PATHS = frozenset(
-    {
-        "/",
-        "/market-data-lab",
-        "/ml-lab",
-        "/strategy-lab",
-        "/compare-lab",
-        "/leadlag-lab",
-        "/static/app.terminal.js",
-        "/static/styles.css",
-        "/static/index.html",
-    }
-)
 
 
 def create_lifespan(hub):
@@ -45,8 +33,7 @@ def register_no_cache_middleware(app: FastAPI) -> None:
     @app.middleware("http")
     async def disable_monitor_asset_cache(request, call_next):
         response = await call_next(request)
-        request_path = request.url.path
-        if request_path in NO_CACHE_PATHS or request_path.startswith("/historical/"):
+        if is_no_cache_path(request.url.path):
             response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
             response.headers["Pragma"] = "no-cache"
             response.headers["Expires"] = "0"

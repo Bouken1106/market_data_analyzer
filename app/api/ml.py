@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -27,6 +26,7 @@ from ..models import (
     StockMlModelAdoptionRequest,
     StockMlPageActionRequest,
 )
+from ..stock_ml_page_params import StockMlPageParams
 from ..utils import normalize_ml_history_months, normalize_symbols, ok_json_response, utc_now_iso
 from .deps import HubDep, MlJobStoreDep, StockMlPageStoreDep
 from .validators import require_symbol
@@ -80,7 +80,7 @@ def _normalize_job_symbol(raw_symbol: str) -> str:
     return require_symbol(raw_symbol, detail="Symbolを入力してください。")
 
 
-def _stock_page_kwargs(
+def _build_stock_page_params(
     *,
     prediction_date: str | None,
     universe_filter: str,
@@ -94,21 +94,30 @@ def _stock_page_kwargs(
     train_note: str,
     run_note: str,
     refresh: bool = False,
+) -> StockMlPageParams:
+    return StockMlPageParams(
+        prediction_date=prediction_date,
+        universe_filter=universe_filter,
+        model_family=model_family,
+        feature_set=feature_set,
+        cost_buffer=cost_buffer,
+        train_window_months=train_window_months,
+        gap_days=gap_days,
+        valid_window_months=valid_window_months,
+        random_seed=random_seed,
+        train_note=train_note,
+        run_note=run_note,
+        refresh=refresh,
+    )
+
+
+async def _call_stock_page_service(
+    method: Callable[..., Awaitable[dict[str, Any]]],
+    *,
+    params: StockMlPageParams,
+    **extra: Any,
 ) -> dict[str, Any]:
-    return {
-        "prediction_date": prediction_date,
-        "universe_filter": universe_filter,
-        "model_family": model_family,
-        "feature_set": feature_set,
-        "cost_buffer": cost_buffer,
-        "train_window_months": train_window_months,
-        "gap_days": gap_days,
-        "valid_window_months": valid_window_months,
-        "random_seed": random_seed,
-        "train_note": train_note,
-        "run_note": run_note,
-        "refresh": refresh,
-    }
+    return await method(**params.service_kwargs(), **extra)
 
 
 def _selected_model_version(snapshot: dict[str, Any]) -> str:
@@ -242,22 +251,6 @@ def _stock_model_registry_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _stock_page_config_hash(req: StockMlPageActionRequest) -> str:
-    payload = {
-        "prediction_date": req.prediction_date,
-        "universe_filter": req.universe_filter,
-        "model_family": req.model_family,
-        "feature_set": req.feature_set,
-        "cost_buffer": req.cost_buffer,
-        "train_window_months": req.train_window_months,
-        "gap_days": req.gap_days,
-        "valid_window_months": req.valid_window_months,
-        "random_seed": req.random_seed,
-    }
-    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
-    return digest[:12]
-
-
 async def _run_stock_page_job(
     *,
     job_id: str,
@@ -270,28 +263,19 @@ async def _run_stock_page_job(
     service = _stock_ml_page_service(hub, stock_ml_page_store)
     ml_job_store.update(job_id, status="running", progress=15, message="ジョブを実行しています。")
     stage_name = "prepare"
-    kwargs = _stock_page_kwargs(
-        prediction_date=req.prediction_date,
-        universe_filter=req.universe_filter,
-        model_family=req.model_family,
-        feature_set=req.feature_set,
-        cost_buffer=req.cost_buffer,
-        train_window_months=req.train_window_months,
-        gap_days=req.gap_days,
-        valid_window_months=req.valid_window_months,
-        random_seed=req.random_seed,
-        train_note=req.train_note,
-        run_note=req.run_note,
-        refresh=req.refresh,
-    )
+    params = req.stock_page_params()
     try:
         if kind == "stock_prediction_run":
             stage_name = "run_inference"
-            snapshot = await service.run_inference(confirm_regenerate=req.confirm_regenerate, **kwargs)
+            snapshot = await _call_stock_page_service(
+                service.run_inference,
+                params=params,
+                confirm_regenerate=req.confirm_regenerate,
+            )
             result = _prediction_daily_payload(snapshot)
         elif kind == "stock_training_job":
             stage_name = "create_training_job"
-            snapshot = await service.create_training_job(**kwargs)
+            snapshot = await _call_stock_page_service(service.create_training_job, params=params)
             result = {
                 "metrics": snapshot.get("train", {}).get("compare_rows", []),
                 "summary": snapshot.get("train", {}).get("summary_cards", []),
@@ -300,7 +284,7 @@ async def _run_stock_page_job(
             }
         elif kind == "stock_backtest_run":
             stage_name = "run_backtest"
-            snapshot = await service.run_backtest(**kwargs)
+            snapshot = await _call_stock_page_service(service.run_backtest, params=params)
             result = _backtest_payload(snapshot)
         else:
             raise HTTPException(status_code=400, detail="Unsupported stock ML job kind.")
@@ -355,8 +339,7 @@ async def ml_models(
     if normalized_scope not in {"stock", "stock-page", "registry"}:
         return ok_json_response(models=ML_MODEL_CATALOG)
 
-    service = _stock_ml_page_service(hub, stock_ml_page_store)
-    snapshot = await service.build_snapshot(
+    params = _build_stock_page_params(
         prediction_date=prediction_date,
         universe_filter=universe_filter,
         model_family=model_family,
@@ -370,6 +353,8 @@ async def ml_models(
         run_note=run_note,
         refresh=refresh,
     )
+    service = _stock_ml_page_service(hub, stock_ml_page_store)
+    snapshot = await _call_stock_page_service(service.build_snapshot, params=params)
     return ok_json_response(**_stock_model_registry_payload(snapshot))
 
 
@@ -390,8 +375,7 @@ async def stock_ml_prediction_daily(
     run_note: str = "",
     refresh: bool = False,
 ) -> JSONResponse:
-    service = _stock_ml_page_service(hub, stock_ml_page_store)
-    snapshot = await service.build_snapshot(
+    params = _build_stock_page_params(
         prediction_date=prediction_date,
         universe_filter=universe_filter,
         model_family=model_family,
@@ -405,6 +389,8 @@ async def stock_ml_prediction_daily(
         run_note=run_note,
         refresh=refresh,
     )
+    service = _stock_ml_page_service(hub, stock_ml_page_store)
+    snapshot = await _call_stock_page_service(service.build_snapshot, params=params)
     return ok_json_response(**_prediction_daily_payload(snapshot))
 
 
@@ -415,21 +401,9 @@ async def stock_ml_prediction_run(
     stock_ml_page_store: StockMlPageStoreDep,
     ml_job_store: MlJobStoreDep,
 ) -> JSONResponse:
+    params = req.stock_page_params()
     service = _stock_ml_page_service(hub, stock_ml_page_store)
-    snapshot = await service.build_snapshot(**_stock_page_kwargs(
-        prediction_date=req.prediction_date,
-        universe_filter=req.universe_filter,
-        model_family=req.model_family,
-        feature_set=req.feature_set,
-        cost_buffer=req.cost_buffer,
-        train_window_months=req.train_window_months,
-        gap_days=req.gap_days,
-        valid_window_months=req.valid_window_months,
-        random_seed=req.random_seed,
-        train_note=req.train_note,
-        run_note=req.run_note,
-        refresh=req.refresh,
-    ))
+    snapshot = await _call_stock_page_service(service.build_snapshot, params=params)
     service._ensure_action_allowed(snapshot, "run_inference")
     generation = service._prediction_run_payload(snapshot)
     existing = stock_ml_page_store.find_prediction_run(generation_key=generation["generation_key"])
@@ -469,21 +443,9 @@ async def stock_ml_training_job_create(
     stock_ml_page_store: StockMlPageStoreDep,
     ml_job_store: MlJobStoreDep,
 ) -> JSONResponse:
+    params = req.stock_page_params()
     service = _stock_ml_page_service(hub, stock_ml_page_store)
-    snapshot = await service.build_snapshot(**_stock_page_kwargs(
-        prediction_date=req.prediction_date,
-        universe_filter=req.universe_filter,
-        model_family=req.model_family,
-        feature_set=req.feature_set,
-        cost_buffer=req.cost_buffer,
-        train_window_months=req.train_window_months,
-        gap_days=req.gap_days,
-        valid_window_months=req.valid_window_months,
-        random_seed=req.random_seed,
-        train_note=req.train_note,
-        run_note=req.run_note,
-        refresh=req.refresh,
-    ))
+    snapshot = await _call_stock_page_service(service.build_snapshot, params=params)
     service._ensure_action_allowed(snapshot, "create_training_job")
     job_id = ml_job_store.create(kind="stock_training_job", symbol="JP")
     asyncio.create_task(
@@ -501,7 +463,7 @@ async def stock_ml_training_job_create(
         kind="stock_training_job",
         status="QUEUED",
         status_raw="queued",
-        config_hash=_stock_page_config_hash(req),
+        config_hash=req.stock_page_config_hash(),
     )
 
 
@@ -530,8 +492,7 @@ async def stock_ml_backtests(
     run_note: str = "",
     refresh: bool = False,
 ) -> JSONResponse:
-    service = _stock_ml_page_service(hub, stock_ml_page_store)
-    snapshot = await service.build_snapshot(
+    params = _build_stock_page_params(
         prediction_date=prediction_date,
         universe_filter=universe_filter,
         model_family=model_family,
@@ -545,6 +506,8 @@ async def stock_ml_backtests(
         run_note=run_note,
         refresh=refresh,
     )
+    service = _stock_ml_page_service(hub, stock_ml_page_store)
+    snapshot = await _call_stock_page_service(service.build_snapshot, params=params)
     return ok_json_response(**_backtest_payload(snapshot))
 
 
@@ -555,21 +518,9 @@ async def stock_ml_backtests_run(
     stock_ml_page_store: StockMlPageStoreDep,
     ml_job_store: MlJobStoreDep,
 ) -> JSONResponse:
+    params = req.stock_page_params()
     service = _stock_ml_page_service(hub, stock_ml_page_store)
-    snapshot = await service.build_snapshot(**_stock_page_kwargs(
-        prediction_date=req.prediction_date,
-        universe_filter=req.universe_filter,
-        model_family=req.model_family,
-        feature_set=req.feature_set,
-        cost_buffer=req.cost_buffer,
-        train_window_months=req.train_window_months,
-        gap_days=req.gap_days,
-        valid_window_months=req.valid_window_months,
-        random_seed=req.random_seed,
-        train_note=req.train_note,
-        run_note=req.run_note,
-        refresh=req.refresh,
-    ))
+    snapshot = await _call_stock_page_service(service.build_snapshot, params=params)
     service._ensure_action_allowed(snapshot, "run_backtest")
     job_id = ml_job_store.create(kind="stock_backtest_run", symbol="JP")
     asyncio.create_task(
@@ -598,22 +549,9 @@ async def stock_ml_model_adopt_alias(
     hub: HubDep,
     stock_ml_page_store: StockMlPageStoreDep,
 ) -> JSONResponse:
+    params = req.stock_page_params()
     service = _stock_ml_page_service(hub, stock_ml_page_store)
-    payload = await service.adopt_model(
-        model_version=model_version,
-        prediction_date=req.prediction_date,
-        universe_filter=req.universe_filter,
-        model_family=req.model_family,
-        feature_set=req.feature_set,
-        cost_buffer=req.cost_buffer,
-        train_window_months=req.train_window_months,
-        gap_days=req.gap_days,
-        valid_window_months=req.valid_window_months,
-        random_seed=req.random_seed,
-        train_note=req.train_note,
-        run_note=req.run_note,
-        refresh=req.refresh,
-    )
+    payload = await _call_stock_page_service(service.adopt_model, params=params, model_version=model_version)
     return ok_json_response(
         result="adopted",
         adopted_version=model_version,
@@ -638,8 +576,7 @@ async def stock_ml_ops_status(
     run_note: str = "",
     refresh: bool = False,
 ) -> JSONResponse:
-    service = _stock_ml_page_service(hub, stock_ml_page_store)
-    snapshot = await service.build_snapshot(
+    params = _build_stock_page_params(
         prediction_date=prediction_date,
         universe_filter=universe_filter,
         model_family=model_family,
@@ -653,6 +590,8 @@ async def stock_ml_ops_status(
         run_note=run_note,
         refresh=refresh,
     )
+    service = _stock_ml_page_service(hub, stock_ml_page_store)
+    snapshot = await _call_stock_page_service(service.build_snapshot, params=params)
     return ok_json_response(**_ops_status_payload(snapshot))
 
 
@@ -673,8 +612,7 @@ async def stock_ml_page_snapshot(
     run_note: str = "",
     refresh: bool = False,
 ) -> JSONResponse:
-    service = _stock_ml_page_service(hub, stock_ml_page_store)
-    payload = await service.build_snapshot(
+    params = _build_stock_page_params(
         prediction_date=prediction_date,
         universe_filter=universe_filter,
         model_family=model_family,
@@ -688,6 +626,8 @@ async def stock_ml_page_snapshot(
         run_note=run_note,
         refresh=refresh,
     )
+    service = _stock_ml_page_service(hub, stock_ml_page_store)
+    payload = await _call_stock_page_service(service.build_snapshot, params=params)
     return ok_json_response(**payload)
 
 
@@ -698,19 +638,7 @@ async def stock_ml_page_refresh(
     stock_ml_page_store: StockMlPageStoreDep,
 ) -> JSONResponse:
     service = _stock_ml_page_service(hub, stock_ml_page_store)
-    payload = await service.refresh_data(
-        prediction_date=req.prediction_date,
-        universe_filter=req.universe_filter,
-        model_family=req.model_family,
-        feature_set=req.feature_set,
-        cost_buffer=req.cost_buffer,
-        train_window_months=req.train_window_months,
-        gap_days=req.gap_days,
-        valid_window_months=req.valid_window_months,
-        random_seed=req.random_seed,
-        train_note=req.train_note,
-        run_note=req.run_note,
-    )
+    payload = await _call_stock_page_service(service.refresh_data, params=req.stock_page_params())
     return ok_json_response(**payload)
 
 
@@ -721,20 +649,10 @@ async def stock_ml_page_run_inference(
     stock_ml_page_store: StockMlPageStoreDep,
 ) -> JSONResponse:
     service = _stock_ml_page_service(hub, stock_ml_page_store)
-    payload = await service.run_inference(
-        prediction_date=req.prediction_date,
-        universe_filter=req.universe_filter,
-        model_family=req.model_family,
-        feature_set=req.feature_set,
-        cost_buffer=req.cost_buffer,
-        train_window_months=req.train_window_months,
-        gap_days=req.gap_days,
-        valid_window_months=req.valid_window_months,
-        random_seed=req.random_seed,
-        train_note=req.train_note,
+    payload = await _call_stock_page_service(
+        service.run_inference,
+        params=req.stock_page_params(),
         confirm_regenerate=req.confirm_regenerate,
-        run_note=req.run_note,
-        refresh=req.refresh,
     )
     return ok_json_response(**payload)
 
@@ -746,20 +664,7 @@ async def stock_ml_page_create_training_job(
     stock_ml_page_store: StockMlPageStoreDep,
 ) -> JSONResponse:
     service = _stock_ml_page_service(hub, stock_ml_page_store)
-    payload = await service.create_training_job(
-        prediction_date=req.prediction_date,
-        universe_filter=req.universe_filter,
-        model_family=req.model_family,
-        feature_set=req.feature_set,
-        cost_buffer=req.cost_buffer,
-        train_window_months=req.train_window_months,
-        gap_days=req.gap_days,
-        valid_window_months=req.valid_window_months,
-        random_seed=req.random_seed,
-        train_note=req.train_note,
-        run_note=req.run_note,
-        refresh=req.refresh,
-    )
+    payload = await _call_stock_page_service(service.create_training_job, params=req.stock_page_params())
     return ok_json_response(**payload)
 
 
@@ -770,20 +675,10 @@ async def stock_ml_page_adopt_model(
     stock_ml_page_store: StockMlPageStoreDep,
 ) -> JSONResponse:
     service = _stock_ml_page_service(hub, stock_ml_page_store)
-    payload = await service.adopt_model(
+    payload = await _call_stock_page_service(
+        service.adopt_model,
+        params=req.stock_page_params(),
         model_version=req.model_version,
-        prediction_date=req.prediction_date,
-        universe_filter=req.universe_filter,
-        model_family=req.model_family,
-        feature_set=req.feature_set,
-        cost_buffer=req.cost_buffer,
-        train_window_months=req.train_window_months,
-        gap_days=req.gap_days,
-        valid_window_months=req.valid_window_months,
-        random_seed=req.random_seed,
-        train_note=req.train_note,
-        run_note=req.run_note,
-        refresh=req.refresh,
     )
     return ok_json_response(**payload)
 
@@ -795,20 +690,10 @@ async def stock_ml_page_export_csv(
     stock_ml_page_store: StockMlPageStoreDep,
 ) -> JSONResponse:
     service = _stock_ml_page_service(hub, stock_ml_page_store)
-    payload = await service.export_csv(
-        prediction_date=req.prediction_date,
-        universe_filter=req.universe_filter,
-        model_family=req.model_family,
-        feature_set=req.feature_set,
-        cost_buffer=req.cost_buffer,
-        train_window_months=req.train_window_months,
-        gap_days=req.gap_days,
-        valid_window_months=req.valid_window_months,
-        random_seed=req.random_seed,
-        train_note=req.train_note,
+    payload = await _call_stock_page_service(
+        service.export_csv,
+        params=req.stock_page_params(),
         search_query=req.search_query,
-        run_note=req.run_note,
-        refresh=req.refresh,
     )
     return ok_json_response(**payload)
 
@@ -820,20 +705,10 @@ async def stock_ml_page_export_report(
     stock_ml_page_store: StockMlPageStoreDep,
 ) -> JSONResponse:
     service = _stock_ml_page_service(hub, stock_ml_page_store)
-    payload = await service.export_report(
-        prediction_date=req.prediction_date,
-        universe_filter=req.universe_filter,
-        model_family=req.model_family,
-        feature_set=req.feature_set,
-        cost_buffer=req.cost_buffer,
-        train_window_months=req.train_window_months,
-        gap_days=req.gap_days,
-        valid_window_months=req.valid_window_months,
-        random_seed=req.random_seed,
-        train_note=req.train_note,
+    payload = await _call_stock_page_service(
+        service.export_report,
+        params=req.stock_page_params(),
         search_query=req.search_query,
-        run_note=req.run_note,
-        refresh=req.refresh,
     )
     return ok_json_response(**payload)
 
