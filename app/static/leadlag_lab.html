@@ -420,15 +420,41 @@
         <div class="llg-subsection">
           <h3>
             <span class="llg-heading-row">
-              <span>Annual Return Trace</span>
+              <span>Recent 1M Summary</span>
               <details class="param-help llg-param-help">
                 <summary>?</summary>
-                <p>観測できた target date ごとに、その日までの平均日次 long-short リターンを年率換算した推移を描きます。最終点は Strategy Summary の Annual Return と整合します。</p>
+                <p>直近 1 ヶ月に入る signal day だけを切り出した戦略要約です。短期の効き方や直近の調子を確認したいときに使います。</p>
               </details>
             </span>
           </h3>
-          <p id="llg-strategy-chart-meta" class="hint">観測できた営業日があれば、ここに年率リターンの推移を表示します。</p>
+          <p id="llg-strategy-recent-meta" class="hint">直近 1 ヶ月に入る signal day を集計します。</p>
+          <div id="llg-strategy-recent-grid" class="llg-summary-grid"></div>
+        </div>
+        <div class="llg-subsection">
+          <h3>
+            <span class="llg-heading-row">
+              <span>Annual Return Trace</span>
+              <details class="param-help llg-param-help">
+                <summary>?</summary>
+                <p>全期間の signal day を先頭から順に積み上げ、その時点までの平均日次 long-short リターンを年率換算した推移です。最終点は Strategy Summary の Annual Return と整合します。Recent 1M Summary の Annual Return とは別指標です。</p>
+              </details>
+            </span>
+          </h3>
+          <p id="llg-strategy-chart-meta" class="hint">全期間ベースの cumulative annualized return を表示します。</p>
           <div id="llg-strategy-chart" class="chart-wrap llg-strategy-chart"></div>
+        </div>
+        <div class="llg-subsection">
+          <h3>
+            <span class="llg-heading-row">
+              <span>Daily Return Trace</span>
+              <details class="param-help llg-param-help">
+                <summary>?</summary>
+                <p>各 target date の long-short 日次リターンをそのまま表示します。Recent 1M Summary や Annual Return Trace よりも、日ごとの当たり外れを直接確認したいときに使います。</p>
+              </details>
+            </span>
+          </h3>
+          <p id="llg-strategy-daily-chart-meta" class="hint">各 target date の daily gross return を表示します。</p>
+          <div id="llg-strategy-daily-chart" class="chart-wrap llg-strategy-chart"></div>
         </div>
       </section>
 

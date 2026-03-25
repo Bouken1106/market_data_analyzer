@@ -19,6 +19,85 @@ def _safe_pct(value: float) -> float | None:
     return float(value * 100.0)
 
 
+def _empty_summary() -> dict[str, Any]:
+    return {
+        "annual_return_pct": None,
+        "annual_volatility_pct": None,
+        "return_risk_ratio": None,
+        "max_drawdown_pct": None,
+        "signal_days": 0,
+        "average_breadth": None,
+        "range": {
+            "from": None,
+            "to": None,
+        },
+        "signal_range": {
+            "from": None,
+            "to": None,
+        },
+        "target_range": {
+            "from": None,
+            "to": None,
+        },
+    }
+
+
+def _summarize_daily_rows(daily_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not daily_rows:
+        return _empty_summary()
+
+    gross_returns = np.asarray([float(row["gross_return"]) for row in daily_rows], dtype=np.float64)
+    equity = 1.0
+    equity_curve: list[float] = []
+    for gross_return in gross_returns:
+        equity *= 1.0 + float(gross_return)
+        equity_curve.append(equity)
+
+    annual_return = float(np.mean(gross_returns) * _TRADING_DAYS_PER_YEAR)
+    annual_volatility = (
+        float(np.std(gross_returns, ddof=1) * np.sqrt(_TRADING_DAYS_PER_YEAR))
+        if gross_returns.size >= 2
+        else float("nan")
+    )
+    return_risk_ratio = annual_return / annual_volatility if annual_volatility and np.isfinite(annual_volatility) else np.nan
+
+    equity_array = np.asarray([1.0] + equity_curve, dtype=np.float64)
+    running_max = np.maximum.accumulate(equity_array)
+    drawdowns = (equity_array / running_max) - 1.0
+    max_drawdown = float(np.min(drawdowns)) if drawdowns.size else np.nan
+
+    return {
+        "annual_return_pct": _safe_pct(annual_return),
+        "annual_volatility_pct": _safe_pct(annual_volatility),
+        "return_risk_ratio": float(return_risk_ratio) if np.isfinite(return_risk_ratio) else None,
+        "max_drawdown_pct": _safe_pct(max_drawdown),
+        "signal_days": len(daily_rows),
+        "average_breadth": float(np.mean([float(row["breadth"]) for row in daily_rows])) if daily_rows else None,
+        "range": {
+            "from": daily_rows[0].get("signal_date"),
+            "to": daily_rows[-1].get("signal_date"),
+        },
+        "signal_range": {
+            "from": daily_rows[0].get("signal_date"),
+            "to": daily_rows[-1].get("signal_date"),
+        },
+        "target_range": {
+            "from": daily_rows[0].get("target_date"),
+            "to": daily_rows[-1].get("target_date"),
+        },
+    }
+
+
+def _select_recent_rows(daily_rows: list[dict[str, Any]], *, months: int = 1) -> list[dict[str, Any]]:
+    if not daily_rows:
+        return []
+
+    latest_signal_date = pd.Timestamp(daily_rows[-1]["signal_date"])
+    cutoff = latest_signal_date - pd.DateOffset(months=months)
+    recent_rows = [row for row in daily_rows if pd.Timestamp(row["signal_date"]) >= cutoff]
+    return recent_rows or daily_rows[-1:]
+
+
 def evaluate_long_short(
     observations: tuple[SignalObservation, ...],
     *,
@@ -75,41 +154,19 @@ def evaluate_long_short(
 
     if not gross_returns:
         return {
-            "summary": {
-                "annual_return_pct": None,
-                "annual_volatility_pct": None,
-                "return_risk_ratio": None,
-                "max_drawdown_pct": None,
-                "signal_days": 0,
-                "average_breadth": None,
-            },
+            "summary": _empty_summary(),
+            "recent_1m_summary": _empty_summary(),
             "daily_rows": daily_rows,
             "equity_curve": equity_curve,
         }
 
-    returns_array = np.asarray(gross_returns, dtype=np.float64)
-    annual_return = float(np.mean(returns_array) * _TRADING_DAYS_PER_YEAR)
-    annual_volatility = (
-        float(np.std(returns_array, ddof=1) * np.sqrt(_TRADING_DAYS_PER_YEAR))
-        if returns_array.size >= 2
-        else float("nan")
-    )
-    return_risk_ratio = annual_return / annual_volatility if annual_volatility and np.isfinite(annual_volatility) else np.nan
-
-    equity_array = np.asarray([1.0] + [row["equity"] for row in equity_curve], dtype=np.float64)
-    running_max = np.maximum.accumulate(equity_array)
-    drawdowns = (equity_array / running_max) - 1.0
-    max_drawdown = float(np.min(drawdowns)) if drawdowns.size else np.nan
+    summary = _summarize_daily_rows(daily_rows)
+    recent_1m_rows = _select_recent_rows(daily_rows, months=1)
+    recent_1m_summary = _summarize_daily_rows(recent_1m_rows)
 
     return {
-        "summary": {
-            "annual_return_pct": _safe_pct(annual_return),
-            "annual_volatility_pct": _safe_pct(annual_volatility),
-            "return_risk_ratio": float(return_risk_ratio) if np.isfinite(return_risk_ratio) else None,
-            "max_drawdown_pct": _safe_pct(max_drawdown),
-            "signal_days": len(daily_rows),
-            "average_breadth": float(np.mean([row["breadth"] for row in daily_rows])) if daily_rows else None,
-        },
+        "summary": summary,
+        "recent_1m_summary": recent_1m_summary,
         "daily_rows": daily_rows,
         "equity_curve": equity_curve,
     }

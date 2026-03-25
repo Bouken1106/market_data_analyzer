@@ -1,5 +1,6 @@
 import unittest
 from pathlib import Path
+from datetime import date, timedelta
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +15,16 @@ def _build_points(dates, opens, closes):
         {"t": day, "o": float(open_price), "c": float(close_price)}
         for day, open_price, close_price in zip(dates, opens, closes)
     ]
+
+
+def _business_dates(start: str, count: int) -> list[str]:
+    current = date.fromisoformat(start)
+    values: list[str] = []
+    while len(values) < count:
+        if current.weekday() < 5:
+            values.append(current.isoformat())
+        current += timedelta(days=1)
+    return values
 
 
 class _FakeHub:
@@ -32,24 +43,14 @@ class _FakeHub:
 
 class LeadLagApiTest(unittest.TestCase):
     def test_leadlag_page_and_api(self) -> None:
-        dates = [
-            "2024-01-01",
-            "2024-01-02",
-            "2024-01-03",
-            "2024-01-04",
-            "2024-01-05",
-            "2024-01-08",
-            "2024-01-09",
-            "2024-01-10",
-            "2024-01-11",
-        ]
+        dates = _business_dates("2024-01-01", 35)
         payloads = {
-            "USA1": _build_points(dates, [100, 100, 101, 102, 103, 104, 105, 106, 107], [100, 101, 102, 103, 104, 105, 106, 107, 108]),
-            "USA2": _build_points(dates, [50, 50, 50.5, 51, 51.3, 51.5, 51.7, 52, 52.3], [50, 50.5, 51, 51.3, 51.5, 51.7, 52, 52.3, 52.6]),
-            "JP1.T": _build_points(dates, [100, 100, 101, 102, 103, 104, 105, 106, 107], [100, 101.5, 102.0, 103.2, 104.3, 105.1, 106.4, 107.3, 108.6]),
-            "JP2.T": _build_points(dates, [90, 90.2, 90.8, 91.1, 91.7, 92.4, 92.8, 93.2, 93.5], [90.1, 90.6, 91.0, 91.5, 92.1, 92.7, 93.0, 93.4, 93.9]),
-            "JP3.T": _build_points(dates, [80, 80.4, 80.8, 81.2, 81.6, 82.0, 82.4, 82.8, 83.2], [80.2, 80.7, 81.0, 81.4, 81.9, 82.2, 82.6, 83.0, 83.4]),
-            "JP4.T": _build_points(dates, [70, 69.8, 70.2, 70.6, 71.0, 71.4, 71.8, 72.1, 72.5], [69.9, 70.1, 70.5, 70.9, 71.2, 71.6, 72.0, 72.4, 72.7]),
+            "USA1": _build_points(dates, [100 + i * 1.0 for i in range(len(dates))], [100 + i * 1.1 for i in range(len(dates))]),
+            "USA2": _build_points(dates, [50 + i * 0.4 for i in range(len(dates))], [50 + i * 0.35 for i in range(len(dates))]),
+            "JP1.T": _build_points(dates, [100 + i * 0.8 for i in range(len(dates))], [100 + i * 1.2 for i in range(len(dates))]),
+            "JP2.T": _build_points(dates, [90 + i * 0.25 for i in range(len(dates))], [90.1 + i * 0.3 for i in range(len(dates))]),
+            "JP3.T": _build_points(dates, [80 + i * 0.18 for i in range(len(dates))], [80.2 + i * 0.22 for i in range(len(dates))]),
+            "JP4.T": _build_points(dates, [70 + i * 0.12 for i in range(len(dates))], [69.9 + i * 0.15 for i in range(len(dates))]),
         }
 
         app = FastAPI()
@@ -86,6 +87,7 @@ class LeadLagApiTest(unittest.TestCase):
         self.assertEqual(defaults_response.status_code, 200)
         self.assertEqual(analyze_response.status_code, 200)
         self.assertIn("直近 L 営業日を 1 つの窓として", page_response.text)
+        self.assertIn("Recent 1M Summary", page_response.text)
         self.assertIn("history_years", defaults_response.json()["defaults"])
         self.assertEqual(
             defaults_response.json()["defaults"]["universe"]["us"],
@@ -95,6 +97,7 @@ class LeadLagApiTest(unittest.TestCase):
             defaults_response.json()["defaults"]["universe"]["jp"],
             defaults_response.json()["defaults"]["jp_symbols"],
         )
+        self.assertIn("recent_1m_summary", analyze_response.json()["strategy"])
         self.assertTrue(analyze_response.json()["ok"])
 
 

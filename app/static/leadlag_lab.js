@@ -39,8 +39,12 @@ const transferWrapEl = document.getElementById("llg-transfer-wrap");
 const transferTextEl = document.getElementById("llg-transfer-matrix-text");
 
 const strategyGridEl = document.getElementById("llg-strategy-grid");
+const strategyRecentGridEl = document.getElementById("llg-strategy-recent-grid");
+const strategyRecentMetaEl = document.getElementById("llg-strategy-recent-meta");
 const strategyChartMetaEl = document.getElementById("llg-strategy-chart-meta");
 const strategyChartEl = document.getElementById("llg-strategy-chart");
+const strategyDailyChartMetaEl = document.getElementById("llg-strategy-daily-chart-meta");
+const strategyDailyChartEl = document.getElementById("llg-strategy-daily-chart");
 const recentBodyEl = document.getElementById("llg-recent-body");
 
 let running = false;
@@ -125,8 +129,19 @@ const strategyChartState = {
   viewportStart: 0,
   viewportEnd: 0,
   seriesKey: "",
+  recentAnnualReturnPct: Number.NaN,
+};
+const strategyDailyChartState = {
+  points: [],
+  viewportStart: 0,
+  viewportEnd: 0,
+  seriesKey: "",
 };
 let strategyChartPanState = {
+  active: false,
+  lastClientX: 0,
+};
+let strategyDailyChartPanState = {
   active: false,
   lastClientX: 0,
 };
@@ -496,6 +511,22 @@ function renderSummaryCards(items) {
   });
 }
 
+function renderMetricCards(targetEl, items) {
+  if (!targetEl) return;
+  targetEl.innerHTML = "";
+  items.forEach((item) => {
+    const card = document.createElement("div");
+    card.className = "llg-metric";
+    const labelEl = document.createElement("span");
+    labelEl.className = "label";
+    labelEl.appendChild(buildLabeledHelpRow(item.label, item.help || null));
+    const valueEl = document.createElement("strong");
+    valueEl.textContent = String(item.value ?? "-");
+    card.append(labelEl, valueEl);
+    targetEl.appendChild(card);
+  });
+}
+
 function renderChipList(targetEl, symbols) {
   targetEl.innerHTML = "";
   const values = Array.isArray(symbols) ? symbols : [];
@@ -616,6 +647,21 @@ function buildStrategyAnnualReturnSeries(strategy) {
       observation_index: index + 1,
     };
   });
+}
+
+function buildStrategyDailyReturnSeries(strategy) {
+  const rows = Array.isArray(strategy?.daily_rows) ? strategy.daily_rows : [];
+  return rows
+    .map((row, index) => ({
+      t: String(row?.target_date || "").trim(),
+      c: Number(row?.gross_return) * 100.0,
+      gross_return_pct: Number(row?.gross_return) * 100.0,
+      breadth: Number(row?.breadth),
+      bucket_size: Number(row?.bucket_size),
+      observation_index: index + 1,
+    }))
+    .filter((row) => row.t && Number.isFinite(row.c))
+    .sort((left, right) => left.t.localeCompare(right.t));
 }
 
 function buildStrategySeriesKey(points) {
@@ -825,9 +871,158 @@ function buildStrategyChartHtml(points) {
   `;
 }
 
+function buildStrategyDailyChartHtml(points) {
+  const safe = (Array.isArray(points) ? points : [])
+    .map((point) => ({
+      t: String(point?.t || "").trim(),
+      c: Number(point?.c),
+      gross_return_pct: Number(point?.gross_return_pct),
+      breadth: Number(point?.breadth),
+      bucket_size: Number(point?.bucket_size),
+      observation_index: Number(point?.observation_index),
+    }))
+    .filter((point) => point.t && Number.isFinite(point.c));
+
+  if (!safe.length) {
+    return '<div class="chart-empty">バックテスト結果がないため、グラフを表示できません。</div>';
+  }
+
+  const maxIndex = Math.max(0, safe.length - 1);
+  const viewport = clampStrategyViewport(
+    strategyDailyChartState.viewportStart,
+    strategyDailyChartState.viewportEnd,
+    safe.length
+  );
+  strategyDailyChartState.viewportStart = viewport.start;
+  strategyDailyChartState.viewportEnd = viewport.end;
+  const visibleStart = clampNumber(Math.floor(viewport.start), 0, maxIndex);
+  const visibleEnd = clampNumber(Math.ceil(viewport.end), 0, maxIndex);
+  const visible = safe.slice(visibleStart, visibleEnd + 1);
+  const visibleCount = visible.length;
+
+  let min = Math.min(...visible.map((point) => point.c));
+  let max = Math.max(...visible.map((point) => point.c));
+  if (min === max) {
+    const pad = Math.max(0.1, Math.abs(min) * 0.12 || 0.1);
+    min -= pad;
+    max += pad;
+  }
+  const rawRange = max - min || 1;
+  const yPadding = rawRange * STRATEGY_CHART_Y_PADDING_RATIO;
+  min -= yPadding;
+  max += yPadding;
+  const range = max - min || 1;
+
+  const drawableWidth = STRATEGY_CHART_WIDTH - (STRATEGY_CHART_PAD_X * 2);
+  const drawableHeight = STRATEGY_CHART_HEIGHT - STRATEGY_CHART_PAD_TOP - STRATEGY_CHART_PAD_BOTTOM;
+  const axisX = STRATEGY_CHART_PAD_X;
+  const axisY = STRATEGY_CHART_HEIGHT - STRATEGY_CHART_PAD_BOTTOM;
+  const xDenom = Math.max(visibleCount - 1, 1);
+
+  const xForIndex = (index) => STRATEGY_CHART_PAD_X + ((index / xDenom) * drawableWidth);
+  const yForValue = (value) => STRATEGY_CHART_PAD_TOP + (1 - ((value - min) / range)) * drawableHeight;
+
+  const polyline = visible.map((point, index) => `${xForIndex(index).toFixed(2)},${yForValue(point.c).toFixed(2)}`).join(" ");
+  const lastPointX = xForIndex(Math.max(visibleCount - 1, 0));
+  const lastPointY = yForValue(visible[visibleCount - 1].c);
+
+  const yTickCount = 4;
+  const yGridLines = [];
+  const yTicks = [];
+  for (let idx = 0; idx < yTickCount; idx += 1) {
+    const ratio = idx / Math.max(yTickCount - 1, 1);
+    const y = STRATEGY_CHART_PAD_TOP + (ratio * drawableHeight);
+    const value = max - (range * ratio);
+    yGridLines.push(
+      `<line x1="${axisX}" y1="${y.toFixed(2)}" x2="${(STRATEGY_CHART_WIDTH - STRATEGY_CHART_PAD_X).toFixed(2)}" y2="${y.toFixed(2)}" class="symbol-chart-grid-line"></line>`
+    );
+    yTicks.push(
+      `<text x="${(axisX - 4).toFixed(2)}" y="${(y + 4).toFixed(2)}" class="symbol-chart-axis-label" text-anchor="end">${escapeHtml(fmtSignedPct(value, 1))}</text>`
+    );
+  }
+
+  if (min < 0 && max > 0) {
+    const zeroY = yForValue(0);
+    yGridLines.push(
+      `<line x1="${axisX}" y1="${zeroY.toFixed(2)}" x2="${(STRATEGY_CHART_WIDTH - STRATEGY_CHART_PAD_X).toFixed(2)}" y2="${zeroY.toFixed(2)}" class="symbol-chart-grid-line llg-chart-zero-line"></line>`
+    );
+  }
+
+  const xTickCount = Math.min(6, visibleCount);
+  const xTicks = [];
+  for (let idx = 0; idx < xTickCount; idx += 1) {
+    const ratio = idx / Math.max(xTickCount - 1, 1);
+    const pointIndex = Math.round(ratio * xDenom);
+    const point = visible[pointIndex];
+    const x = xForIndex(pointIndex);
+    const anchor = idx === 0 ? "start" : (idx === xTickCount - 1 ? "end" : "middle");
+    xTicks.push(
+      `<line x1="${x.toFixed(2)}" y1="${axisY.toFixed(2)}" x2="${x.toFixed(2)}" y2="${(axisY + 5).toFixed(2)}" class="symbol-chart-axis-tick"></line>`
+    );
+    xTicks.push(
+      `<text x="${x.toFixed(2)}" y="${(STRATEGY_CHART_HEIGHT - 8).toFixed(2)}" class="symbol-chart-axis-label" text-anchor="${anchor}">${escapeHtml(formatChartDateLabel(point?.t))}</text>`
+    );
+  }
+
+  const hitPoints = visible.map((point, index) => {
+    const x = xForIndex(index);
+    const y = yForValue(point.c);
+    const tooltipParts = [
+      point.t,
+      `Daily Gross: ${fmtSignedPct(point.gross_return_pct)}`,
+      `Obs: ${point.observation_index}`,
+    ];
+    if (Number.isFinite(point.breadth)) {
+      tooltipParts.push(`Breadth: ${fmtNum(point.breadth, 0)}`);
+    }
+    if (Number.isFinite(point.bucket_size)) {
+      tooltipParts.push(`Bucket: ${fmtNum(point.bucket_size, 0)}`);
+    }
+    return `
+      <circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="8" class="llg-chart-hit-point">
+        <title>${escapeHtml(tooltipParts.join(" / "))}</title>
+      </circle>
+    `;
+  }).join("");
+
+  const firstPoint = visible[0];
+  const latestPoint = visible[visibleCount - 1];
+  const isZoomed = visibleStart > 0 || visibleEnd < maxIndex;
+
+  return `
+    <div class="chart-controls">
+      <div class="chart-toolbar">
+        <div class="chart-zoom-actions">
+          <button type="button" class="minor-action" data-strategy-daily-chart-action="zoom-in">+</button>
+          <button type="button" class="minor-action" data-strategy-daily-chart-action="zoom-out">-</button>
+          <button type="button" class="minor-action" data-strategy-daily-chart-action="zoom-reset">Reset</button>
+        </div>
+        <span class="chart-hint">Wheel: zoom / Drag: pan / Double click: reset</span>
+      </div>
+      <div class="chart-caption">${visibleCount} / ${safe.length} points${isZoomed ? " (zoomed)" : ""} / ${escapeHtml(firstPoint.t)} - ${escapeHtml(latestPoint.t)} / latest ${escapeHtml(fmtSignedPct(latestPoint.c))}</div>
+    </div>
+    <div class="chart-scroll-shell">
+      <div class="chart-canvas-host">
+        <svg class="symbol-chart interactive llg-strategy-daily-line-chart" viewBox="0 0 ${STRATEGY_CHART_WIDTH} ${STRATEGY_CHART_HEIGHT}" preserveAspectRatio="none" role="img" aria-label="daily return trace">
+          <rect x="0" y="0" width="${STRATEGY_CHART_WIDTH}" height="${STRATEGY_CHART_HEIGHT}" class="symbol-chart-bg"></rect>
+          ${yGridLines.join("")}
+          <line x1="${axisX}" y1="${STRATEGY_CHART_PAD_TOP}" x2="${axisX}" y2="${axisY}" class="symbol-chart-axis-line"></line>
+          <line x1="${axisX}" y1="${axisY}" x2="${(STRATEGY_CHART_WIDTH - STRATEGY_CHART_PAD_X).toFixed(2)}" y2="${axisY}" class="symbol-chart-axis-line"></line>
+          <polyline class="symbol-chart-line" points="${polyline}"></polyline>
+          <circle class="symbol-chart-point" cx="${lastPointX.toFixed(2)}" cy="${lastPointY.toFixed(2)}" r="4"></circle>
+          ${hitPoints}
+          ${yTicks.join("")}
+          ${xTicks.join("")}
+        </svg>
+      </div>
+    </div>
+  `;
+}
+
 function renderStrategyChartFromState() {
   if (!strategyChartEl || !strategyChartMetaEl) return;
   const points = Array.isArray(strategyChartState.points) ? strategyChartState.points : [];
+  const recentAnnualReturnPct = Number(strategyChartState.recentAnnualReturnPct);
   if (!points.length) {
     strategyChartMetaEl.textContent = "バックテストが無効か、観測できた営業日がありません。";
     strategyChartEl.innerHTML = buildStrategyChartHtml(points);
@@ -836,7 +1031,10 @@ function renderStrategyChartFromState() {
 
   const firstPoint = points[0];
   const latestPoint = points[points.length - 1];
-  strategyChartMetaEl.textContent = `${points.length} observed target dates / ${firstPoint.t} -> ${latestPoint.t} / latest ${fmtSignedPct(latestPoint.c)}`;
+  const recentLabel = Number.isFinite(recentAnnualReturnPct)
+    ? ` / recent 1M ${fmtSignedPct(recentAnnualReturnPct)}`
+    : "";
+  strategyChartMetaEl.textContent = `${points.length} observed target dates / ${firstPoint.t} -> ${latestPoint.t} / latest full-sample ${fmtSignedPct(latestPoint.c)}${recentLabel}`;
   strategyChartEl.innerHTML = buildStrategyChartHtml(points);
 
   const safe = points;
@@ -911,6 +1109,7 @@ function renderStrategyChartFromState() {
 
 function renderStrategyChart(strategy) {
   const points = buildStrategyAnnualReturnSeries(strategy);
+  strategyChartState.recentAnnualReturnPct = Number(strategy?.recent_1m_summary?.annual_return_pct);
   const nextSeriesKey = buildStrategySeriesKey(points);
   if (strategyChartState.seriesKey !== nextSeriesKey) {
     strategyChartState.seriesKey = nextSeriesKey;
@@ -922,28 +1121,139 @@ function renderStrategyChart(strategy) {
   renderStrategyChartFromState();
 }
 
+function renderStrategyDailyChartFromState() {
+  if (!strategyDailyChartEl || !strategyDailyChartMetaEl) return;
+  const points = Array.isArray(strategyDailyChartState.points) ? strategyDailyChartState.points : [];
+  if (!points.length) {
+    strategyDailyChartMetaEl.textContent = "バックテストが無効か、観測できた営業日がありません。";
+    strategyDailyChartEl.innerHTML = buildStrategyDailyChartHtml(points);
+    return;
+  }
+
+  const firstPoint = points[0];
+  const latestPoint = points[points.length - 1];
+  strategyDailyChartMetaEl.textContent = `${points.length} observed target dates / ${firstPoint.t} -> ${latestPoint.t} / latest daily gross ${fmtSignedPct(latestPoint.c)}`;
+  strategyDailyChartEl.innerHTML = buildStrategyDailyChartHtml(points);
+
+  const safe = points;
+  if (safe.length < 2) return;
+
+  const svg = strategyDailyChartEl.querySelector(".symbol-chart.interactive");
+  const zoomInBtn = strategyDailyChartEl.querySelector('[data-strategy-daily-chart-action="zoom-in"]');
+  const zoomOutBtn = strategyDailyChartEl.querySelector('[data-strategy-daily-chart-action="zoom-out"]');
+  const zoomResetBtn = strategyDailyChartEl.querySelector('[data-strategy-daily-chart-action="zoom-reset"]');
+  if (!svg) return;
+  if (strategyDailyChartPanState.active) {
+    svg.classList.add("dragging");
+  }
+
+  const getIndexFromClientX = (clientX) => {
+    const rect = svg.getBoundingClientRect();
+    const ratio = clampNumber((clientX - rect.left) / Math.max(1, rect.width), 0, 1);
+    return strategyDailyChartState.viewportStart + (ratio * Math.max(1, strategyDailyChartState.viewportEnd - strategyDailyChartState.viewportStart));
+  };
+
+  const zoomAtClientX = (clientX, factor) => {
+    const maxIndex = Math.max(1, safe.length - 1);
+    const fullSpan = maxIndex;
+    const minSpan = Math.max(1, Math.min(STRATEGY_CHART_MIN_VISIBLE_POINTS - 1, fullSpan));
+    const currentSpan = Math.max(1, strategyDailyChartState.viewportEnd - strategyDailyChartState.viewportStart);
+    const targetSpan = clampNumber(currentSpan * factor, minSpan, fullSpan);
+    if (Math.abs(targetSpan - currentSpan) < 0.001) return;
+    const centerIndex = clampNumber(getIndexFromClientX(clientX), 0, maxIndex);
+    const ratio = (centerIndex - strategyDailyChartState.viewportStart) / currentSpan;
+    const nextStart = centerIndex - (targetSpan * ratio);
+    const nextEnd = nextStart + targetSpan;
+    const viewport = clampStrategyViewport(nextStart, nextEnd, safe.length);
+    strategyDailyChartState.viewportStart = viewport.start;
+    strategyDailyChartState.viewportEnd = viewport.end;
+    renderStrategyDailyChartFromState();
+  };
+
+  zoomInBtn?.addEventListener("click", () => {
+    const rect = svg.getBoundingClientRect();
+    zoomAtClientX(rect.left + (rect.width / 2), STRATEGY_CHART_ZOOM_IN_FACTOR);
+  });
+  zoomOutBtn?.addEventListener("click", () => {
+    const rect = svg.getBoundingClientRect();
+    zoomAtClientX(rect.left + (rect.width / 2), STRATEGY_CHART_ZOOM_OUT_FACTOR);
+  });
+  zoomResetBtn?.addEventListener("click", () => {
+    strategyDailyChartState.viewportStart = 0;
+    strategyDailyChartState.viewportEnd = Math.max(0, safe.length - 1);
+    renderStrategyDailyChartFromState();
+  });
+  svg.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+      const factor = event.deltaY < 0 ? STRATEGY_CHART_ZOOM_IN_FACTOR : STRATEGY_CHART_ZOOM_OUT_FACTOR;
+      zoomAtClientX(event.clientX, factor);
+    },
+    { passive: false }
+  );
+  svg.addEventListener("dblclick", () => {
+    strategyDailyChartState.viewportStart = 0;
+    strategyDailyChartState.viewportEnd = Math.max(0, safe.length - 1);
+    renderStrategyDailyChartFromState();
+  });
+  svg.addEventListener("mousedown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    strategyDailyChartPanState = {
+      active: true,
+      lastClientX: event.clientX,
+    };
+    svg.classList.add("dragging");
+    document.body.classList.add("chart-panning");
+  });
+}
+
+function renderStrategyDailyChart(strategy) {
+  const points = buildStrategyDailyReturnSeries(strategy);
+  const nextSeriesKey = buildStrategySeriesKey(points);
+  if (strategyDailyChartState.seriesKey !== nextSeriesKey) {
+    strategyDailyChartState.seriesKey = nextSeriesKey;
+    strategyDailyChartState.viewportStart = 0;
+    strategyDailyChartState.viewportEnd = Math.max(0, points.length - 1);
+  } else {
+    const viewport = clampStrategyViewport(strategyDailyChartState.viewportStart, strategyDailyChartState.viewportEnd, points.length);
+    strategyDailyChartState.viewportStart = viewport.start;
+    strategyDailyChartState.viewportEnd = viewport.end;
+  }
+  strategyDailyChartState.points = points;
+  renderStrategyDailyChartFromState();
+}
+
 function renderStrategy(strategy) {
-  strategyGridEl.innerHTML = "";
   const summary = strategy?.summary || {};
-  [
+  const recent1mSummary = strategy?.recent_1m_summary || {};
+  const recentRange = recent1mSummary.signal_range || recent1mSummary.range || {};
+  const cards = [
     ["Annual Return", fmtPct(summary.annual_return_pct)],
     ["Annual Volatility", fmtPct(summary.annual_volatility_pct)],
     ["Return / Risk", summary.return_risk_ratio === null || summary.return_risk_ratio === undefined ? "-" : fmtNum(summary.return_risk_ratio, 3)],
     ["Max Drawdown", fmtPct(summary.max_drawdown_pct)],
     ["Signal Days", summary.signal_days ?? "-"],
     ["Average Breadth", summary.average_breadth === null || summary.average_breadth === undefined ? "-" : fmtNum(summary.average_breadth, 2)],
-  ].forEach(([label, value]) => {
-    const card = document.createElement("div");
-    card.className = "llg-metric";
-    const labelEl = document.createElement("span");
-    labelEl.className = "label";
-    labelEl.appendChild(buildLabeledHelpRow(label, strategyMetricHelp[label] || null));
-    const valueEl = document.createElement("strong");
-    valueEl.textContent = String(value ?? "-");
-    card.append(labelEl, valueEl);
-    strategyGridEl.appendChild(card);
-  });
+  ].map(([label, value]) => ({ label, value, help: strategyMetricHelp[label] || null }));
+  const recentCards = [
+    ["Annual Return", fmtPct(recent1mSummary.annual_return_pct)],
+    ["Annual Volatility", fmtPct(recent1mSummary.annual_volatility_pct)],
+    ["Return / Risk", recent1mSummary.return_risk_ratio === null || recent1mSummary.return_risk_ratio === undefined ? "-" : fmtNum(recent1mSummary.return_risk_ratio, 3)],
+    ["Max Drawdown", fmtPct(recent1mSummary.max_drawdown_pct)],
+    ["Signal Days", recent1mSummary.signal_days ?? "-"],
+    ["Average Breadth", recent1mSummary.average_breadth === null || recent1mSummary.average_breadth === undefined ? "-" : fmtNum(recent1mSummary.average_breadth, 2)],
+  ].map(([label, value]) => ({ label, value, help: strategyMetricHelp[label] || null }));
+  if (strategyRecentMetaEl) {
+    strategyRecentMetaEl.textContent = recentRange.from && recentRange.to
+      ? `対象 signal date: ${recentRange.from} -> ${recentRange.to}`
+      : "直近 1 ヶ月に入る signal day を集計します。";
+  }
+  renderMetricCards(strategyGridEl, cards);
+  renderMetricCards(strategyRecentGridEl, recentCards);
   renderStrategyChart(strategy);
+  renderStrategyDailyChart(strategy);
 }
 
 function renderRecent(rows) {
@@ -1114,12 +1424,46 @@ window.addEventListener("mousemove", (event) => {
   renderStrategyChartFromState();
 });
 
+window.addEventListener("mousemove", (event) => {
+  if (!strategyDailyChartPanState.active) return;
+  const safe = Array.isArray(strategyDailyChartState.points) ? strategyDailyChartState.points : [];
+  if (safe.length < 2 || !strategyDailyChartEl) return;
+
+  const svg = strategyDailyChartEl.querySelector(".symbol-chart.interactive");
+  if (!svg) return;
+
+  const rect = svg.getBoundingClientRect();
+  const drawableWidth = rect.width * ((STRATEGY_CHART_WIDTH - (STRATEGY_CHART_PAD_X * 2)) / STRATEGY_CHART_WIDTH);
+  const deltaX = event.clientX - strategyDailyChartPanState.lastClientX;
+  strategyDailyChartPanState.lastClientX = event.clientX;
+
+  const currentStart = strategyDailyChartState.viewportStart;
+  const currentEnd = strategyDailyChartState.viewportEnd;
+  const span = Math.max(1, currentEnd - currentStart);
+  const deltaIndex = (deltaX / Math.max(1, drawableWidth)) * span;
+  const viewport = clampStrategyViewport(currentStart - deltaIndex, currentEnd - deltaIndex, safe.length);
+  strategyDailyChartState.viewportStart = viewport.start;
+  strategyDailyChartState.viewportEnd = viewport.end;
+  renderStrategyDailyChartFromState();
+});
+
 window.addEventListener("mouseup", () => {
   if (!strategyChartPanState.active) return;
   strategyChartPanState.active = false;
   document.body.classList.remove("chart-panning");
   if (!strategyChartEl) return;
   const svg = strategyChartEl.querySelector(".symbol-chart.interactive");
+  if (svg) {
+    svg.classList.remove("dragging");
+  }
+});
+
+window.addEventListener("mouseup", () => {
+  if (!strategyDailyChartPanState.active) return;
+  strategyDailyChartPanState.active = false;
+  document.body.classList.remove("chart-panning");
+  if (!strategyDailyChartEl) return;
+  const svg = strategyDailyChartEl.querySelector(".symbol-chart.interactive");
   if (svg) {
     svg.classList.remove("dragging");
   }

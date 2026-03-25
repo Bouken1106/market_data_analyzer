@@ -38,4 +38,4 @@
 
 1. `GET /api/leadlag/config` で既定設定を取得
 2. `POST /api/leadlag/analyze` へ設定を送信
-3. `latest_signal` と `strategy.summary` を参照
+3. `latest_signal` と `strategy.summary`、`strategy.recent_1m_summary` を参照
