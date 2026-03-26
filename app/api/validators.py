@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import math
 from typing import Any, Iterable
 
 from fastapi import HTTPException
 
-from ..utils import normalize_symbols
+from ..utils import finite_float_or_none, normalize_symbols
 
 
 def require_symbols(
@@ -31,21 +30,22 @@ def require_symbol(raw: Any, *, detail: str = "Invalid symbol format.") -> str:
     return require_symbols([raw], empty_detail=detail, max_count=1)[0]
 
 
-def require_positive_float(value: Any, *, detail: str) -> float:
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail=detail) from None
-    if not math.isfinite(parsed) or parsed <= 0:
+def _require_float(
+    value: Any,
+    *,
+    detail: str,
+    minimum: float,
+    strict_minimum: bool,
+) -> float:
+    parsed = finite_float_or_none(value, minimum=minimum, strict_minimum=strict_minimum)
+    if parsed is None:
         raise HTTPException(status_code=400, detail=detail)
     return parsed
+
+
+def require_positive_float(value: Any, *, detail: str) -> float:
+    return _require_float(value, detail=detail, minimum=0.0, strict_minimum=True)
 
 
 def require_non_negative_float(value: Any, *, detail: str) -> float:
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail=detail) from None
-    if not math.isfinite(parsed) or parsed < 0:
-        raise HTTPException(status_code=400, detail=detail)
-    return parsed
+    return _require_float(value, detail=detail, minimum=0.0, strict_minimum=False)

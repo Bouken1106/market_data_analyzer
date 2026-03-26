@@ -17,7 +17,7 @@ from ..config import (
     LMSTUDIO_MODEL,
     LMSTUDIO_TIMEOUT_SEC,
 )
-from ..utils import utc_now_iso
+from ..utils import finite_float_or_none, utc_now_iso
 
 _WATCHLIST_MAX_COMMENT_LEN = 80
 _JSON_DECODER = json.JSONDecoder()
@@ -51,13 +51,7 @@ _WATCHLIST_RESPONSE_FORMAT = {
 
 
 def _safe_float(value: Any) -> float | None:
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(numeric):
-        return None
-    return numeric
+    return finite_float_or_none(value)
 
 
 def _format_signed_percent(value: float | None) -> str:

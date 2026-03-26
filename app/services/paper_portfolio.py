@@ -2,32 +2,21 @@
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 from fastapi import HTTPException
+
+from ..utils import finite_float_or_none
 
 _PRICE_UNAVAILABLE_DETAIL = "Current market price is unavailable. Set price manually."
 
 
 def to_valid_price(value: Any) -> float | None:
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(parsed) or parsed <= 0:
-        return None
-    return parsed
+    return finite_float_or_none(value, minimum=0.0, strict_minimum=True)
 
 
 def to_finite_number(value: Any) -> float | None:
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(parsed):
-        return None
-    return parsed
+    return finite_float_or_none(value)
 
 
 async def resolve_trade_price(hub: Any, symbol: str, explicit_price: float | None) -> tuple[float, str]:

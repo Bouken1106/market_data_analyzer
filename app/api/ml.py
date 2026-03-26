@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,7 +11,6 @@ from fastapi.responses import JSONResponse
 
 from ..config import LOGGER, ML_HISTORY_DEFAULT_MONTHS
 from ..ml.catalog import ML_MODEL_CATALOG
-from ..ml.stock_page import StockMlPageService
 from ..ml.pipelines import (
     _parse_compare_models,
     _run_ml_comparison_job,
@@ -27,199 +26,114 @@ from ..models import (
     StockMlPageActionRequest,
     StockMlPageQueryRequest,
 )
-from ..stock_ml_page_params import StockMlPageParams
 from ..utils import normalize_ml_history_months, normalize_symbols, ok_json_response, utc_now_iso
 from .deps import HubDep, MlJobStoreDep, StockMlPageStoreDep
-from .validators import require_symbol
+from .ml_support import (
+    StockMlPageContext,
+    backtest_payload,
+    build_job_response_payload,
+    normalize_job_symbol,
+    ops_status_payload,
+    prediction_daily_payload,
+    stock_model_registry_payload,
+    training_job_status_payload,
+)
 
 router = APIRouter()
 StockMlPageQueryDep = Annotated[StockMlPageQueryRequest, Depends()]
 
 
-def _spec_job_status(status: str | None) -> str:
-    normalized = str(status or "").strip().lower()
-    mapping = {
-        "queued": "QUEUED",
-        "running": "RUNNING",
-        "cancelling": "RUNNING",
-        "completed": "SUCCEEDED",
-        "failed": "FAILED",
-        "cancelled": "CANCELLED",
-    }
-    return mapping.get(normalized, "UNKNOWN")
-
-
-def _job_response_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    error_detail = payload.get("error_detail") or {}
-    raw_status = str(payload.get("status") or "")
-    return {
-        "job_id": payload.get("job_id"),
-        "kind": payload.get("kind"),
-        "symbol": payload.get("symbol"),
-        "status": raw_status,
-        "status_raw": raw_status,
-        "status_code": _spec_job_status(raw_status),
-        "progress": payload.get("progress"),
-        "message": payload.get("message"),
-        "result": payload.get("result"),
-        "error": payload.get("error"),
-        "stage_name": error_detail.get("stage_name"),
-        "error_code": error_detail.get("error_code"),
-        "retryable": error_detail.get("retryable"),
-        "created_at": payload.get("created_at"),
-        "updated_at": payload.get("updated_at"),
-    }
-
-
-def _stock_ml_page_service(hub: HubDep, stock_ml_page_store: StockMlPageStoreDep) -> StockMlPageService:
-    return StockMlPageService(
-        full_daily_history_store=hub.full_daily_history_store,
-        page_store=stock_ml_page_store,
+def _stock_page_context(
+    request: StockMlPageQueryRequest | StockMlPageActionRequest | StockMlModelAdoptionRequest,
+    *,
+    hub: HubDep,
+    stock_ml_page_store: StockMlPageStoreDep,
+) -> StockMlPageContext:
+    return StockMlPageContext.from_request(
+        hub=hub,
+        stock_ml_page_store=stock_ml_page_store,
+        request=request,
     )
 
 
-def _normalize_job_symbol(raw_symbol: str) -> str:
-    return require_symbol(raw_symbol, detail="Symbolを入力してください。")
-
-
-async def _call_stock_page_service(
-    method: Callable[..., Awaitable[dict[str, Any]]],
+async def _stock_page_snapshot(
+    request: StockMlPageQueryRequest | StockMlPageActionRequest | StockMlModelAdoptionRequest,
     *,
-    params: StockMlPageParams,
-    **extra: Any,
+    hub: HubDep,
+    stock_ml_page_store: StockMlPageStoreDep,
 ) -> dict[str, Any]:
-    return await method(**params.service_kwargs(), **extra)
+    return await _stock_page_context(
+        request,
+        hub=hub,
+        stock_ml_page_store=stock_ml_page_store,
+    ).snapshot()
 
 
-def _selected_model_version(snapshot: dict[str, Any]) -> str:
-    dashboard = snapshot.get("dashboard", {})
-    model_version = str(dashboard.get("model_version") or "").strip()
-    if model_version:
-        return model_version
-    for item in dashboard.get("summary_cards", []):
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("label") or "").strip() != "model_version":
-            continue
-        value = str(item.get("value") or "").strip()
-        if value:
-            return value
-    filters = snapshot.get("filters", {})
-    models = snapshot.get("models", {})
-    return str(models.get("default_versions", {}).get(filters.get("model_family"), "")).strip()
+async def _stock_page_snapshot_response(
+    request: StockMlPageQueryRequest | StockMlPageActionRequest | StockMlModelAdoptionRequest,
+    *,
+    hub: HubDep,
+    stock_ml_page_store: StockMlPageStoreDep,
+    transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+) -> JSONResponse:
+    payload = await _stock_page_snapshot(
+        request,
+        hub=hub,
+        stock_ml_page_store=stock_ml_page_store,
+    )
+    if transform is not None:
+        payload = transform(payload)
+    return ok_json_response(**payload)
 
 
-def _prediction_daily_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
-    dashboard = snapshot.get("dashboard", {})
-    model_version = _selected_model_version(snapshot)
-    rows = []
-    for item in dashboard.get("rows", []):
-        if not isinstance(item, dict):
-            continue
-        rows.append(
-            {
-                "prediction_date": dashboard.get("prediction_date"),
-                "target_date": dashboard.get("target_date"),
-                "code": item.get("code"),
-                "company_name": item.get("company_name"),
-                "score_cls": item.get("score_cls"),
-                "prob_up": item.get("prob_up"),
-                "score_rank": item.get("score_rank"),
-                "expected_return": item.get("expected_return"),
-                "model_version": model_version,
-                "feature_version": dashboard.get("feature_version"),
-                "data_version": dashboard.get("data_version"),
-                "sector33_code": item.get("sector33_code"),
-                "warnings": item.get("warnings", []),
-            }
+async def _stock_page_action_response(
+    request: StockMlPageActionRequest | StockMlModelAdoptionRequest,
+    *,
+    hub: HubDep,
+    stock_ml_page_store: StockMlPageStoreDep,
+    action: str,
+    **extra: Any,
+) -> JSONResponse:
+    payload = await _stock_page_context(
+        request,
+        hub=hub,
+        stock_ml_page_store=stock_ml_page_store,
+    ).call_named(action, **extra)
+    return ok_json_response(**payload)
+
+
+def _queue_stock_page_job(
+    *,
+    kind: str,
+    req: StockMlPageActionRequest,
+    hub: HubDep,
+    stock_ml_page_store: StockMlPageStoreDep,
+    ml_job_store: MlJobStoreDep,
+    include_config_hash: bool = False,
+) -> JSONResponse:
+    job_id = ml_job_store.create(kind=kind, symbol="JP")
+    asyncio.create_task(
+        _run_stock_page_job(
+            job_id=job_id,
+            kind=kind,
+            req=req,
+            hub=hub,
+            stock_ml_page_store=stock_ml_page_store,
+            ml_job_store=ml_job_store,
         )
-    return {
-        "prediction_date": dashboard.get("prediction_date"),
-        "target_date": dashboard.get("target_date"),
-        "model_version": model_version,
-        "feature_version": dashboard.get("feature_version"),
-        "data_version": dashboard.get("data_version"),
-        "rows": rows,
+    )
+
+    payload: dict[str, Any] = {
+        "job_id": job_id,
+        "kind": kind,
+        "status": "QUEUED",
+        "status_raw": "queued",
     }
-
-
-def _training_job_status_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    result = payload.get("result") or {}
-    error_detail = payload.get("error_detail") or {}
-    raw_status = str(payload.get("status") or "")
-    return {
-        "job_id": payload.get("job_id"),
-        "status": _spec_job_status(raw_status),
-        "status_raw": raw_status,
-        "progress": payload.get("progress"),
-        "message": payload.get("message"),
-        "metrics": result.get("metrics"),
-        "summary": result.get("summary"),
-        "folds": result.get("folds"),
-        "logs": result.get("logs"),
-        "error": payload.get("error"),
-        "stage_name": error_detail.get("stage_name"),
-        "error_code": error_detail.get("error_code"),
-        "retryable": error_detail.get("retryable"),
-        "updated_at": payload.get("updated_at"),
-    }
-
-
-def _ml_job_status_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    error_detail = payload.get("error_detail") or {}
-    raw_status = str(payload.get("status") or "")
-    return {
-        "job_id": payload.get("job_id"),
-        "kind": payload.get("kind"),
-        "symbol": payload.get("symbol"),
-        "status": _spec_job_status(raw_status),
-        "status_raw": raw_status,
-        "progress": payload.get("progress"),
-        "message": payload.get("message"),
-        "result": payload.get("result"),
-        "error": payload.get("error"),
-        "stage_name": error_detail.get("stage_name"),
-        "error_code": error_detail.get("error_code"),
-        "retryable": error_detail.get("retryable"),
-        "created_at": payload.get("created_at"),
-        "updated_at": payload.get("updated_at"),
-    }
-
-
-def _backtest_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
-    backtest = snapshot.get("backtest", {})
-    return {
-        "summary": backtest.get("summary_cards", []),
-        "compare": backtest.get("compare_rows", []),
-        "curve": {
-            "labels": backtest.get("equity_labels", []),
-            "series": backtest.get("equity_series", []),
-        },
-        "monthly_returns": backtest.get("monthly_returns", []),
-        "daily_return_distribution": backtest.get("daily_return_distribution", {}),
-        "exceptions": backtest.get("exceptions", []),
-    }
-
-
-def _ops_status_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
-    ops = snapshot.get("ops", {})
-    return {
-        "pipeline_states": ops.get("pipeline", []),
-        "summary": ops.get("summary_cards", []),
-        "coverage_breakdown": ops.get("coverage_breakdown", []),
-        "score_drift_distribution": ops.get("score_drift_distribution", {}),
-        "alerts": ops.get("alerts", []),
-        "logs": ops.get("logs", []),
-    }
-
-
-def _stock_model_registry_payload(snapshot: dict[str, Any]) -> dict[str, Any]:
-    models = snapshot.get("models", {})
-    return {
-        "models": models.get("rows", []),
-        "adopted_model_version": models.get("adopted_model_version"),
-        "default_versions": models.get("default_versions", {}),
-    }
+    if include_config_hash:
+        payload["config_hash"] = req.stock_page_config_hash()
+    else:
+        payload["accepted_at"] = utc_now_iso()
+    return ok_json_response(**payload)
 
 
 async def _run_stock_page_job(
@@ -231,22 +145,20 @@ async def _run_stock_page_job(
     stock_ml_page_store: StockMlPageStoreDep,
     ml_job_store: MlJobStoreDep,
 ) -> None:
-    service = _stock_ml_page_service(hub, stock_ml_page_store)
+    context = _stock_page_context(req, hub=hub, stock_ml_page_store=stock_ml_page_store)
     ml_job_store.update(job_id, status="running", progress=15, message="ジョブを実行しています。")
     stage_name = "prepare"
-    params = req.stock_page_params()
     try:
         if kind == "stock_prediction_run":
             stage_name = "run_inference"
-            snapshot = await _call_stock_page_service(
-                service.run_inference,
-                params=params,
+            snapshot = await context.call_named(
+                "run_inference",
                 confirm_regenerate=req.confirm_regenerate,
             )
-            result = _prediction_daily_payload(snapshot)
+            result = prediction_daily_payload(snapshot)
         elif kind == "stock_training_job":
             stage_name = "create_training_job"
-            snapshot = await _call_stock_page_service(service.create_training_job, params=params)
+            snapshot = await context.call_named("create_training_job")
             result = {
                 "metrics": snapshot.get("train", {}).get("compare_rows", []),
                 "summary": snapshot.get("train", {}).get("summary_cards", []),
@@ -255,8 +167,8 @@ async def _run_stock_page_job(
             }
         elif kind == "stock_backtest_run":
             stage_name = "run_backtest"
-            snapshot = await _call_stock_page_service(service.run_backtest, params=params)
-            result = _backtest_payload(snapshot)
+            snapshot = await context.call_named("run_backtest")
+            result = backtest_payload(snapshot)
         else:
             raise HTTPException(status_code=400, detail="Unsupported stock ML job kind.")
         ml_job_store.complete(job_id, result)
@@ -298,11 +210,12 @@ async def ml_models(
     normalized_scope = str(scope or "").strip().lower()
     if normalized_scope not in {"stock", "stock-page", "registry"}:
         return ok_json_response(models=ML_MODEL_CATALOG)
-
-    params = query.stock_page_params()
-    service = _stock_ml_page_service(hub, stock_ml_page_store)
-    snapshot = await _call_stock_page_service(service.build_snapshot, params=params)
-    return ok_json_response(**_stock_model_registry_payload(snapshot))
+    return await _stock_page_snapshot_response(
+        query,
+        hub=hub,
+        stock_ml_page_store=stock_ml_page_store,
+        transform=stock_model_registry_payload,
+    )
 
 
 @router.get("/api/ml/predictions/daily")
@@ -311,10 +224,12 @@ async def stock_ml_prediction_daily(
     stock_ml_page_store: StockMlPageStoreDep,
     query: StockMlPageQueryDep,
 ) -> JSONResponse:
-    params = query.stock_page_params()
-    service = _stock_ml_page_service(hub, stock_ml_page_store)
-    snapshot = await _call_stock_page_service(service.build_snapshot, params=params)
-    return ok_json_response(**_prediction_daily_payload(snapshot))
+    return await _stock_page_snapshot_response(
+        query,
+        hub=hub,
+        stock_ml_page_store=stock_ml_page_store,
+        transform=prediction_daily_payload,
+    )
 
 
 @router.post("/api/ml/predictions/run")
@@ -324,11 +239,10 @@ async def stock_ml_prediction_run(
     stock_ml_page_store: StockMlPageStoreDep,
     ml_job_store: MlJobStoreDep,
 ) -> JSONResponse:
-    params = req.stock_page_params()
-    service = _stock_ml_page_service(hub, stock_ml_page_store)
-    snapshot = await _call_stock_page_service(service.build_snapshot, params=params)
-    service._ensure_action_allowed(snapshot, "run_inference")
-    generation = service._prediction_run_payload(snapshot)
+    context = _stock_page_context(req, hub=hub, stock_ml_page_store=stock_ml_page_store)
+    snapshot = await context.snapshot()
+    context.service._ensure_action_allowed(snapshot, "run_inference")
+    generation = context.service._prediction_run_payload(snapshot)
     existing = stock_ml_page_store.find_prediction_run(generation_key=generation["generation_key"])
     if existing is not None and not req.confirm_regenerate:
         generated_at = existing.get("generated_at")
@@ -339,23 +253,12 @@ async def stock_ml_prediction_run(
                 f" 最終生成: {generated_at}。再生成する場合は確認してください。"
             ),
         )
-    job_id = ml_job_store.create(kind="stock_prediction_run", symbol="JP")
-    asyncio.create_task(
-        _run_stock_page_job(
-            job_id=job_id,
-            kind="stock_prediction_run",
-            req=req,
-            hub=hub,
-            stock_ml_page_store=stock_ml_page_store,
-            ml_job_store=ml_job_store,
-        )
-    )
-    return ok_json_response(
-        job_id=job_id,
+    return _queue_stock_page_job(
         kind="stock_prediction_run",
-        status="QUEUED",
-        status_raw="queued",
-        accepted_at=utc_now_iso(),
+        req=req,
+        hub=hub,
+        stock_ml_page_store=stock_ml_page_store,
+        ml_job_store=ml_job_store,
     )
 
 
@@ -366,27 +269,16 @@ async def stock_ml_training_job_create(
     stock_ml_page_store: StockMlPageStoreDep,
     ml_job_store: MlJobStoreDep,
 ) -> JSONResponse:
-    params = req.stock_page_params()
-    service = _stock_ml_page_service(hub, stock_ml_page_store)
-    snapshot = await _call_stock_page_service(service.build_snapshot, params=params)
-    service._ensure_action_allowed(snapshot, "create_training_job")
-    job_id = ml_job_store.create(kind="stock_training_job", symbol="JP")
-    asyncio.create_task(
-        _run_stock_page_job(
-            job_id=job_id,
-            kind="stock_training_job",
-            req=req,
-            hub=hub,
-            stock_ml_page_store=stock_ml_page_store,
-            ml_job_store=ml_job_store,
-        )
-    )
-    return ok_json_response(
-        job_id=job_id,
+    context = _stock_page_context(req, hub=hub, stock_ml_page_store=stock_ml_page_store)
+    snapshot = await context.snapshot()
+    context.service._ensure_action_allowed(snapshot, "create_training_job")
+    return _queue_stock_page_job(
         kind="stock_training_job",
-        status="QUEUED",
-        status_raw="queued",
-        config_hash=req.stock_page_config_hash(),
+        req=req,
+        hub=hub,
+        stock_ml_page_store=stock_ml_page_store,
+        ml_job_store=ml_job_store,
+        include_config_hash=True,
     )
 
 
@@ -395,7 +287,7 @@ async def stock_ml_training_job_status(job_id: str, ml_job_store: MlJobStoreDep)
     payload = ml_job_store.get(job_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="Job not found.")
-    return ok_json_response(**_training_job_status_payload(payload))
+    return ok_json_response(**training_job_status_payload(payload))
 
 
 @router.get("/api/ml/backtests")
@@ -404,10 +296,12 @@ async def stock_ml_backtests(
     stock_ml_page_store: StockMlPageStoreDep,
     query: StockMlPageQueryDep,
 ) -> JSONResponse:
-    params = query.stock_page_params()
-    service = _stock_ml_page_service(hub, stock_ml_page_store)
-    snapshot = await _call_stock_page_service(service.build_snapshot, params=params)
-    return ok_json_response(**_backtest_payload(snapshot))
+    return await _stock_page_snapshot_response(
+        query,
+        hub=hub,
+        stock_ml_page_store=stock_ml_page_store,
+        transform=backtest_payload,
+    )
 
 
 @router.post("/api/ml/backtests/run")
@@ -417,27 +311,15 @@ async def stock_ml_backtests_run(
     stock_ml_page_store: StockMlPageStoreDep,
     ml_job_store: MlJobStoreDep,
 ) -> JSONResponse:
-    params = req.stock_page_params()
-    service = _stock_ml_page_service(hub, stock_ml_page_store)
-    snapshot = await _call_stock_page_service(service.build_snapshot, params=params)
-    service._ensure_action_allowed(snapshot, "run_backtest")
-    job_id = ml_job_store.create(kind="stock_backtest_run", symbol="JP")
-    asyncio.create_task(
-        _run_stock_page_job(
-            job_id=job_id,
-            kind="stock_backtest_run",
-            req=req,
-            hub=hub,
-            stock_ml_page_store=stock_ml_page_store,
-            ml_job_store=ml_job_store,
-        )
-    )
-    return ok_json_response(
-        job_id=job_id,
+    context = _stock_page_context(req, hub=hub, stock_ml_page_store=stock_ml_page_store)
+    snapshot = await context.snapshot()
+    context.service._ensure_action_allowed(snapshot, "run_backtest")
+    return _queue_stock_page_job(
         kind="stock_backtest_run",
-        status="QUEUED",
-        status_raw="queued",
-        accepted_at=utc_now_iso(),
+        req=req,
+        hub=hub,
+        stock_ml_page_store=stock_ml_page_store,
+        ml_job_store=ml_job_store,
     )
 
 
@@ -448,9 +330,11 @@ async def stock_ml_model_adopt_alias(
     hub: HubDep,
     stock_ml_page_store: StockMlPageStoreDep,
 ) -> JSONResponse:
-    params = req.stock_page_params()
-    service = _stock_ml_page_service(hub, stock_ml_page_store)
-    payload = await _call_stock_page_service(service.adopt_model, params=params, model_version=model_version)
+    payload = await _stock_page_context(
+        req,
+        hub=hub,
+        stock_ml_page_store=stock_ml_page_store,
+    ).call_named("adopt_model", model_version=model_version)
     return ok_json_response(
         result="adopted",
         adopted_version=model_version,
@@ -464,10 +348,12 @@ async def stock_ml_ops_status(
     stock_ml_page_store: StockMlPageStoreDep,
     query: StockMlPageQueryDep,
 ) -> JSONResponse:
-    params = query.stock_page_params()
-    service = _stock_ml_page_service(hub, stock_ml_page_store)
-    snapshot = await _call_stock_page_service(service.build_snapshot, params=params)
-    return ok_json_response(**_ops_status_payload(snapshot))
+    return await _stock_page_snapshot_response(
+        query,
+        hub=hub,
+        stock_ml_page_store=stock_ml_page_store,
+        transform=ops_status_payload,
+    )
 
 
 @router.get("/api/ml/stock-page")
@@ -476,10 +362,11 @@ async def stock_ml_page_snapshot(
     stock_ml_page_store: StockMlPageStoreDep,
     query: StockMlPageQueryDep,
 ) -> JSONResponse:
-    params = query.stock_page_params()
-    service = _stock_ml_page_service(hub, stock_ml_page_store)
-    payload = await _call_stock_page_service(service.build_snapshot, params=params)
-    return ok_json_response(**payload)
+    return await _stock_page_snapshot_response(
+        query,
+        hub=hub,
+        stock_ml_page_store=stock_ml_page_store,
+    )
 
 
 @router.post("/api/ml/stock-page/actions/refresh")
@@ -488,9 +375,12 @@ async def stock_ml_page_refresh(
     hub: HubDep,
     stock_ml_page_store: StockMlPageStoreDep,
 ) -> JSONResponse:
-    service = _stock_ml_page_service(hub, stock_ml_page_store)
-    payload = await _call_stock_page_service(service.refresh_data, params=req.stock_page_params())
-    return ok_json_response(**payload)
+    return await _stock_page_action_response(
+        req,
+        hub=hub,
+        stock_ml_page_store=stock_ml_page_store,
+        action="refresh_data",
+    )
 
 
 @router.post("/api/ml/stock-page/actions/run-inference")
@@ -499,13 +389,13 @@ async def stock_ml_page_run_inference(
     hub: HubDep,
     stock_ml_page_store: StockMlPageStoreDep,
 ) -> JSONResponse:
-    service = _stock_ml_page_service(hub, stock_ml_page_store)
-    payload = await _call_stock_page_service(
-        service.run_inference,
-        params=req.stock_page_params(),
+    return await _stock_page_action_response(
+        req,
+        hub=hub,
+        stock_ml_page_store=stock_ml_page_store,
+        action="run_inference",
         confirm_regenerate=req.confirm_regenerate,
     )
-    return ok_json_response(**payload)
 
 
 @router.post("/api/ml/stock-page/actions/create-training-job")
@@ -514,9 +404,12 @@ async def stock_ml_page_create_training_job(
     hub: HubDep,
     stock_ml_page_store: StockMlPageStoreDep,
 ) -> JSONResponse:
-    service = _stock_ml_page_service(hub, stock_ml_page_store)
-    payload = await _call_stock_page_service(service.create_training_job, params=req.stock_page_params())
-    return ok_json_response(**payload)
+    return await _stock_page_action_response(
+        req,
+        hub=hub,
+        stock_ml_page_store=stock_ml_page_store,
+        action="create_training_job",
+    )
 
 
 @router.post("/api/ml/stock-page/actions/adopt-model")
@@ -525,13 +418,13 @@ async def stock_ml_page_adopt_model(
     hub: HubDep,
     stock_ml_page_store: StockMlPageStoreDep,
 ) -> JSONResponse:
-    service = _stock_ml_page_service(hub, stock_ml_page_store)
-    payload = await _call_stock_page_service(
-        service.adopt_model,
-        params=req.stock_page_params(),
+    return await _stock_page_action_response(
+        req,
+        hub=hub,
+        stock_ml_page_store=stock_ml_page_store,
+        action="adopt_model",
         model_version=req.model_version,
     )
-    return ok_json_response(**payload)
 
 
 @router.post("/api/ml/stock-page/actions/export-csv")
@@ -540,13 +433,13 @@ async def stock_ml_page_export_csv(
     hub: HubDep,
     stock_ml_page_store: StockMlPageStoreDep,
 ) -> JSONResponse:
-    service = _stock_ml_page_service(hub, stock_ml_page_store)
-    payload = await _call_stock_page_service(
-        service.export_csv,
-        params=req.stock_page_params(),
+    return await _stock_page_action_response(
+        req,
+        hub=hub,
+        stock_ml_page_store=stock_ml_page_store,
+        action="export_csv",
         search_query=req.search_query,
     )
-    return ok_json_response(**payload)
 
 
 @router.post("/api/ml/stock-page/actions/export-report")
@@ -555,13 +448,13 @@ async def stock_ml_page_export_report(
     hub: HubDep,
     stock_ml_page_store: StockMlPageStoreDep,
 ) -> JSONResponse:
-    service = _stock_ml_page_service(hub, stock_ml_page_store)
-    payload = await _call_stock_page_service(
-        service.export_report,
-        params=req.stock_page_params(),
+    return await _stock_page_action_response(
+        req,
+        hub=hub,
+        stock_ml_page_store=stock_ml_page_store,
+        action="export_report",
         search_query=req.search_query,
     )
-    return ok_json_response(**payload)
 
 
 @router.get("/api/ml/quantile-lstm")
@@ -642,7 +535,7 @@ async def start_quantile_lstm_job(
     hub: HubDep,
     ml_job_store: MlJobStoreDep,
 ) -> JSONResponse:
-    req.symbol = _normalize_job_symbol(req.symbol)
+    req.symbol = normalize_job_symbol(req.symbol)
     req.months = normalize_ml_history_months(req.months)
 
     job_id = ml_job_store.create(kind="quantile_lstm", symbol=req.symbol)
@@ -656,7 +549,7 @@ async def start_patchtst_job(
     hub: HubDep,
     ml_job_store: MlJobStoreDep,
 ) -> JSONResponse:
-    req.symbol = _normalize_job_symbol(req.symbol)
+    req.symbol = normalize_job_symbol(req.symbol)
     req.months = normalize_ml_history_months(req.months)
 
     job_id = ml_job_store.create(kind="patchtst_quantile", symbol=req.symbol)
@@ -695,7 +588,7 @@ async def ml_job_status(job_id: str, ml_job_store: MlJobStoreDep) -> JSONRespons
     payload = ml_job_store.get(job_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="Job not found.")
-    return ok_json_response(**_job_response_payload(payload))
+    return ok_json_response(**build_job_response_payload(payload, include_status_code=True))
 
 
 @router.post("/api/ml/jobs/{job_id}/cancel")
@@ -703,4 +596,4 @@ async def ml_job_cancel(job_id: str, ml_job_store: MlJobStoreDep) -> JSONRespons
     payload = ml_job_store.request_cancel(job_id)
     if payload is None:
         raise HTTPException(status_code=404, detail="Job not found.")
-    return ok_json_response(**_job_response_payload(payload))
+    return ok_json_response(**build_job_response_payload(payload, include_status_code=True))

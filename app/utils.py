@@ -61,6 +61,31 @@ def normalize_symbols(raw: str | Iterable[Any], *, max_items: int | None = None)
 
 
 # ---------------------------------------------------------------------------
+# Numeric helpers
+# ---------------------------------------------------------------------------
+
+def finite_float_or_none(
+    value: Any,
+    *,
+    minimum: float | None = None,
+    strict_minimum: bool = False,
+) -> float | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric):
+        return None
+    if minimum is None:
+        return numeric
+    if strict_minimum and numeric <= minimum:
+        return None
+    if not strict_minimum and numeric < minimum:
+        return None
+    return numeric
+
+
+# ---------------------------------------------------------------------------
 # Timestamp helpers
 # ---------------------------------------------------------------------------
 
