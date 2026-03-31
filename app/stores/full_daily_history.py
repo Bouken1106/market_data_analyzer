@@ -32,7 +32,7 @@ class FullDailyHistoryStore:
         payload = read_json_file(path)
         if not isinstance(payload, dict):
             return []
-        updated_raw = payload.get("updated_at") if isinstance(payload, dict) else None
+        updated_raw = payload.get("updated_at")
         if isinstance(updated_raw, str):
             try:
                 parsed = datetime.fromisoformat(updated_raw.replace("Z", "+00:00"))
@@ -41,7 +41,7 @@ class FullDailyHistoryStore:
                 self._updated_at_epoch[symbol] = parsed.astimezone(timezone.utc).timestamp()
             except Exception:
                 pass
-        points = payload.get("points") if isinstance(payload, dict) else None
+        points = payload.get("points")
         if not isinstance(points, list):
             return []
         return normalize_ohlcv_points(
