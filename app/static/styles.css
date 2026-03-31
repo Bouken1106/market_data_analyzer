@@ -4986,3 +4986,83 @@ body.chart-panning {
     flex: 1 1 calc(33.333% - 8px);
   }
 }
+
+.rel-layout {
+  display: grid;
+  gap: 18px;
+  padding-bottom: 36px;
+}
+
+.rel-summary-grid,
+.rel-heatmap-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.rel-panel,
+.rel-summary-card {
+  display: grid;
+  gap: 14px;
+}
+
+.rel-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.rel-rolling-list {
+  display: grid;
+  gap: 12px;
+}
+
+.rel-rolling-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.rel-rolling-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rel-sparkline {
+  width: 100%;
+  height: 70px;
+}
+
+.rel-heatmap-wrap {
+  overflow-x: auto;
+}
+
+.rel-matrix-table th,
+.rel-matrix-table td {
+  text-align: center;
+  min-width: 72px;
+}
+
+.rel-positive {
+  color: #5eead4;
+}
+
+.rel-negative {
+  color: #fca5a5;
+}
+
+@media (max-width: 1080px) {
+  .rel-summary-grid,
+  .rel-heatmap-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .rel-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+}

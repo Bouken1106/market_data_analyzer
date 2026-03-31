@@ -44,10 +44,12 @@ class ApplicationRoutesTest(unittest.TestCase):
             "/",
             "/market-data-lab",
             "/ml-lab",
+            "/relationship-lab",
             "/strategy-lab",
             "/compare-lab",
             "/leadlag-lab",
             "/historical/{symbol}",
+            "/api/relationships",
             "/api/ml/models",
             "/api/strategy/evaluate",
             "/api/ml/jobs/{job_id}",
@@ -57,6 +59,7 @@ class ApplicationRoutesTest(unittest.TestCase):
         with TestClient(app) as client:
             self.assertEqual(client.get("/market-data-lab").status_code, 200)
             self.assertEqual(client.get("/ml-lab").status_code, 200)
+            self.assertEqual(client.get("/relationship-lab").status_code, 200)
             self.assertEqual(client.get("/strategy-lab").status_code, 200)
             self.assertEqual(client.get("/compare-lab").status_code, 200)
             self.assertEqual(client.get("/leadlag-lab").status_code, 200)

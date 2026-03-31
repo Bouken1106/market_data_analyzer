@@ -115,6 +115,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `/`: US Stock Live Monitor（リアルタイム監視）
 - `/leadlag-lab`: Lead-Lag Lab（日米業種 ETF の部分空間正則化付き PCA 検証）
 - `/ml-lab`: 次営業日株価予測ページ（予測ダッシュボード、学習・検証、バックテスト、モデル管理、運用監視）
+- `/relationship-lab`: Relationship Lab（複数銘柄の相関・共分散・ローリング相関・高相関ペア乖離を可視化）
 - `/strategy-lab`: Strategy Lab（配分ルール + リバランス提案 + コスト込みバックテスト）
 - `/compare-lab`: Model Compare Lab（複数銘柄 × 複数モデルの一括比較）
 - `/` には Paper Portfolio（仮想資産）パネルを搭載し、実注文なしで売買シミュレーション可能
@@ -162,10 +163,16 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
    - 売買コスト: 手数料bps + スリッページbps を日次バックテストに反映
    - サマリー: CAGR, Total Return, Volatility, Sharpe, Max Drawdown, ベンチマーク比較
    - 現在の Paper Portfolio 状態を使ったリバランス提案（売買方向・数量・金額差分）
-11. `/` の右側パネル上部に Watchlist Comment を表示
+11. `/relationship-lab` では、指定銘柄群の関係性を即時分析
+   - 日次リターンの相関行列 / 共分散行列
+   - 上位ペアの 20 / 60 / 120 日相関
+   - 直近窓のローリング相関スパークライン
+   - ログスプレッドの z-score による乖離確認
+   - 平均絶対相関から「最もつながりが強い銘柄」「最も分散に寄与しやすい銘柄」を表示
+12. `/` の右側パネル上部に Watchlist Comment を表示
    - LM Studio (`LMSTUDIO_MODEL=ministral-3-3b`) に、監視中銘柄の前日比/30日リターン/30日ボラティリティを渡して短評を生成
    - 右上の `↻` ボタンで、指標再取得 + コメント再生成
-12. `/leadlag-lab` では、論文準拠の日米業種リードラグ戦略を検証
+13. `/leadlag-lab` では、論文準拠の日米業種リードラグ戦略を検証
    - 米国業種 ETF の当日 Close-to-Close を情報集合に利用
    - 日本業種 ETF の翌営業日 Open-to-Close を予測対象に利用
    - 履歴日足は API ではなく Stooq の公開CSVを優先し、`app/cache/daily_history/` へ保存して再利用
@@ -217,6 +224,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `GET /api/leadlag/config`: Lead-Lag Lab の既定設定を取得
 - `POST /api/leadlag/analyze`: 日米業種 ETF の lead-lag 分析を実行し、signal / regularization / strategy summary を返却
 - `GET /api/historical/{symbol}?years=5`: 過去N年ヒストリカルデータ（デフォルト5年）
+- `GET /api/relationships?symbols=AAPL,MSFT,NVDA&months=12&window_days=60&top_pairs=10`: 複数銘柄の相関・共分散・ペア乖離分析
 - `GET /api/security-overview/{symbol}`: 銘柄詳細（`include_intraday` / `include_market` で取得項目を制御可能）
 - `GET /api/security-overview/{symbol}/intraday`: 1分/5分足とVWAPのみを取得
 - `POST /api/security-overview/{symbol}/clear-cache`: 当該銘柄の詳細キャッシュを削除

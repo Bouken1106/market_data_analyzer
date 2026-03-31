@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="ja">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Relationship Lab</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="/static/styles.css?v=20260401a" />
+</head>
+
+<body class="rel-page">
+  <nav class="nav-tabs" aria-label="Main navigation">
+    <a href="/" class="nav-tab" data-path="/">
+      <span class="nav-tab-icon">📊</span> Monitor
+    </a>
+    <a href="/market-data-lab" class="nav-tab" data-path="/market-data-lab">
+      <span class="nav-tab-icon">🧭</span> Market Data
+    </a>
+    <a href="/ml-lab" class="nav-tab" data-path="/ml-lab">
+      <span class="nav-tab-icon">🧠</span> ML Lab
+    </a>
+    <a href="/relationship-lab" class="nav-tab" data-path="/relationship-lab">
+      <span class="nav-tab-icon">🕸️</span> Relationship
+    </a>
+    <a href="/compare-lab" class="nav-tab" data-path="/compare-lab">
+      <span class="nav-tab-icon">⚖️</span> Compare
+    </a>
+    <a href="/strategy-lab" class="nav-tab" data-path="/strategy-lab">
+      <span class="nav-tab-icon">🎯</span> Strategy
+    </a>
+    <a href="/leadlag-lab" class="nav-tab" data-path="/leadlag-lab">
+      <span class="nav-tab-icon">🧩</span> Lead-Lag Lab
+    </a>
+  </nav>
+
+  <main class="container rel-layout">
+    <header class="header rel-header">
+      <div class="header-top">
+        <div>
+          <h1>Relationship Lab</h1>
+          <p>複数銘柄の相関、共分散、ローリング関係、高相関ペアの乖離を一度に確認します。</p>
+        </div>
+      </div>
+      <div class="live-monitor-chips">
+        <span class="pill chip-cyan">Return Correlation</span>
+        <span class="pill chip-green">Rolling Window</span>
+        <span class="pill chip-amber">Pair Divergence</span>
+      </div>
+    </header>
+
+    <nav class="flow-strip" aria-label="Primary actions">
+      <a class="flow-card flow-start" href="#rel-settings-panel">
+        <span class="flow-icon" aria-hidden="true">🧾</span>
+        <span class="flow-label">対象設定</span>
+      </a>
+      <a class="flow-card" href="#rel-summary-panel">
+        <span class="flow-icon" aria-hidden="true">🧠</span>
+        <span class="flow-label">要約</span>
+      </a>
+      <a class="flow-card" href="#rel-heatmap-panel">
+        <span class="flow-icon" aria-hidden="true">🌡️</span>
+        <span class="flow-label">Heatmap</span>
+      </a>
+      <a class="flow-card" href="#rel-pairs-panel">
+        <span class="flow-icon" aria-hidden="true">🔗</span>
+        <span class="flow-label">Pairs</span>
+      </a>
+    </nav>
+
+    <section id="rel-settings-panel" class="card rel-panel">
+      <h2>Relationship Settings</h2>
+      <form id="rel-form" class="ml-form">
+        <label>
+          <span class="ml-label-row">
+            <span>Symbols (comma separated)</span>
+            <details class="param-help">
+              <summary>?</summary>
+              <p>相関を見たい銘柄群をカンマ区切りで指定します。最低2銘柄、最大12銘柄です。</p>
+            </details>
+          </span>
+          <input id="rel-symbols" type="text" value="AAPL,MSFT,NVDA,AMD,AVGO,QQQ,SPY" />
+        </label>
+
+        <div class="ml-form-grid">
+          <label>
+            <span class="ml-label-row">
+              <span>History Months</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>分析対象の履歴期間です。短くすると直近重視、長くすると安定寄りになります。</p>
+              </details>
+            </span>
+            <input id="rel-months" type="number" value="12" min="3" max="60" />
+          </label>
+          <label>
+            <span class="ml-label-row">
+              <span>Rolling Window Days</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>ローリング相関とスプレッド z-score の窓幅です。20, 60, 120 が典型です。</p>
+              </details>
+            </span>
+            <input id="rel-window-days" type="number" value="60" min="20" max="252" />
+          </label>
+          <label>
+            <span class="ml-label-row">
+              <span>Top Pairs</span>
+              <details class="param-help">
+                <summary>?</summary>
+                <p>相関上位ペアを何件表示するかを決めます。</p>
+              </details>
+            </span>
+            <input id="rel-top-pairs" type="number" value="10" min="1" max="20" />
+          </label>
+        </div>
+
+        <div class="row ml-form-actions">
+          <button id="rel-run" type="submit">Analyze Relationships</button>
+          <label class="ml-checkbox">
+            <input id="rel-refresh" type="checkbox" /> Force refresh historical data
+          </label>
+        </div>
+      </form>
+      <p id="rel-status" class="hint">条件を設定して分析を実行してください。</p>
+    </section>
+
+    <section id="rel-summary-panel" class="rel-summary-grid">
+      <article class="card rel-summary-card">
+        <h2>Summary</h2>
+        <div class="rel-kpi-grid">
+          <div class="status-box">
+            <span class="label">Avg |Corr|</span>
+            <span id="rel-avg-corr">-</span>
+          </div>
+          <div class="status-box">
+            <span class="label">Most Connected</span>
+            <span id="rel-most-connected">-</span>
+          </div>
+          <div class="status-box">
+            <span class="label">Most Diversifying</span>
+            <span id="rel-most-diversifying">-</span>
+          </div>
+        </div>
+        <p id="rel-data-summary" class="hint">-</p>
+        <p id="rel-skipped" class="hint">-</p>
+      </article>
+
+      <article class="card rel-summary-card">
+        <h2>Rolling Correlations</h2>
+        <div id="rel-rolling-list" class="rel-rolling-list">
+          <p class="hint">Analyze 後に上位ペアの推移を表示します。</p>
+        </div>
+      </article>
+    </section>
+
+    <section id="rel-heatmap-panel" class="rel-heatmap-grid">
+      <article class="card rel-panel">
+        <h2>Correlation Heatmap</h2>
+        <div id="rel-correlation-wrap" class="table-wrap rel-heatmap-wrap"></div>
+      </article>
+      <article class="card rel-panel">
+        <h2>Covariance Matrix</h2>
+        <div id="rel-covariance-wrap" class="table-wrap rel-heatmap-wrap"></div>
+      </article>
+    </section>
+
+    <section id="rel-pairs-panel" class="card rel-panel">
+      <h2>High-Correlation Pairs</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Pair</th>
+              <th>Corr</th>
+              <th>20D</th>
+              <th>60D</th>
+              <th>120D</th>
+              <th>Cov</th>
+              <th>Beta</th>
+              <th>Spread z</th>
+            </tr>
+          </thead>
+          <tbody id="rel-pairs-body">
+            <tr>
+              <td colspan="8">No data</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/relationship_lab.js?v=20260401a" defer></script>
+  <script src="/static/page_menu.js?v=20260321a" defer></script>
+</body>
+
+</html>

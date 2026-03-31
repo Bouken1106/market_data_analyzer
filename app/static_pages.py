@@ -19,6 +19,7 @@ STATIC_PAGES: tuple[StaticPage, ...] = (
     StaticPage("/", "index.html"),
     StaticPage("/market-data-lab", "market_data_lab.html"),
     StaticPage("/ml-lab", "ml_lab.html"),
+    StaticPage("/relationship-lab", "relationship_lab.html"),
     StaticPage("/strategy-lab", "strategy_lab.html"),
     StaticPage("/compare-lab", "compare_lab.html"),
     StaticPage("/leadlag-lab", "leadlag_lab.html"),

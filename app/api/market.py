@@ -15,6 +15,7 @@ from ..config import (
     MAX_BASIC_SYMBOLS,
 )
 from ..models import SymbolUpdateRequest
+from ..services.relationship_analysis import build_relationship_analysis
 from ..services.watchlist_commentary import build_watchlist_commentary_payload
 from ..utils import normalize_symbols, ok_json_response
 from .deps import HubDep, SymbolCatalogStoreDep, UiStateStoreDep
@@ -77,6 +78,70 @@ async def historical(
 ) -> JSONResponse:
     payload = await hub.historical_payload(symbol=symbol, years=years, refresh=refresh)
     return ok_json_response(**payload)
+
+
+@router.get("/api/relationships")
+async def relationships(
+    symbols: str,
+    hub: HubDep,
+    months: int = 12,
+    window_days: int = 60,
+    top_pairs: int = 10,
+    refresh: bool = False,
+) -> JSONResponse:
+    target_symbols = require_symbols(
+        symbols,
+        min_count=2,
+        max_count=12,
+        empty_detail="At least two valid symbols are required.",
+        max_detail="You can request up to 12 symbols at once.",
+    )
+    months = max(3, min(int(months), 60))
+    window_days = max(20, min(int(window_days), 252))
+    top_pairs = max(1, min(int(top_pairs), 20))
+
+    tasks = [
+        hub.historical_payload(symbol=symbol, months=months, refresh=refresh)
+        for symbol in target_symbols
+    ]
+    responses = await asyncio.gather(*tasks, return_exceptions=True)
+
+    points_by_symbol: dict[str, list[dict[str, object]]] = {}
+    skipped: list[dict[str, str]] = []
+    for index, item in enumerate(responses):
+        symbol = target_symbols[index]
+        if isinstance(item, Exception):
+            detail = getattr(item, "detail", None)
+            skipped.append({"symbol": symbol, "reason": str(detail or item)})
+            continue
+        points = item.get("points") if isinstance(item, dict) else None
+        if isinstance(points, list) and points:
+            points_by_symbol[symbol] = points
+        else:
+            skipped.append({"symbol": symbol, "reason": "No historical points returned."})
+
+    if len(points_by_symbol) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Not enough symbols returned aligned historical data for relationship analysis.",
+        )
+
+    try:
+        analysis = build_relationship_analysis(
+            points_by_symbol,
+            window_days=window_days,
+            top_pairs=top_pairs,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return ok_json_response(
+        requested_symbols=target_symbols,
+        analyzed_symbols=analysis["symbols"],
+        skipped_symbols=skipped,
+        months=months,
+        **analysis,
+    )
 
 
 @router.get("/api/security-overview/{symbol}")
