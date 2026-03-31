@@ -146,8 +146,6 @@ class MarketDataStateMixin:
             "daily_credits_updated_at": self.daily_credits_updated_at,
             "daily_credits_source": self.daily_credits_source,
             "daily_credits_is_estimated": self.daily_credits_is_estimated,
-            # Backward compatibility for older UI field name.
-            "api_credits_left": self.daily_credits_left,
         }
 
     async def snapshot_payload(self) -> dict[str, Any]:
