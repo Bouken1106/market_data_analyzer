@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 from .config import (
@@ -11,6 +10,7 @@ from .config import (
     SYMBOL_CATALOG_COUNTRY,
     SYMBOL_COUNTRY_MAP_RAW,
 )
+from .hub_state import CacheState, ProviderState, RuntimeState, assign_state_fields
 from .market_session import (
     DEFAULT_MARKET_SESSIONS,
     _normalize_country_key,
@@ -58,14 +58,17 @@ class MarketDataHub(MarketDataRealtimeMixin, MarketDataQueriesMixin, MarketDataS
         symbols: list[str],
         ui_state_store: Any | None,
     ) -> None:
-        self.provider = str(provider or DATA_PROVIDER).strip().lower()
-        self.twelvedata_api_key = str(twelvedata_api_key or "").strip()
-        self.fmp_api_key = str(fmp_api_key or "").strip()
-        self.symbols: list[str] = symbols
-        self.default_country_key = _normalize_country_key(SYMBOL_CATALOG_COUNTRY)
-        self.symbol_country_map = parse_symbol_country_map(SYMBOL_COUNTRY_MAP_RAW)
-        self.market_sessions = DEFAULT_MARKET_SESSIONS
-        self.ui_state_store = ui_state_store
+        self._provider_state = ProviderState(
+            provider=str(provider or DATA_PROVIDER).strip().lower(),
+            twelvedata_api_key=str(twelvedata_api_key or "").strip(),
+            fmp_api_key=str(fmp_api_key or "").strip(),
+            symbols=symbols,
+            default_country_key=_normalize_country_key(SYMBOL_CATALOG_COUNTRY),
+            symbol_country_map=parse_symbol_country_map(SYMBOL_COUNTRY_MAP_RAW),
+            market_sessions=DEFAULT_MARKET_SESSIONS,
+            ui_state_store=ui_state_store,
+        )
+        assign_state_fields(self, self._provider_state)
 
     def _init_store_state(
         self,
@@ -79,35 +82,12 @@ class MarketDataHub(MarketDataRealtimeMixin, MarketDataQueriesMixin, MarketDataS
         self.fmp_reference_store = fmp_reference_store
 
     def _init_runtime_state(self) -> None:
-        self.prices: dict[str, dict[str, Any]] = {}
-        self.ws_connected = False
-        self.last_ws_message_at = 0.0
-        self.mode = "starting"
-        self.daily_credits_left: int | None = None
-        self.daily_credits_used: int | None = None
-        self.daily_credits_limit: int | None = API_LIMIT_PER_DAY
-        self.daily_credits_updated_at: str | None = None
-        self.daily_credits_source: str | None = None
-        self.daily_credits_is_estimated = False
-        self.minute_credits_left: int | None = None
-        self.minute_credits_used: int | None = None
-
-        self._listeners: set[asyncio.Queue[dict[str, Any]]] = set()
-        self._worker_tasks: list[asyncio.Task[Any]] = []
-        self._stop_event = asyncio.Event()
-        self._restart_ws_event = asyncio.Event()
-        self._state_lock = asyncio.Lock()
-        self._credits_lock = asyncio.Lock()
+        self._runtime_state = RuntimeState(daily_credits_limit=API_LIMIT_PER_DAY)
+        assign_state_fields(self, self._runtime_state)
 
     def _init_cache_state(self) -> None:
-        self._historical_cache: dict[tuple[str, str, str], dict[str, Any]] = {}
-        self._historical_lock = asyncio.Lock()
-        self._sparkline_cache: dict[str, dict[str, Any]] = {}
-        self._sparkline_lock = asyncio.Lock()
-        self._overview_cache: dict[tuple[str, bool, bool, bool], dict[str, Any]] = {}
-        self._overview_lock = asyncio.Lock()
-        self._fmp_reference_cache: dict[str, dict[str, Any]] = {}
-        self._fmp_reference_lock = asyncio.Lock()
+        self._cache_state = CacheState()
+        assign_state_fields(self, self._cache_state)
 
     def _uses_twelvedata(self) -> bool:
         return self.provider in {"twelvedata", "both"}

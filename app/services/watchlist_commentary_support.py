@@ -7,9 +7,6 @@ import math
 import re
 from typing import Any
 
-import httpx
-from fastapi import HTTPException
-
 from ..utils import finite_float_or_none
 
 WATCHLIST_RESPONSE_FORMAT = {
@@ -256,68 +253,6 @@ def build_repair_messages(raw_commentary: str, valid_symbols: list[str]) -> list
             ),
         },
     ]
-
-
-async def chat_lmstudio(
-    *,
-    api_url: str,
-    api_key: str,
-    model: str,
-    timeout_sec: float,
-    messages: list[dict[str, str]],
-    max_tokens: int,
-    response_format: dict[str, Any] | None,
-) -> tuple[str, int, str | None, str]:
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    timeout = httpx.Timeout(timeout_sec, connect=min(10.0, timeout_sec))
-    payload: dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-        "temperature": 0.2,
-        "max_tokens": max_tokens,
-    }
-    if response_format is not None:
-        payload["response_format"] = response_format
-
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(api_url, json=payload, headers=headers)
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"LM Studio request failed: {exc}") from exc
-
-    try:
-        result = response.json()
-    except ValueError:
-        result = {}
-
-    error_message: str | None = None
-    if isinstance(result, dict):
-        error = result.get("error")
-        if isinstance(error, dict):
-            error_message = str(error.get("message") or "").strip() or None
-        elif isinstance(error, str):
-            error_message = error.strip() or None
-        if error_message is None:
-            error_message = str(result.get("detail") or "").strip() or None
-
-    if response.status_code >= 400:
-        return "", response.status_code, error_message, model
-
-    if not isinstance(result, dict):
-        raise HTTPException(status_code=502, detail="LM Studio returned an invalid response format.")
-    choices = result.get("choices")
-    if not isinstance(choices, list) or not choices:
-        raise HTTPException(status_code=502, detail="LM Studio response does not include choices.")
-
-    model_name = str(result.get("model") or "").strip() or model
-    first = choices[0] if isinstance(choices[0], dict) else {}
-    message = first.get("message") if isinstance(first, dict) else {}
-    content = message.get("content") if isinstance(message, dict) else None
-    return str(content or "").strip(), response.status_code, None, model_name
-
 
 def metrics_payload(metrics: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [

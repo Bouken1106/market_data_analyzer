@@ -20,8 +20,8 @@ from ..services.market_api_service import (
 )
 from ..services.watchlist_commentary import build_watchlist_commentary_payload
 from ..utils import normalize_symbols, ok_json_response
+from ..validation import require_symbols
 from .deps import HubDep, SymbolCatalogStoreDep, UiStateStoreDep
-from .validators import require_symbols
 
 router = APIRouter()
 

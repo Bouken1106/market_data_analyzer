@@ -14,12 +14,12 @@ from ..config import (
     LMSTUDIO_TIMEOUT_SEC,
 )
 from ..utils import utc_now_iso
+from .lmstudio_client import LmStudioClient
 from .watchlist_commentary_support import (
     WATCHLIST_RESPONSE_FORMAT,
     build_base_messages,
     build_repair_messages,
     build_watchlist_prompt,
-    chat_lmstudio,
     commentary_from_json,
     compute_watch_metrics,
     fallback_commentary,
@@ -28,31 +28,34 @@ from .watchlist_commentary_support import (
 
 
 async def _request_lmstudio_commentary(prompt: str, valid_symbols: list[str]) -> tuple[str, str]:
-    base_messages = build_base_messages(prompt)
-    raw_commentary, status_code, error_detail, used_model = await chat_lmstudio(
+    client = LmStudioClient(
         api_url=LMSTUDIO_CHAT_COMPLETIONS_URL,
         api_key=LMSTUDIO_API_KEY,
         model=LMSTUDIO_MODEL,
         timeout_sec=LMSTUDIO_TIMEOUT_SEC,
+    )
+    base_messages = build_base_messages(prompt)
+    initial_result = await client.chat(
         messages=base_messages,
         max_tokens=320,
         response_format=WATCHLIST_RESPONSE_FORMAT,
     )
-    if status_code >= 400:
-        if status_code in {400, 404, 422}:
-            raw_commentary, status_code, error_detail, used_model = await chat_lmstudio(
-                api_url=LMSTUDIO_CHAT_COMPLETIONS_URL,
-                api_key=LMSTUDIO_API_KEY,
-                model=LMSTUDIO_MODEL,
-                timeout_sec=LMSTUDIO_TIMEOUT_SEC,
+    raw_commentary = initial_result.content
+    used_model = initial_result.model
+    if initial_result.status_code >= 400:
+        fallback_result = initial_result
+        if initial_result.status_code in {400, 404, 422}:
+            fallback_result = await client.chat(
                 messages=base_messages,
                 max_tokens=320,
                 response_format=None,
             )
-        if status_code >= 400:
+            raw_commentary = fallback_result.content
+            used_model = fallback_result.model
+        if fallback_result.status_code >= 400:
             raise HTTPException(
                 status_code=502,
-                detail=f"LM Studio error: {error_detail or f'HTTP {status_code}'}",
+                detail=f"LM Studio error: {fallback_result.error_detail or f'HTTP {fallback_result.status_code}'}",
             )
 
     if not raw_commentary:
@@ -63,34 +66,26 @@ async def _request_lmstudio_commentary(prompt: str, valid_symbols: list[str]) ->
         return commentary, used_model
 
     repair_messages = build_repair_messages(raw_commentary, valid_symbols)
-    repaired_commentary, repair_status, repair_error, repair_model = await chat_lmstudio(
-        api_url=LMSTUDIO_CHAT_COMPLETIONS_URL,
-        api_key=LMSTUDIO_API_KEY,
-        model=LMSTUDIO_MODEL,
-        timeout_sec=LMSTUDIO_TIMEOUT_SEC,
+    repair_result = await client.chat(
         messages=repair_messages,
         max_tokens=220,
         response_format=WATCHLIST_RESPONSE_FORMAT,
     )
-    if repair_status >= 400 and repair_status in {400, 404, 422}:
-        repaired_commentary, repair_status, repair_error, repair_model = await chat_lmstudio(
-            api_url=LMSTUDIO_CHAT_COMPLETIONS_URL,
-            api_key=LMSTUDIO_API_KEY,
-            model=LMSTUDIO_MODEL,
-            timeout_sec=LMSTUDIO_TIMEOUT_SEC,
+    if repair_result.status_code >= 400 and repair_result.status_code in {400, 404, 422}:
+        repair_result = await client.chat(
             messages=repair_messages,
             max_tokens=220,
             response_format=None,
         )
-    if repair_status < 400:
-        repaired = commentary_from_json(repaired_commentary, valid_symbols)
+    if repair_result.status_code < 400:
+        repaired = commentary_from_json(repair_result.content, valid_symbols)
         if repaired:
-            return repaired, repair_model
+            return repaired, repair_result.model
 
-    if repair_status >= 400 and not raw_commentary:
+    if repair_result.status_code >= 400 and not raw_commentary:
         raise HTTPException(
             status_code=502,
-            detail=f"LM Studio error: {repair_error or f'HTTP {repair_status}'}",
+            detail=f"LM Studio error: {repair_result.error_detail or f'HTTP {repair_result.status_code}'}",
         )
 
     return fallback_commentary(raw_commentary, valid_symbols), used_model

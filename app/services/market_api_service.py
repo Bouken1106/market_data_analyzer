@@ -8,8 +8,8 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from ..api.validators import require_symbols
 from ..config import LMSTUDIO_MODEL, LOGGER, MAX_BASIC_SYMBOLS
+from ..validation import require_symbols
 from .relationship_analysis import build_relationship_analysis
 
 

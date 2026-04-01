@@ -10,7 +10,15 @@ from typing import Any
 from fastapi import HTTPException
 
 from ..config import AUTO_REFRESH_ON_STARTUP, LOGGER, MAX_BASIC_SYMBOLS
-from ..utils import fallback_interval_seconds, to_iso8601
+from ..utils import fallback_interval_seconds
+from .market_data_state_support import (
+    build_empty_price_row,
+    build_price_record,
+    build_snapshot_payload,
+    build_status_payload,
+    iter_fresh_cached_price_rows,
+    normalize_price_record,
+)
 
 
 class MarketDataStateMixin:
@@ -29,22 +37,19 @@ class MarketDataStateMixin:
         timestamp: Any = None,
         source_detail: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        record = {
-            "symbol": symbol.upper().strip(),
-            "price": str(price),
-            "timestamp": to_iso8601(timestamp),
-            "source": source,
-        }
-        if isinstance(source_detail, dict) and source_detail:
-            record["source_detail"] = dict(source_detail)
-        return record
+        return build_price_record(
+            symbol=symbol,
+            price=price,
+            source=source,
+            timestamp=timestamp,
+            source_detail=source_detail,
+        )
 
     async def _store_and_publish_price(self, record: dict[str, Any]) -> None:
-        symbol = str(record.get("symbol", "")).upper().strip()
-        if not symbol:
+        normalized_record = normalize_price_record(record)
+        if normalized_record is None:
             return
-        normalized = dict(record)
-        normalized["symbol"] = symbol
+        symbol, normalized = normalized_record
         async with self._state_lock:
             self.prices[symbol] = normalized
         await self.last_price_store.upsert(normalized)
@@ -128,35 +133,26 @@ class MarketDataStateMixin:
         )
 
     async def status_payload(self) -> dict[str, Any]:
-        last_seen = None
-        if self.last_ws_message_at:
-            last_seen = datetime.fromtimestamp(self.last_ws_message_at, tz=timezone.utc).isoformat()
         open_symbols = self._open_symbols(self.symbols)
-        return {
-            "provider": self.provider,
-            "mode": self.mode,
-            "ws_connected": self.ws_connected,
-            "last_ws_message_at": last_seen,
-            "symbols": self.symbols,
-            "open_symbols": open_symbols,
-            "fallback_poll_interval_sec": fallback_interval_seconds(len(self.symbols)),
-            "daily_credits_left": self.daily_credits_left,
-            "daily_credits_used": self.daily_credits_used,
-            "daily_credits_limit": self.daily_credits_limit,
-            "daily_credits_updated_at": self.daily_credits_updated_at,
-            "daily_credits_source": self.daily_credits_source,
-            "daily_credits_is_estimated": self.daily_credits_is_estimated,
-        }
+        return build_status_payload(
+            provider=self.provider,
+            mode=self.mode,
+            ws_connected=self.ws_connected,
+            last_ws_message_at=self.last_ws_message_at,
+            symbols=self.symbols,
+            open_symbols=open_symbols,
+            fallback_poll_interval_sec=fallback_interval_seconds(len(self.symbols)),
+            daily_credits_left=self.daily_credits_left,
+            daily_credits_used=self.daily_credits_used,
+            daily_credits_limit=self.daily_credits_limit,
+            daily_credits_updated_at=self.daily_credits_updated_at,
+            daily_credits_source=self.daily_credits_source,
+            daily_credits_is_estimated=self.daily_credits_is_estimated,
+        )
 
     async def snapshot_payload(self) -> dict[str, Any]:
         rows = await self.current_rows()
-        return {
-            "type": "snapshot",
-            "data": {
-                "status": await self.status_payload(),
-                "rows": rows,
-            },
-        }
+        return build_snapshot_payload(status=await self.status_payload(), rows=rows)
 
     async def current_rows(self, symbols: list[str] | None = None) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -167,48 +163,20 @@ class MarketDataStateMixin:
                 if row:
                     rows.append(dict(row))
                 else:
-                    rows.append(
-                        {
-                            "symbol": symbol,
-                            "price": None,
-                            "timestamp": None,
-                            "source": None,
-                        }
-                    )
+                    rows.append(build_empty_price_row(symbol))
         return rows
 
     async def _hydrate_prices_from_store(self, symbols: list[str]) -> None:
         if not symbols:
             return
-        MAX_CACHED_PRICE_AGE_SEC = 7 * 24 * 3600  # 7日以上古いキャッシュ価格は使わない
         now = datetime.now(timezone.utc).timestamp()
         async with self._state_lock:
-            for symbol in symbols:
-                if symbol in self.prices:
-                    continue
-                cached = self.last_price_store.get(symbol)
-                if not cached:
-                    continue
-                # タイムスタンプが古すぎるキャッシュは無視してAPIから新鮮な価格を取得させる
-                raw_ts = cached.get("timestamp")
-                if raw_ts:
-                    try:
-                        ts_epoch = datetime.fromisoformat(
-                            str(raw_ts).replace("Z", "+00:00")
-                        ).astimezone(timezone.utc).timestamp()
-                        if (now - ts_epoch) > MAX_CACHED_PRICE_AGE_SEC:
-                            LOGGER.info(
-                                "Skipping stale cached price for %s (age %.0fh > %dh)",
-                                symbol,
-                                (now - ts_epoch) / 3600,
-                                MAX_CACHED_PRICE_AGE_SEC // 3600,
-                            )
-                            continue
-                    except (ValueError, TypeError):
-                        pass  # タイムスタンプが解析できない場合はそのまま使用
-                self.prices[symbol] = {
-                    "symbol": symbol,
-                    "price": cached.get("price"),
-                    "timestamp": to_iso8601(cached.get("timestamp")),
-                    "source": "stored",
-                }
+            hydrated_rows = iter_fresh_cached_price_rows(
+                symbols=symbols,
+                prices=self.prices,
+                last_price_store=self.last_price_store,
+                now_epoch=now,
+                logger=LOGGER,
+            )
+            for symbol, row in hydrated_rows:
+                self.prices[symbol] = row

@@ -8,8 +8,8 @@ from fastapi.responses import JSONResponse
 from ..models import PaperPortfolioResetRequest, PaperTradeRequest
 from ..services.paper_portfolio import paper_portfolio_payload, resolve_trade_price
 from ..utils import ok_json_response
+from ..validation import require_positive_float, require_symbol
 from .deps import HubDep, PaperPortfolioStoreDep
-from .validators import require_positive_float, require_symbol
 
 router = APIRouter()
 

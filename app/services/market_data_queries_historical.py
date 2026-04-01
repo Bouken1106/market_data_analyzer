@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -29,9 +28,22 @@ from ..config import (
     TIME_SERIES_MAX_OUTPUTSIZE,
     TIME_SERIES_URL,
 )
-from ..market_session import infer_country_from_symbol
 from ..ohlcv import merge_points_by_timestamp as merge_ohlcv_points, normalize_ohlcv_point
 from ..stooq import fetch_stooq_daily_history as default_fetch_stooq_daily_history
+from .market_data_queries_historical_runtime import (
+    bound_jquants_request_dates,
+    build_combined_historical_detail,
+    build_jquants_historical_detail,
+    build_standard_historical_detail,
+    build_stooq_historical_detail,
+    clamp_jquants_request_dates,
+    extract_jquants_coverage_window,
+    is_jquants_rate_limit_message,
+    normalize_jquants_code,
+    resolve_runtime_fetcher,
+    runtime_value,
+    should_use_jquants_for_symbol,
+)
 from .market_data_queries_historical_support import (
     HistoricalRequest,
     build_historical_payload,
@@ -42,19 +54,7 @@ from .market_data_queries_historical_support import (
 )
 
 
-def _queries_module():
-    from . import market_data_queries as module
-
-    return module
-
-
-def _runtime_value(name: str, default: Any) -> Any:
-    return getattr(_queries_module(), name, default)
-
-
 class MarketDataHistoricalMixin:
-    _JQUANTS_COVERAGE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})\s*~\s*(\d{4}-\d{2}-\d{2})")
-
     @staticmethod
     def _build_no_historical_data_detail(
         *,
@@ -289,7 +289,7 @@ class MarketDataHistoricalMixin:
                     "points": len(cached_slice),
                 }
 
-        fetch_stooq_daily_history = _runtime_value(
+        fetch_stooq_daily_history = resolve_runtime_fetcher(
             "fetch_stooq_daily_history",
             default_fetch_stooq_daily_history,
         )
@@ -297,13 +297,11 @@ class MarketDataHistoricalMixin:
             full_points = await fetch_stooq_daily_history(symbol, client=client)
         except Exception as exc:
             LOGGER.warning("Stooq daily CSV fetch failed for %s: %s", symbol, exc)
-            return [], {
-                "mode": "stooq_fetch_failed",
-                "dataset": "historical_daily",
-                "provider": "stooq",
-                "points": 0,
-                "error": str(exc).strip(),
-            }
+            return [], build_stooq_historical_detail(
+                mode="stooq_fetch_failed",
+                points=0,
+                error=str(exc).strip(),
+            )
 
         if full_points:
             await self.full_daily_history_store.upsert(symbol, full_points)
@@ -314,12 +312,10 @@ class MarketDataHistoricalMixin:
                 outputsize=outputsize,
             )
             if fetched_slice:
-                return fetched_slice, {
-                    "mode": "stooq_live",
-                    "dataset": "historical_daily",
-                    "provider": "stooq",
-                    "points": len(fetched_slice),
-                }
+                return fetched_slice, build_stooq_historical_detail(
+                    mode="stooq_live",
+                    points=len(fetched_slice),
+                )
 
         if cached_full_points:
             stale_slice = self._slice_daily_points(
@@ -329,19 +325,15 @@ class MarketDataHistoricalMixin:
                 outputsize=outputsize,
             )
             if stale_slice:
-                return stale_slice, {
-                    "mode": "stooq_cached_stale",
-                    "dataset": "historical_daily",
-                    "provider": "stooq",
-                    "points": len(stale_slice),
-                }
+                return stale_slice, build_stooq_historical_detail(
+                    mode="stooq_cached_stale",
+                    points=len(stale_slice),
+                )
 
-        return [], {
-            "mode": "stooq_empty_range" if (start_date or end_date) else "stooq_empty",
-            "dataset": "historical_daily",
-            "provider": "stooq",
-            "points": 0,
-        }
+        return [], build_stooq_historical_detail(
+            mode="stooq_empty_range" if (start_date or end_date) else "stooq_empty",
+            points=0,
+        )
 
     async def _fetch_historical_points_with_detail(
         self,
@@ -418,12 +410,7 @@ class MarketDataHistoricalMixin:
             start_date=start_date,
             end_date=end_date,
         )
-        return points, {
-            "mode": "jquants",
-            "dataset": "historical_daily",
-            "provider": "jquants",
-            "points": len(points),
-        }
+        return points, build_jquants_historical_detail(points=len(points))
 
     async def _fetch_combined_historical_points_with_detail(
         self,
@@ -453,16 +440,11 @@ class MarketDataHistoricalMixin:
         )
         td_points, fmp_points = await asyncio.gather(td_task, fmp_task)
         merged = self._merge_points_by_timestamp(fmp_points, td_points)
-        return merged, {
-            "mode": "both",
-            "dataset": "historical_daily",
-            "merge_policy": "twelvedata_overrides_fmp_on_same_timestamp",
-            "providers": {
-                "twelvedata_points": len(td_points),
-                "fmp_points": len(fmp_points),
-                "merged_points": len(merged),
-            },
-        }
+        return merged, build_combined_historical_detail(
+            td_points=td_points,
+            fmp_points=fmp_points,
+            merged_points=merged,
+        )
 
     def _should_try_fmp_daily_fallback(
         self,
@@ -478,13 +460,7 @@ class MarketDataHistoricalMixin:
         )
 
     def _build_standard_historical_detail(self, *, points: list[dict[str, Any]]) -> dict[str, Any]:
-        provider_name = "fmp" if self.provider == "fmp" else "twelvedata"
-        return {
-            "mode": self.provider,
-            "dataset": "historical_daily",
-            "provider": provider_name,
-            "points": len(points),
-        }
+        return build_standard_historical_detail(provider=self.provider, points=len(points))
 
     async def _fetch_series(
         self,
@@ -551,32 +527,17 @@ class MarketDataHistoricalMixin:
         )
 
     def _should_use_jquants_for_symbol(self, symbol: str, interval: str) -> bool:
-        api_key = str(_runtime_value("JQUANTS_API_KEY", DEFAULT_JQUANTS_API_KEY) or "").strip()
-        if not api_key:
-            return False
-        if str(interval or "").strip().lower() not in {"1day", "1d", "day"}:
-            return False
-        return infer_country_from_symbol(symbol) == "JAPAN" and self._normalize_jquants_code(symbol) is not None
+        api_key = str(runtime_value("JQUANTS_API_KEY", DEFAULT_JQUANTS_API_KEY) or "").strip()
+        return should_use_jquants_for_symbol(symbol, interval, api_key=api_key)
 
     @staticmethod
     def _normalize_jquants_code(symbol: str) -> str | None:
-        normalized = str(symbol or "").strip().upper()
-        if normalized.endswith(".T"):
-            normalized = normalized[:-2]
-        normalized = normalized.strip()
-        if normalized.isdigit() and len(normalized) in {4, 5}:
-            return normalized
-        return None
+        return normalize_jquants_code(symbol)
 
     @classmethod
     def _extract_jquants_coverage_window(cls, message: Any) -> tuple[date, date] | None:
-        matched = cls._JQUANTS_COVERAGE_RE.search(str(message or ""))
-        if matched is None:
-            return None
-        try:
-            return date.fromisoformat(matched.group(1)), date.fromisoformat(matched.group(2))
-        except ValueError:
-            return None
+        del cls
+        return extract_jquants_coverage_window(message)
 
     @staticmethod
     def _bound_jquants_request_dates(
@@ -585,18 +546,11 @@ class MarketDataHistoricalMixin:
         end_date: str | None,
         coverage_window: tuple[date, date],
     ) -> tuple[str, str] | None:
-        coverage_start, coverage_end = coverage_window
-        try:
-            requested_start = date.fromisoformat(start_date) if start_date else coverage_start
-            requested_end = date.fromisoformat(end_date) if end_date else coverage_end
-        except ValueError:
-            return None
-
-        bounded_start = max(requested_start, coverage_start)
-        bounded_end = min(requested_end, coverage_end)
-        if bounded_start > bounded_end:
-            return None
-        return bounded_start.isoformat(), bounded_end.isoformat()
+        return bound_jquants_request_dates(
+            start_date=start_date,
+            end_date=end_date,
+            coverage_window=coverage_window,
+        )
 
     @classmethod
     def _clamp_jquants_request_dates(
@@ -606,32 +560,22 @@ class MarketDataHistoricalMixin:
         end_date: str | None,
         coverage_message: Any,
     ) -> tuple[str, str] | None:
-        coverage_window = cls._extract_jquants_coverage_window(coverage_message)
-        if coverage_window is None:
-            return None
-
-        bounded_dates = cls._bound_jquants_request_dates(
+        del cls
+        return clamp_jquants_request_dates(
             start_date=start_date,
             end_date=end_date,
-            coverage_window=coverage_window,
+            coverage_message=coverage_message,
         )
-        if bounded_dates is None:
-            return None
-
-        clamped_start, clamped_end = bounded_dates
-        if clamped_start == str(start_date or "") and clamped_end == str(end_date or ""):
-            return None
-        return clamped_start, clamped_end
 
     @staticmethod
     def _is_jquants_rate_limit_message(message: Any) -> bool:
-        return "rate limit exceeded" in str(message or "").strip().lower()
+        return is_jquants_rate_limit_message(message)
 
     async def _await_jquants_request_slot(self) -> None:
         spacing = max(
             0.0,
             float(
-                _runtime_value(
+                runtime_value(
                     "JQUANTS_MIN_REQUEST_INTERVAL_SEC",
                     DEFAULT_JQUANTS_MIN_REQUEST_INTERVAL_SEC,
                 )
@@ -678,7 +622,7 @@ class MarketDataHistoricalMixin:
             return []
 
         code = self._normalize_jquants_code(symbol)
-        api_key = str(_runtime_value("JQUANTS_API_KEY", DEFAULT_JQUANTS_API_KEY) or "").strip()
+        api_key = str(runtime_value("JQUANTS_API_KEY", DEFAULT_JQUANTS_API_KEY) or "").strip()
         if not code or not api_key:
             return []
 
@@ -745,7 +689,7 @@ class MarketDataHistoricalMixin:
                     if self._is_jquants_rate_limit_message(message) and rate_limit_attempts < 3:
                         rate_limit_attempts += 1
                         backoff_sec = float(
-                            _runtime_value(
+                            runtime_value(
                                 "JQUANTS_RATE_LIMIT_BACKOFF_SEC",
                                 DEFAULT_JQUANTS_RATE_LIMIT_BACKOFF_SEC,
                             )
