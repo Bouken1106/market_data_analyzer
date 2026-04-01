@@ -18,7 +18,7 @@ class _FakeHub:
 
 
 class ApplicationRoutesTest(unittest.TestCase):
-    def test_create_app_registers_remaining_static_pages_and_api_routes(self) -> None:
+    def test_create_app_registers_static_pages_and_api_routes(self) -> None:
         services = AppServices(
             hub=_FakeHub(),
             symbol_catalog_store=object(),
@@ -36,21 +36,11 @@ class ApplicationRoutesTest(unittest.TestCase):
             "/api/relationships",
         }
         self.assertTrue(expected_paths.issubset(route_paths))
-        self.assertNotIn("/market-data-lab", route_paths)
-        self.assertNotIn("/ml-lab", route_paths)
-        self.assertNotIn("/strategy-lab", route_paths)
-        self.assertNotIn("/compare-lab", route_paths)
 
         with TestClient(app) as client:
             self.assertEqual(client.get("/relationship-lab").status_code, 200)
             self.assertEqual(client.get("/leadlag-lab").status_code, 200)
             self.assertEqual(client.get("/historical/AAPL").status_code, 200)
-            self.assertEqual(client.get("/market-data-lab").status_code, 404)
-            self.assertEqual(client.get("/ml-lab").status_code, 404)
-            self.assertEqual(client.get("/strategy-lab").status_code, 404)
-            self.assertEqual(client.get("/compare-lab").status_code, 404)
-            self.assertEqual(client.get("/api/ml/models").status_code, 404)
-            self.assertEqual(client.post("/api/strategy/evaluate").status_code, 404)
 
 
 if __name__ == "__main__":

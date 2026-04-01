@@ -2,8 +2,8 @@ import unittest
 
 from fastapi import HTTPException
 
-from app.api.validators import require_non_negative_float, require_positive_float, require_symbols
 from app.utils import finite_float_or_none
+from app.validation import require_non_negative_float, require_positive_float, require_symbols
 
 
 class ApiValidatorsTest(unittest.TestCase):
