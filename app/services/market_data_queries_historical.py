@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
@@ -45,6 +46,27 @@ def _queries_module():
 
 def _runtime_value(name: str, default: Any) -> Any:
     return getattr(_queries_module(), name, default)
+
+
+@dataclass(frozen=True)
+class HistoricalRequest:
+    symbol: str
+    source_mode: str
+    years: int
+    months: int | None
+    fetch_full_history: bool
+    cache_key: tuple[str, str, str]
+    start_date: date
+    end_date: date
+    outputsize: int
+
+    @property
+    def start_date_iso(self) -> str:
+        return self.start_date.isoformat()
+
+    @property
+    def end_date_iso(self) -> str:
+        return self.end_date.isoformat()
 
 
 class MarketDataHistoricalMixin:
@@ -89,114 +111,192 @@ class MarketDataHistoricalMixin:
         source_preference: str | None = None,
         allow_api_fallback: bool = True,
     ) -> dict[str, Any]:
-        normalized = symbol.upper().strip()
-        if not SYMBOL_PATTERN.match(normalized):
-            raise HTTPException(status_code=400, detail="Invalid symbol format.")
-        source_mode = str(source_preference or "").strip().lower() or "provider"
-        requested_years = max(1, int(years))
-        fetch_full_history = months is None and requested_years > HISTORICAL_MAX_YEARS
-        years = requested_years if fetch_full_history else max(1, min(requested_years, HISTORICAL_MAX_YEARS))
-        months = None if months is None else max(1, min(int(months), ML_HISTORY_MAX_MONTHS))
-
-        if months is None:
-            cache_key = (
-                (normalized, "years:max", f"source:{source_mode}")
-                if fetch_full_history
-                else (normalized, f"years:{years}", f"source:{source_mode}")
-            )
-        else:
-            cache_key = (normalized, f"months:{months}", f"source:{source_mode}")
+        request = self._build_historical_request(
+            symbol=symbol,
+            years=years,
+            months=months,
+            source_preference=source_preference,
+        )
         async with self._historical_lock:
-            cached = self._historical_cache.get(cache_key)
+            cached = self._historical_cache.get(request.cache_key)
             if cached and not refresh and self._is_cache_fresh(cached.get("cached_epoch"), HISTORICAL_CACHE_TTL_SEC):
                 payload = dict(cached["payload"])
                 payload["source"] = "cache"
                 return payload
 
-        end_date = date.today()
-        if months is None:
-            start_date = end_date - timedelta(days=(365 * years) + (years // 4))
-            requested_days = (365 * years) + (years // 4)
-        else:
-            start_date = end_date - timedelta(days=(31 * months) + 7)
-            requested_days = (31 * months) + 7
-        estimated_points = max(200, int(requested_days * 0.8))
-        outputsize = (
-            0
-            if fetch_full_history
-            else min(
-                TIME_SERIES_MAX_OUTPUTSIZE,
-                max(HISTORICAL_MAX_POINTS, estimated_points),
-            )
-        )
-
         timeout = httpx.Timeout(40.0, connect=10.0)
-        source_detail: dict[str, Any] = {
-            "provider": source_mode or self.provider,
-            "mode": "uninitialized",
-        }
         async with httpx.AsyncClient(timeout=timeout) as client:
-            use_stooq = (
-                months is None
-                and str(HISTORICAL_INTERVAL).strip().lower() in {"1day", "1d", "day"}
-                and source_mode == "stooq"
+            points, source_detail = await self._resolve_historical_points(
+                client=client,
+                request=request,
+                refresh=refresh,
+                allow_api_fallback=allow_api_fallback,
             )
-            if use_stooq:
-                points, source_detail = await self._fetch_stooq_daily_points_with_detail(
-                    client,
-                    symbol=normalized,
-                    outputsize=outputsize,
-                    start_date=start_date.isoformat(),
-                    end_date=end_date.isoformat(),
-                    refresh=refresh,
-                )
-                if not points and allow_api_fallback:
-                    if fetch_full_history:
-                        points = await self._fetch_full_daily_series(client, symbol=normalized, refresh=refresh)
-                        source_detail = {
-                            "provider": self.provider,
-                            "mode": "full_daily_history",
-                        }
-                    else:
-                        points, source_detail = await self._fetch_historical_points_with_detail(
-                            client,
-                            symbol=normalized,
-                            interval=HISTORICAL_INTERVAL,
-                            outputsize=max(HISTORICAL_MAX_POINTS, outputsize),
-                            start_date=start_date.isoformat(),
-                            end_date=end_date.isoformat(),
-                        )
-            elif fetch_full_history and str(HISTORICAL_INTERVAL).strip().lower() in {"1day", "1d", "day"}:
-                points = await self._fetch_full_daily_series(client, symbol=normalized, refresh=refresh)
-                source_detail = {
-                    "provider": self.provider,
-                    "mode": "full_daily_history",
-                }
-            else:
-                points, source_detail = await self._fetch_historical_points_with_detail(
-                    client,
-                    symbol=normalized,
-                    interval=HISTORICAL_INTERVAL,
-                    outputsize=outputsize,
-                    start_date=start_date.isoformat(),
-                    end_date=end_date.isoformat(),
-                )
 
         if not points:
             raise HTTPException(
                 status_code=404,
                 detail=self._build_no_historical_data_detail(
-                    symbol=normalized,
-                    source_mode=source_mode,
+                    symbol=request.symbol,
+                    source_mode=request.source_mode,
                     source_detail=source_detail,
                     allow_api_fallback=allow_api_fallback,
                 ),
             )
 
-        historical_payload = {
-            "symbol": normalized,
-            "years": years,
-            "months": months,
+        historical_payload = self._build_historical_payload(
+            request=request,
+            points=points,
+            source_detail=source_detail,
+        )
+
+        async with self._historical_lock:
+            self._historical_cache[request.cache_key] = {
+                "cached_epoch": time.time(),
+                "payload": historical_payload,
+            }
+
+        return historical_payload
+
+    @staticmethod
+    def _is_daily_interval(interval: str) -> bool:
+        return str(interval).strip().lower() in {"1day", "1d", "day"}
+
+    def _build_historical_request(
+        self,
+        *,
+        symbol: str,
+        years: int,
+        months: int | None,
+        source_preference: str | None,
+    ) -> HistoricalRequest:
+        normalized = symbol.upper().strip()
+        if not SYMBOL_PATTERN.match(normalized):
+            raise HTTPException(status_code=400, detail="Invalid symbol format.")
+
+        source_mode = str(source_preference or "").strip().lower() or "provider"
+        requested_years = max(1, int(years))
+        fetch_full_history = months is None and requested_years > HISTORICAL_MAX_YEARS
+        resolved_years = requested_years if fetch_full_history else max(1, min(requested_years, HISTORICAL_MAX_YEARS))
+        resolved_months = None if months is None else max(1, min(int(months), ML_HISTORY_MAX_MONTHS))
+
+        if resolved_months is None:
+            cache_key = (
+                (normalized, "years:max", f"source:{source_mode}")
+                if fetch_full_history
+                else (normalized, f"years:{resolved_years}", f"source:{source_mode}")
+            )
+        else:
+            cache_key = (normalized, f"months:{resolved_months}", f"source:{source_mode}")
+
+        end_date = date.today()
+        if resolved_months is None:
+            requested_days = (365 * resolved_years) + (resolved_years // 4)
+        else:
+            requested_days = (31 * resolved_months) + 7
+        start_date = end_date - timedelta(days=requested_days)
+        estimated_points = max(200, int(requested_days * 0.8))
+        outputsize = (
+            0
+            if fetch_full_history
+            else min(TIME_SERIES_MAX_OUTPUTSIZE, max(HISTORICAL_MAX_POINTS, estimated_points))
+        )
+
+        return HistoricalRequest(
+            symbol=normalized,
+            source_mode=source_mode,
+            years=resolved_years,
+            months=resolved_months,
+            fetch_full_history=fetch_full_history,
+            cache_key=cache_key,
+            start_date=start_date,
+            end_date=end_date,
+            outputsize=outputsize,
+        )
+
+    async def _resolve_historical_points(
+        self,
+        *,
+        client: httpx.AsyncClient,
+        request: HistoricalRequest,
+        refresh: bool,
+        allow_api_fallback: bool,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        source_detail: dict[str, Any] = {
+            "provider": request.source_mode or self.provider,
+            "mode": "uninitialized",
+        }
+        use_stooq = (
+            request.months is None
+            and self._is_daily_interval(HISTORICAL_INTERVAL)
+            and request.source_mode == "stooq"
+        )
+        if use_stooq:
+            points, source_detail = await self._fetch_stooq_daily_points_with_detail(
+                client,
+                symbol=request.symbol,
+                outputsize=request.outputsize,
+                start_date=request.start_date_iso,
+                end_date=request.end_date_iso,
+                refresh=refresh,
+            )
+            if points or not allow_api_fallback:
+                return points, source_detail
+            if request.fetch_full_history:
+                return await self._fetch_full_history_with_detail(
+                    client=client,
+                    symbol=request.symbol,
+                    refresh=refresh,
+                )
+            return await self._fetch_historical_points_with_detail(
+                client,
+                symbol=request.symbol,
+                interval=HISTORICAL_INTERVAL,
+                outputsize=max(HISTORICAL_MAX_POINTS, request.outputsize),
+                start_date=request.start_date_iso,
+                end_date=request.end_date_iso,
+            )
+
+        if request.fetch_full_history and self._is_daily_interval(HISTORICAL_INTERVAL):
+            return await self._fetch_full_history_with_detail(
+                client=client,
+                symbol=request.symbol,
+                refresh=refresh,
+            )
+
+        return await self._fetch_historical_points_with_detail(
+            client,
+            symbol=request.symbol,
+            interval=HISTORICAL_INTERVAL,
+            outputsize=request.outputsize,
+            start_date=request.start_date_iso,
+            end_date=request.end_date_iso,
+        )
+
+    async def _fetch_full_history_with_detail(
+        self,
+        *,
+        client: httpx.AsyncClient,
+        symbol: str,
+        refresh: bool,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        points = await self._fetch_full_daily_series(client, symbol=symbol, refresh=refresh)
+        return points, {
+            "provider": self.provider,
+            "mode": "full_daily_history",
+        }
+
+    def _build_historical_payload(
+        self,
+        *,
+        request: HistoricalRequest,
+        points: list[dict[str, Any]],
+        source_detail: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "symbol": request.symbol,
+            "years": request.years,
+            "months": request.months,
             "interval": HISTORICAL_INTERVAL,
             "from": points[0]["t"],
             "to": points[-1]["t"],
@@ -209,14 +309,6 @@ class MarketDataHistoricalMixin:
             ),
             "source_detail": source_detail,
         }
-
-        async with self._historical_lock:
-            self._historical_cache[cache_key] = {
-                "cached_epoch": time.time(),
-                "payload": historical_payload,
-            }
-
-        return historical_payload
 
     @staticmethod
     def _slice_daily_points(

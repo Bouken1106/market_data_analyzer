@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
@@ -24,6 +25,23 @@ from ..config import (
 from ..utils import normalize_symbols
 
 
+@dataclass(frozen=True)
+class OverviewRequest:
+    symbol: str
+    include_intraday: bool
+    include_market: bool
+    include_qqq: bool
+
+    @property
+    def cache_key(self) -> tuple[str, bool, bool, bool]:
+        return (
+            self.symbol,
+            self.include_intraday,
+            self.include_market,
+            self.include_qqq,
+        )
+
+
 class MarketDataOverviewMixin:
     async def security_overview_payload(
         self,
@@ -33,13 +51,15 @@ class MarketDataOverviewMixin:
         include_market: bool = True,
         include_qqq: bool = True,
     ) -> dict[str, Any]:
-        normalized = symbol.upper().strip()
-        if not SYMBOL_PATTERN.match(normalized):
-            raise HTTPException(status_code=400, detail="Invalid symbol format.")
-        cache_key = (normalized, bool(include_intraday), bool(include_market), bool(include_qqq))
+        request = self._build_overview_request(
+            symbol=symbol,
+            include_intraday=include_intraday,
+            include_market=include_market,
+            include_qqq=include_qqq,
+        )
 
         async with self._overview_lock:
-            cached = self._overview_cache.get(cache_key)
+            cached = self._overview_cache.get(request.cache_key)
             if cached and not refresh and self._is_cache_fresh(cached.get("cached_epoch"), OVERVIEW_CACHE_TTL_SEC):
                 payload = dict(cached["payload"])
                 payload["source"] = "cache"
@@ -47,126 +67,34 @@ class MarketDataOverviewMixin:
 
         timeout = httpx.Timeout(30.0, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
-            quote_task = self._fetch_quote(client, normalized)
-            day_task = self._fetch_full_daily_series(client, normalized, refresh=refresh)
+            quote_task = self._fetch_quote(client, request.symbol)
+            day_task = self._fetch_full_daily_series(client, request.symbol, refresh=refresh)
             quote, day_points = await asyncio.gather(quote_task, day_task)
 
             m1_points: list[dict[str, Any]] = []
             m5_points: list[dict[str, Any]] = []
-            if include_intraday:
+            if request.include_intraday:
                 m1_points, m5_points = await asyncio.gather(
-                    self._fetch_series(client, normalized, "1min", outputsize=390),
-                    self._fetch_series(client, normalized, "5min", outputsize=390),
+                    self._fetch_series(client, request.symbol, "1min", outputsize=390),
+                    self._fetch_series(client, request.symbol, "5min", outputsize=390),
                 )
 
             market_context: dict[str, Any] | None = None
-            if include_market:
+            if request.include_market:
                 market_context = await self._fetch_market_context(
                     client,
                     refresh=refresh,
-                    include_qqq=include_qqq,
+                    include_qqq=request.include_qqq,
                 )
 
         if not day_points:
             raise HTTPException(status_code=404, detail="No overview data found for this symbol.")
 
         latest_day = day_points[-1]
-        previous_day = day_points[-2] if len(day_points) >= 2 else None
-        day_series_source = self._series_source_descriptor(day_points)
-
-        quote_price = self._pick_float(quote, "close", "price")
-        quote_source_detail = quote.get("_source_detail") if isinstance(quote, dict) else {}
-        if not isinstance(quote_source_detail, dict):
-            quote_source_detail = {}
-        current_price = quote_price if quote_price is not None else latest_day["c"]
-        previous_close = (
-            self._pick_float(quote, "previous_close", "prev_close")
-            or (previous_day["c"] if previous_day else None)
-        )
-        day_open = self._pick_float(quote, "open")
-        day_high = self._pick_float(quote, "high")
-        day_low = self._pick_float(quote, "low")
-        day_volume = self._pick_float(quote, "volume")
-        bid = self._pick_float(quote, "bid")
-        ask = self._pick_float(quote, "ask")
-
-        if m1_points and (day_high is None or day_low is None or day_open is None):
-            latest_session = self._extract_latest_session_points(m1_points)
-            if latest_session:
-                if day_open is None:
-                    day_open = latest_session[0]["o"]
-                if day_high is None:
-                    day_high = max((item["h"] for item in latest_session), default=None)
-                if day_low is None:
-                    day_low = min((item["l"] for item in latest_session), default=None)
-                if day_volume is None:
-                    day_volume = sum((item["v"] or 0.0) for item in latest_session)
-
-        day_open_source = quote_source_detail.get("open")
-        day_high_source = quote_source_detail.get("high")
-        day_low_source = quote_source_detail.get("low")
-        day_volume_source = quote_source_detail.get("volume")
-        if day_open is None:
-            day_open = latest_day["o"]
-            day_open_source = f"daily_series({day_series_source})"
-        if day_high is None:
-            day_high = latest_day["h"]
-            day_high_source = f"daily_series({day_series_source})"
-        if day_low is None:
-            day_low = latest_day["l"]
-            day_low_source = f"daily_series({day_series_source})"
-        if day_volume is None:
-            day_volume = latest_day["v"]
-            day_volume_source = f"daily_series({day_series_source})"
-
-        if m1_points:
-            latest_session = self._extract_latest_session_points(m1_points)
-            if latest_session:
-                if not day_open_source:
-                    day_open_source = "intraday_1min"
-                if not day_high_source:
-                    day_high_source = "intraday_1min"
-                if not day_low_source:
-                    day_low_source = "intraday_1min"
-                if not day_volume_source and day_volume is not None:
-                    day_volume_source = "intraday_1min"
-
-        current_price_source = quote_source_detail.get("close") or quote_source_detail.get("price")
-        if not current_price_source:
-            current_price_source = f"daily_series({day_series_source})"
-        previous_close_source = quote_source_detail.get("previous_close") or quote_source_detail.get("prev_close")
-        if not previous_close_source and previous_close is not None:
-            previous_close_source = f"daily_series({day_series_source})"
-
-        change_abs = None
-        change_pct = None
-        if current_price is not None and previous_close is not None and previous_close > 0:
-            change_abs = current_price - previous_close
-            change_pct = (change_abs / previous_close) * 100
-
-        recent_daily_volumes = [p["v"] for p in day_points[-21:-1] if p.get("v") is not None and p["v"] > 0]
-        avg_volume_20 = (
-            sum(recent_daily_volumes) / len(recent_daily_volumes)
-            if recent_daily_volumes
-            else None
-        )
-        avg_volume_ratio = (
-            (day_volume / avg_volume_20)
-            if day_volume is not None and avg_volume_20 is not None and avg_volume_20 > 0
-            else None
-        )
-
-        turnover = (
-            current_price * day_volume
-            if current_price is not None and day_volume is not None
-            else None
-        )
-
-        spread_abs = ask - bid if ask is not None and bid is not None else None
-        spread_pct = (
-            (spread_abs / current_price) * 100
-            if spread_abs is not None and current_price is not None and current_price > 0
-            else None
+        price_context = self._build_price_context(
+            quote=quote,
+            day_points=day_points,
+            m1_points=m1_points,
         )
 
         ma_short = self._moving_average(day_points, window=20)
@@ -175,49 +103,52 @@ class MarketDataOverviewMixin:
         intraday_vwap_1m = self._intraday_vwap(m1_points)
         intraday_vwap_5m = self._intraday_vwap(m5_points)
 
-        gap_abs = None
-        gap_pct = None
-        if day_open is not None and previous_close is not None and previous_close > 0:
-            gap_abs = day_open - previous_close
-            gap_pct = (gap_abs / previous_close) * 100
-
         spy_points = market_context.get("spy_points", []) if isinstance(market_context, dict) else []
         qqq_points = market_context.get("qqq_points", []) if isinstance(market_context, dict) else []
-        beta_60, corr_60 = self._beta_and_corr_60d(day_points, spy_points) if include_market else (None, None)
+        beta_60, corr_60 = self._beta_and_corr_60d(day_points, spy_points) if request.include_market else (None, None)
 
         spy_latest = spy_points[-1]["c"] if spy_points else None
         spy_prev = spy_points[-2]["c"] if len(spy_points) >= 2 else None
         qqq_latest = qqq_points[-1]["c"] if qqq_points else None
         qqq_prev = qqq_points[-2]["c"] if len(qqq_points) >= 2 else None
 
+        source_detail = self._build_overview_source_detail(
+            quote=quote,
+            day_points=day_points,
+            m1_points=m1_points,
+            m5_points=m5_points,
+            spy_points=spy_points,
+            qqq_points=qqq_points,
+            price_context=price_context,
+        )
         overview_payload = {
-            "symbol": normalized,
+            "symbol": request.symbol,
             "name": self._pick_string(quote, "name", "instrument_name"),
             "exchange": self._pick_string(quote, "exchange"),
             "price": {
-                "current": current_price,
-                "previous_close": previous_close,
-                "change_abs": change_abs,
-                "change_pct": change_pct,
-                "day_open": day_open,
-                "day_high": day_high,
-                "day_low": day_low,
-                "gap_abs": gap_abs,
-                "gap_pct": gap_pct,
+                "current": price_context["current_price"],
+                "previous_close": price_context["previous_close"],
+                "change_abs": price_context["change_abs"],
+                "change_pct": price_context["change_pct"],
+                "day_open": price_context["day_open"],
+                "day_high": price_context["day_high"],
+                "day_low": price_context["day_low"],
+                "gap_abs": price_context["gap_abs"],
+                "gap_pct": price_context["gap_pct"],
                 "updated_at": self._best_updated_at(quote, m1_points, day_points),
                 "delay_note": self._delay_note(),
             },
             "volume": {
-                "today": day_volume,
-                "avg20": avg_volume_20,
-                "avg_ratio": avg_volume_ratio,
-                "turnover": turnover,
+                "today": price_context["day_volume"],
+                "avg20": price_context["avg_volume_20"],
+                "avg_ratio": price_context["avg_volume_ratio"],
+                "turnover": price_context["turnover"],
             },
             "spread": {
-                "bid": bid,
-                "ask": ask,
-                "spread_abs": spread_abs,
-                "spread_pct": spread_pct,
+                "bid": price_context["bid"],
+                "ask": price_context["ask"],
+                "spread_abs": price_context["spread_abs"],
+                "spread_pct": price_context["spread_pct"],
             },
             "technical": {
                 "vwap_1m": intraday_vwap_1m,
@@ -228,7 +159,7 @@ class MarketDataOverviewMixin:
             },
             "market": {
                 "sp500_proxy": self._build_market_item("SPY", spy_latest, spy_prev),
-                "nasdaq_proxy": self._build_market_item("QQQ", qqq_latest, qqq_prev) if include_qqq else None,
+                "nasdaq_proxy": self._build_market_item("QQQ", qqq_latest, qqq_prev) if request.include_qqq else None,
                 "beta_60d_vs_spy": beta_60,
                 "corr_60d_vs_spy": corr_60,
             },
@@ -245,36 +176,266 @@ class MarketDataOverviewMixin:
                 "sector_etf": "not_supported_on_current_data_source",
             },
             "source": f"{self.provider}-live",
-            "source_detail": {
-                "mode": self.provider,
-                "components": {
-                    "quote": quote.get("_source_provider", self.provider) if isinstance(quote, dict) else self.provider,
-                    "daily_series": self._series_source_descriptor(day_points),
-                    "intraday_1min": self._series_source_descriptor(m1_points),
-                    "intraday_5min": self._series_source_descriptor(m5_points),
-                    "market_spy_daily": self._series_source_descriptor(spy_points),
-                    "market_qqq_daily": self._series_source_descriptor(qqq_points),
-                },
-                "fields": {
-                    "price.current": current_price_source,
-                    "price.previous_close": previous_close_source,
-                    "price.day_open": day_open_source or "unknown",
-                    "price.day_high": day_high_source or "unknown",
-                    "price.day_low": day_low_source or "unknown",
-                    "volume.today": day_volume_source or "unknown",
-                    "spread.bid": quote_source_detail.get("bid") or "unknown",
-                    "spread.ask": quote_source_detail.get("ask") or "unknown",
-                },
-            },
+            "source_detail": source_detail,
         }
 
         async with self._overview_lock:
-            self._overview_cache[cache_key] = {
+            self._overview_cache[request.cache_key] = {
                 "cached_epoch": time.time(),
                 "payload": overview_payload,
             }
 
         return overview_payload
+
+    @staticmethod
+    def _quote_source_detail(provider: str) -> dict[str, str]:
+        return {
+            "symbol": provider,
+            "name": provider,
+            "instrument_name": provider,
+            "exchange": provider,
+            "price": provider,
+            "close": provider,
+            "previous_close": provider,
+            "prev_close": provider,
+            "open": provider,
+            "high": provider,
+            "low": provider,
+            "volume": provider,
+            "bid": provider,
+            "ask": provider,
+            "timestamp": provider,
+            "datetime": provider,
+        }
+
+    def _build_overview_request(
+        self,
+        *,
+        symbol: str,
+        include_intraday: bool,
+        include_market: bool,
+        include_qqq: bool,
+    ) -> OverviewRequest:
+        normalized = symbol.upper().strip()
+        if not SYMBOL_PATTERN.match(normalized):
+            raise HTTPException(status_code=400, detail="Invalid symbol format.")
+        return OverviewRequest(
+            symbol=normalized,
+            include_intraday=bool(include_intraday),
+            include_market=bool(include_market),
+            include_qqq=bool(include_qqq),
+        )
+
+    def _build_price_context(
+        self,
+        *,
+        quote: dict[str, Any],
+        day_points: list[dict[str, Any]],
+        m1_points: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        latest_day = day_points[-1]
+        previous_day = day_points[-2] if len(day_points) >= 2 else None
+        day_series_source = self._series_source_descriptor(day_points)
+        quote_source_detail = quote.get("_source_detail") if isinstance(quote, dict) else {}
+        if not isinstance(quote_source_detail, dict):
+            quote_source_detail = {}
+
+        current_price = self._pick_float(quote, "close", "price")
+        if current_price is None:
+            current_price = latest_day["c"]
+        previous_close = self._pick_float(quote, "previous_close", "prev_close")
+        if previous_close is None and previous_day:
+            previous_close = previous_day["c"]
+
+        field_values = {
+            "day_open": self._pick_float(quote, "open"),
+            "day_high": self._pick_float(quote, "high"),
+            "day_low": self._pick_float(quote, "low"),
+            "day_volume": self._pick_float(quote, "volume"),
+            "bid": self._pick_float(quote, "bid"),
+            "ask": self._pick_float(quote, "ask"),
+        }
+        field_sources = {
+            "day_open_source": quote_source_detail.get("open"),
+            "day_high_source": quote_source_detail.get("high"),
+            "day_low_source": quote_source_detail.get("low"),
+            "day_volume_source": quote_source_detail.get("volume"),
+            "current_price_source": quote_source_detail.get("close") or quote_source_detail.get("price"),
+            "previous_close_source": quote_source_detail.get("previous_close") or quote_source_detail.get("prev_close"),
+        }
+
+        self._fill_day_fields_from_intraday(field_values, field_sources, m1_points)
+        self._fill_day_fields_from_daily_series(field_values, field_sources, latest_day, day_series_source)
+
+        change_abs, change_pct = self._compute_change_metrics(
+            current=current_price,
+            previous=previous_close,
+        )
+        gap_abs, gap_pct = self._compute_change_metrics(
+            current=field_values["day_open"],
+            previous=previous_close,
+        )
+        avg_volume_20, avg_volume_ratio, turnover = self._compute_volume_metrics(
+            day_points=day_points,
+            day_volume=field_values["day_volume"],
+            current_price=current_price,
+        )
+        spread_abs, spread_pct = self._compute_spread_metrics(
+            bid=field_values["bid"],
+            ask=field_values["ask"],
+            current_price=current_price,
+        )
+
+        return {
+            "current_price": current_price,
+            "previous_close": previous_close,
+            "day_open": field_values["day_open"],
+            "day_high": field_values["day_high"],
+            "day_low": field_values["day_low"],
+            "day_volume": field_values["day_volume"],
+            "bid": field_values["bid"],
+            "ask": field_values["ask"],
+            "change_abs": change_abs,
+            "change_pct": change_pct,
+            "gap_abs": gap_abs,
+            "gap_pct": gap_pct,
+            "avg_volume_20": avg_volume_20,
+            "avg_volume_ratio": avg_volume_ratio,
+            "turnover": turnover,
+            "spread_abs": spread_abs,
+            "spread_pct": spread_pct,
+            **field_sources,
+        }
+
+    def _fill_day_fields_from_intraday(
+        self,
+        field_values: dict[str, float | None],
+        field_sources: dict[str, str | None],
+        m1_points: list[dict[str, Any]],
+    ) -> None:
+        if not m1_points:
+            return
+        latest_session = self._extract_latest_session_points(m1_points)
+        if not latest_session:
+            return
+
+        if field_values["day_open"] is None:
+            field_values["day_open"] = latest_session[0]["o"]
+        if field_values["day_high"] is None:
+            field_values["day_high"] = max((item["h"] for item in latest_session), default=None)
+        if field_values["day_low"] is None:
+            field_values["day_low"] = min((item["l"] for item in latest_session), default=None)
+        if field_values["day_volume"] is None:
+            field_values["day_volume"] = sum((item["v"] or 0.0) for item in latest_session)
+
+        if not field_sources["day_open_source"]:
+            field_sources["day_open_source"] = "intraday_1min"
+        if not field_sources["day_high_source"]:
+            field_sources["day_high_source"] = "intraday_1min"
+        if not field_sources["day_low_source"]:
+            field_sources["day_low_source"] = "intraday_1min"
+        if not field_sources["day_volume_source"] and field_values["day_volume"] is not None:
+            field_sources["day_volume_source"] = "intraday_1min"
+
+    @staticmethod
+    def _fill_day_fields_from_daily_series(
+        field_values: dict[str, float | None],
+        field_sources: dict[str, str | None],
+        latest_day: dict[str, Any],
+        day_series_source: str,
+    ) -> None:
+        fallback_source = f"daily_series({day_series_source})"
+        if field_values["day_open"] is None:
+            field_values["day_open"] = latest_day["o"]
+            field_sources["day_open_source"] = fallback_source
+        if field_values["day_high"] is None:
+            field_values["day_high"] = latest_day["h"]
+            field_sources["day_high_source"] = fallback_source
+        if field_values["day_low"] is None:
+            field_values["day_low"] = latest_day["l"]
+            field_sources["day_low_source"] = fallback_source
+        if field_values["day_volume"] is None:
+            field_values["day_volume"] = latest_day["v"]
+            field_sources["day_volume_source"] = fallback_source
+        if not field_sources["current_price_source"]:
+            field_sources["current_price_source"] = fallback_source
+        if field_sources["previous_close_source"] is None:
+            field_sources["previous_close_source"] = fallback_source
+
+    @staticmethod
+    def _compute_change_metrics(current: float | None, previous: float | None) -> tuple[float | None, float | None]:
+        if current is None or previous is None or previous <= 0:
+            return None, None
+        change_abs = current - previous
+        return change_abs, (change_abs / previous) * 100
+
+    @staticmethod
+    def _compute_volume_metrics(
+        *,
+        day_points: list[dict[str, Any]],
+        day_volume: float | None,
+        current_price: float | None,
+    ) -> tuple[float | None, float | None, float | None]:
+        recent_daily_volumes = [p["v"] for p in day_points[-21:-1] if p.get("v") is not None and p["v"] > 0]
+        avg_volume_20 = sum(recent_daily_volumes) / len(recent_daily_volumes) if recent_daily_volumes else None
+        avg_volume_ratio = (
+            (day_volume / avg_volume_20)
+            if day_volume is not None and avg_volume_20 is not None and avg_volume_20 > 0
+            else None
+        )
+        turnover = current_price * day_volume if current_price is not None and day_volume is not None else None
+        return avg_volume_20, avg_volume_ratio, turnover
+
+    @staticmethod
+    def _compute_spread_metrics(
+        *,
+        bid: float | None,
+        ask: float | None,
+        current_price: float | None,
+    ) -> tuple[float | None, float | None]:
+        spread_abs = ask - bid if ask is not None and bid is not None else None
+        spread_pct = (
+            (spread_abs / current_price) * 100
+            if spread_abs is not None and current_price is not None and current_price > 0
+            else None
+        )
+        return spread_abs, spread_pct
+
+    def _build_overview_source_detail(
+        self,
+        *,
+        quote: dict[str, Any],
+        day_points: list[dict[str, Any]],
+        m1_points: list[dict[str, Any]],
+        m5_points: list[dict[str, Any]],
+        spy_points: list[dict[str, Any]],
+        qqq_points: list[dict[str, Any]],
+        price_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        quote_source_detail = quote.get("_source_detail") if isinstance(quote, dict) else {}
+        if not isinstance(quote_source_detail, dict):
+            quote_source_detail = {}
+        return {
+            "mode": self.provider,
+            "components": {
+                "quote": quote.get("_source_provider", self.provider) if isinstance(quote, dict) else self.provider,
+                "daily_series": self._series_source_descriptor(day_points),
+                "intraday_1min": self._series_source_descriptor(m1_points),
+                "intraday_5min": self._series_source_descriptor(m5_points),
+                "market_spy_daily": self._series_source_descriptor(spy_points),
+                "market_qqq_daily": self._series_source_descriptor(qqq_points),
+            },
+            "fields": {
+                "price.current": price_context["current_price_source"] or "unknown",
+                "price.previous_close": price_context["previous_close_source"] or "unknown",
+                "price.day_open": price_context["day_open_source"] or "unknown",
+                "price.day_high": price_context["day_high_source"] or "unknown",
+                "price.day_low": price_context["day_low_source"] or "unknown",
+                "volume.today": price_context["day_volume_source"] or "unknown",
+                "spread.bid": quote_source_detail.get("bid") or "unknown",
+                "spread.ask": quote_source_detail.get("ask") or "unknown",
+            },
+        }
 
     async def clear_symbol_overview_cache(self, symbol: str) -> dict[str, Any]:
         normalized = symbol.upper().strip()
@@ -358,24 +519,7 @@ class MarketDataOverviewMixin:
             return {}
         normalized = dict(payload)
         normalized["_source_provider"] = "twelvedata"
-        normalized["_source_detail"] = {
-            "symbol": "twelvedata",
-            "name": "twelvedata",
-            "instrument_name": "twelvedata",
-            "exchange": "twelvedata",
-            "price": "twelvedata",
-            "close": "twelvedata",
-            "previous_close": "twelvedata",
-            "prev_close": "twelvedata",
-            "open": "twelvedata",
-            "high": "twelvedata",
-            "low": "twelvedata",
-            "volume": "twelvedata",
-            "bid": "twelvedata",
-            "ask": "twelvedata",
-            "timestamp": "twelvedata",
-            "datetime": "twelvedata",
-        }
+        normalized["_source_detail"] = self._quote_source_detail("twelvedata")
         return normalized
 
     async def _fetch_quote_both(self, client: httpx.AsyncClient, symbol: str) -> dict[str, Any]:
@@ -445,24 +589,7 @@ class MarketDataOverviewMixin:
             "timestamp": row.get("timestamp"),
             "datetime": row.get("timestamp"),
             "_source_provider": "fmp",
-            "_source_detail": {
-                "symbol": "fmp",
-                "name": "fmp",
-                "instrument_name": "fmp",
-                "exchange": "fmp",
-                "price": "fmp",
-                "close": "fmp",
-                "previous_close": "fmp",
-                "prev_close": "fmp",
-                "open": "fmp",
-                "high": "fmp",
-                "low": "fmp",
-                "volume": "fmp",
-                "bid": "fmp",
-                "ask": "fmp",
-                "timestamp": "fmp",
-                "datetime": "fmp",
-            },
+            "_source_detail": self._quote_source_detail("fmp"),
         }
 
     async def sparkline_payload(self, symbols: list[str], refresh: bool = False) -> list[dict[str, Any]]:

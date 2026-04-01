@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import dataclass
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -22,6 +24,132 @@ from .deps import HubDep, SymbolCatalogStoreDep, UiStateStoreDep
 from .validators import require_symbols
 
 router = APIRouter()
+
+
+@dataclass(frozen=True)
+class RelationshipRequest:
+    symbols: list[str]
+    months: int
+    window_days: int
+    top_pairs: int
+    refresh: bool
+
+
+def _clamp_int(value: int, *, minimum: int, maximum: int) -> int:
+    return max(minimum, min(int(value), maximum))
+
+
+def _build_relationship_request(
+    *,
+    symbols: str,
+    months: int,
+    window_days: int,
+    top_pairs: int,
+    refresh: bool,
+) -> RelationshipRequest:
+    target_symbols = require_symbols(
+        symbols,
+        min_count=2,
+        max_count=12,
+        empty_detail="At least two valid symbols are required.",
+        max_detail="You can request up to 12 symbols at once.",
+    )
+    return RelationshipRequest(
+        symbols=target_symbols,
+        months=_clamp_int(months, minimum=3, maximum=60),
+        window_days=_clamp_int(window_days, minimum=20, maximum=252),
+        top_pairs=_clamp_int(top_pairs, minimum=1, maximum=20),
+        refresh=bool(refresh),
+    )
+
+
+async def _gather_relationship_points(
+    hub: Any,
+    request: RelationshipRequest,
+) -> tuple[dict[str, list[dict[str, object]]], list[dict[str, str]]]:
+    responses = await asyncio.gather(
+        *[
+            hub.historical_payload(symbol=symbol, months=request.months, refresh=request.refresh)
+            for symbol in request.symbols
+        ],
+        return_exceptions=True,
+    )
+
+    points_by_symbol: dict[str, list[dict[str, object]]] = {}
+    skipped: list[dict[str, str]] = []
+    for symbol, item in zip(request.symbols, responses):
+        if isinstance(item, Exception):
+            detail = getattr(item, "detail", None)
+            skipped.append({"symbol": symbol, "reason": str(detail or item)})
+            continue
+        points = item.get("points") if isinstance(item, dict) else None
+        if isinstance(points, list) and points:
+            points_by_symbol[symbol] = points
+            continue
+        skipped.append({"symbol": symbol, "reason": "No historical points returned."})
+
+    return points_by_symbol, skipped
+
+
+def _build_relationship_response(
+    *,
+    request: RelationshipRequest,
+    points_by_symbol: dict[str, list[dict[str, object]]],
+    skipped: list[dict[str, str]],
+) -> JSONResponse:
+    if len(points_by_symbol) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Not enough symbols returned aligned historical data for relationship analysis.",
+        )
+
+    try:
+        analysis = build_relationship_analysis(
+            points_by_symbol,
+            window_days=request.window_days,
+            top_pairs=request.top_pairs,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return ok_json_response(
+        requested_symbols=request.symbols,
+        analyzed_symbols=analysis["symbols"],
+        skipped_symbols=skipped,
+        months=request.months,
+        **analysis,
+    )
+
+
+def _require_basic_watchlist_symbols(symbols: str) -> list[str]:
+    return require_symbols(
+        symbols,
+        min_count=2,
+        max_count=MAX_BASIC_SYMBOLS,
+        empty_detail="At least two valid symbols are required.",
+        max_detail=f"You can request up to {MAX_BASIC_SYMBOLS} symbols at once.",
+    )
+
+
+def _latest_watchlist_commentary_payload(ui_state_store: Any) -> dict[str, Any]:
+    payload = ui_state_store.get_watchlist_commentary() if ui_state_store else None
+    if isinstance(payload, dict):
+        return payload
+    return {
+        "comment": None,
+        "generated_at": None,
+        "model": LMSTUDIO_MODEL,
+        "symbols": [],
+    }
+
+
+def _persist_watchlist_commentary(ui_state_store: Any, payload: dict[str, Any]) -> None:
+    if ui_state_store is None:
+        return
+    try:
+        ui_state_store.set_watchlist_commentary(payload)
+    except Exception as exc:
+        LOGGER.warning("Failed to persist watchlist commentary: %s", exc)
 
 
 @router.get("/api/snapshot")
@@ -89,58 +217,21 @@ async def relationships(
     top_pairs: int = 10,
     refresh: bool = False,
 ) -> JSONResponse:
-    target_symbols = require_symbols(
-        symbols,
-        min_count=2,
-        max_count=12,
-        empty_detail="At least two valid symbols are required.",
-        max_detail="You can request up to 12 symbols at once.",
-    )
-    months = max(3, min(int(months), 60))
-    window_days = max(20, min(int(window_days), 252))
-    top_pairs = max(1, min(int(top_pairs), 20))
-
-    tasks = [
-        hub.historical_payload(symbol=symbol, months=months, refresh=refresh)
-        for symbol in target_symbols
-    ]
-    responses = await asyncio.gather(*tasks, return_exceptions=True)
-
-    points_by_symbol: dict[str, list[dict[str, object]]] = {}
-    skipped: list[dict[str, str]] = []
-    for index, item in enumerate(responses):
-        symbol = target_symbols[index]
-        if isinstance(item, Exception):
-            detail = getattr(item, "detail", None)
-            skipped.append({"symbol": symbol, "reason": str(detail or item)})
-            continue
-        points = item.get("points") if isinstance(item, dict) else None
-        if isinstance(points, list) and points:
-            points_by_symbol[symbol] = points
-        else:
-            skipped.append({"symbol": symbol, "reason": "No historical points returned."})
-
-    if len(points_by_symbol) < 2:
-        raise HTTPException(
-            status_code=400,
-            detail="Not enough symbols returned aligned historical data for relationship analysis.",
-        )
-
-    try:
-        analysis = build_relationship_analysis(
-            points_by_symbol,
-            window_days=window_days,
-            top_pairs=top_pairs,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return ok_json_response(
-        requested_symbols=target_symbols,
-        analyzed_symbols=analysis["symbols"],
-        skipped_symbols=skipped,
+    request = _build_relationship_request(
+        symbols=symbols,
         months=months,
-        **analysis,
+        window_days=window_days,
+        top_pairs=top_pairs,
+        refresh=refresh,
+    )
+    points_by_symbol, skipped = await _gather_relationship_points(
+        hub,
+        request,
+    )
+    return _build_relationship_response(
+        request=request,
+        points_by_symbol=points_by_symbol,
+        skipped=skipped,
     )
 
 
@@ -185,27 +276,15 @@ async def watchlist_commentary(
     ui_state_store: UiStateStoreDep,
     refresh: bool = False,
 ) -> JSONResponse:
-    target_symbols = require_symbols(
-        symbols,
-        min_count=2,
-        max_count=MAX_BASIC_SYMBOLS,
-        empty_detail="At least two valid symbols are required.",
-        max_detail=f"You can request up to {MAX_BASIC_SYMBOLS} symbols at once.",
-    )
-
+    target_symbols = _require_basic_watchlist_symbols(symbols)
     payload = await build_watchlist_commentary_payload(hub, target_symbols, refresh=refresh)
-    try:
-        ui_state_store.set_watchlist_commentary(payload)
-    except Exception as exc:
-        LOGGER.warning("Failed to persist watchlist commentary: %s", exc)
+    _persist_watchlist_commentary(ui_state_store, payload)
     return ok_json_response(**payload)
 
 
 @router.get("/api/watchlist-commentary/latest")
 async def watchlist_commentary_latest(ui_state_store: UiStateStoreDep) -> JSONResponse:
-    payload = ui_state_store.get_watchlist_commentary() if ui_state_store else None
-    if not isinstance(payload, dict):
-        return ok_json_response(comment=None, generated_at=None, model=LMSTUDIO_MODEL, symbols=[])
+    payload = _latest_watchlist_commentary_payload(ui_state_store)
     return ok_json_response(**payload)
 
 

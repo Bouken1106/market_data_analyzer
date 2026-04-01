@@ -42,6 +42,98 @@ class MarketDataQueriesJQuantsTest(unittest.TestCase):
         self.assertEqual(_DummyQueries._normalize_jquants_code("86970"), "86970")
         self.assertIsNone(_DummyQueries._normalize_jquants_code("AAPL"))
 
+    def test_build_historical_request_marks_large_daily_range_as_full_history(self) -> None:
+        queries = _DummyQueries()
+
+        request = queries._build_historical_request(
+            symbol="spy",
+            years=50,
+            months=None,
+            source_preference="stooq",
+        )
+
+        self.assertEqual(request.symbol, "SPY")
+        self.assertEqual(request.source_mode, "stooq")
+        self.assertEqual(request.years, 50)
+        self.assertIsNone(request.months)
+        self.assertTrue(request.fetch_full_history)
+        self.assertEqual(request.cache_key, ("SPY", "years:max", "source:stooq"))
+        self.assertEqual(request.outputsize, 0)
+
+    def test_build_overview_request_normalizes_symbol_and_flags(self) -> None:
+        queries = _DummyQueries()
+
+        request = queries._build_overview_request(
+            symbol=" msft ",
+            include_intraday=1,
+            include_market=0,
+            include_qqq=True,
+        )
+
+        self.assertEqual(request.symbol, "MSFT")
+        self.assertEqual(request.cache_key, ("MSFT", True, False, True))
+
+    def test_build_price_context_uses_intraday_then_daily_fallbacks(self) -> None:
+        queries = _DummyQueries()
+        quote = {
+            "close": 105.0,
+            "previous_close": 100.0,
+            "_source_detail": {
+                "close": "twelvedata",
+                "previous_close": "twelvedata",
+            },
+        }
+        day_points = [
+            {"t": "2024-01-02", "o": 95.0, "h": 101.0, "l": 94.0, "c": 100.0, "v": 900.0, "_src": "fmp"},
+            {"t": "2024-01-03", "o": 101.0, "h": 106.0, "l": 99.0, "c": 104.0, "v": 1200.0, "_src": "fmp"},
+        ]
+        m1_points = [
+            {"t": "2024-01-03 09:30:00", "o": 102.0, "h": 103.0, "l": 101.0, "c": 102.5, "v": 100.0},
+            {"t": "2024-01-03 09:31:00", "o": 102.5, "h": 104.0, "l": 100.5, "c": 103.5, "v": 150.0},
+        ]
+
+        context = queries._build_price_context(
+            quote=quote,
+            day_points=day_points,
+            m1_points=m1_points,
+        )
+
+        self.assertEqual(context["current_price"], 105.0)
+        self.assertEqual(context["previous_close"], 100.0)
+        self.assertEqual(context["day_open"], 102.0)
+        self.assertEqual(context["day_high"], 104.0)
+        self.assertEqual(context["day_low"], 100.5)
+        self.assertEqual(context["day_volume"], 250.0)
+        self.assertEqual(context["day_open_source"], "intraday_1min")
+        self.assertEqual(context["day_high_source"], "intraday_1min")
+        self.assertEqual(context["day_low_source"], "intraday_1min")
+        self.assertEqual(context["day_volume_source"], "intraday_1min")
+        self.assertEqual(context["change_abs"], 5.0)
+        self.assertEqual(context["gap_abs"], 2.0)
+
+    def test_build_price_context_falls_back_to_daily_series_for_missing_quote_fields(self) -> None:
+        queries = _DummyQueries()
+        day_points = [
+            {"t": "2024-01-02", "o": 95.0, "h": 101.0, "l": 94.0, "c": 100.0, "v": 900.0, "_src": "fmp"},
+            {"t": "2024-01-03", "o": 101.0, "h": 106.0, "l": 99.0, "c": 104.0, "v": 1200.0, "_src": "fmp"},
+        ]
+
+        context = queries._build_price_context(
+            quote={},
+            day_points=day_points,
+            m1_points=[],
+        )
+
+        self.assertEqual(context["current_price"], 104.0)
+        self.assertEqual(context["previous_close"], 100.0)
+        self.assertEqual(context["day_open"], 101.0)
+        self.assertEqual(context["day_high"], 106.0)
+        self.assertEqual(context["day_low"], 99.0)
+        self.assertEqual(context["day_volume"], 1200.0)
+        self.assertEqual(context["current_price_source"], "daily_series(fmp)")
+        self.assertEqual(context["previous_close_source"], "daily_series(fmp)")
+        self.assertEqual(context["day_open_source"], "daily_series(fmp)")
+
     def test_fetch_series_jquants_normalizes_daily_quotes_and_pagination(self) -> None:
         async def run_test() -> None:
             responses = [
@@ -314,6 +406,33 @@ class MarketDataQueriesJQuantsTest(unittest.TestCase):
             self.assertEqual(payload["source_detail"]["provider"], "stooq")
             self.assertEqual(payload["source_detail"]["mode"], "stooq_live")
             self.assertEqual(queries.full_daily_history_store.upserts["XLB"][0]["_src"], "stooq")
+
+        asyncio.run(run_test())
+
+    def test_historical_payload_uses_full_history_fetch_for_large_daily_request(self) -> None:
+        class _FullHistoryQueries(_DummyQueries):
+            def __init__(self) -> None:
+                super().__init__()
+                self.full_daily_history_store = _MemoryDailyHistoryStore()
+
+            async def _fetch_full_daily_series(self, client, symbol: str, refresh: bool = False, min_recheck_sec=None):
+                del client, refresh, min_recheck_sec
+                assert symbol == "AAPL"
+                return [
+                    {"t": "2020-01-02", "o": 10.0, "h": 11.0, "l": 9.0, "c": 10.5, "v": 100.0},
+                    {"t": "2024-01-03", "o": 20.0, "h": 21.0, "l": 19.0, "c": 20.5, "v": 200.0},
+                ]
+
+            async def _fetch_historical_points_with_detail(self, *args, **kwargs):
+                raise AssertionError("Incremental historical fetch should not be used for large daily requests")
+
+        async def run_test() -> None:
+            queries = _FullHistoryQueries()
+            payload = await queries.historical_payload(symbol="AAPL", years=50, refresh=True)
+            self.assertEqual(payload["symbol"], "AAPL")
+            self.assertEqual(payload["years"], 50)
+            self.assertEqual(payload["count"], 2)
+            self.assertEqual(payload["source_detail"]["mode"], "full_daily_history")
 
         asyncio.run(run_test())
 
