@@ -2,45 +2,29 @@
 
 from __future__ import annotations
 
-import asyncio
-import time
-from datetime import date, datetime, timedelta, timezone
+from datetime import date
 from typing import Any
 
 import httpx
 from fastapi import HTTPException
 
 from ..config import (
-    DAILY_DIFF_MIN_RECHECK_SEC,
-    EARLIEST_TIMESTAMP_URL,
-    FMP_HISTORICAL_EOD_URL,
-    FULL_HISTORY_CHUNK_YEARS,
-    FULL_HISTORY_MAX_CHUNKS,
     HISTORICAL_CACHE_TTL_SEC,
     HISTORICAL_DEFAULT_YEARS,
     HISTORICAL_INTERVAL,
     HISTORICAL_MAX_POINTS,
     JQUANTS_API_KEY as DEFAULT_JQUANTS_API_KEY,
-    JQUANTS_DAILY_BARS_URL,
     JQUANTS_MIN_REQUEST_INTERVAL_SEC as DEFAULT_JQUANTS_MIN_REQUEST_INTERVAL_SEC,
     JQUANTS_RATE_LIMIT_BACKOFF_SEC as DEFAULT_JQUANTS_RATE_LIMIT_BACKOFF_SEC,
-    LOGGER,
-    TIME_SERIES_MAX_OUTPUTSIZE,
-    TIME_SERIES_URL,
 )
-from ..ohlcv import merge_points_by_timestamp as merge_ohlcv_points, normalize_ohlcv_point
-from ..stooq import fetch_stooq_daily_history as default_fetch_stooq_daily_history
+from .market_data_historical_ops import MarketDataHistoricalOps
 from .market_data_queries_historical_runtime import (
     bound_jquants_request_dates,
-    build_combined_historical_detail,
-    build_jquants_historical_detail,
     build_standard_historical_detail,
-    build_stooq_historical_detail,
     clamp_jquants_request_dates,
     extract_jquants_coverage_window,
     is_jquants_rate_limit_message,
     normalize_jquants_code,
-    resolve_runtime_fetcher,
     runtime_value,
     should_use_jquants_for_symbol,
 )
@@ -52,9 +36,13 @@ from .market_data_queries_historical_support import (
     is_daily_interval,
     slice_daily_points,
 )
+from .ttl_cache import ttl_cache_lookup, ttl_cache_store
 
 
 class MarketDataHistoricalMixin:
+    def _historical_ops(self) -> MarketDataHistoricalOps:
+        return MarketDataHistoricalOps(self)
+
     @staticmethod
     def _build_no_historical_data_detail(
         *,
@@ -85,10 +73,16 @@ class MarketDataHistoricalMixin:
             months=months,
             source_preference=source_preference,
         )
-        async with self._historical_lock:
-            cached = self._historical_cache.get(request.cache_key)
-            if cached and not refresh and self._is_cache_fresh(cached.get("cached_epoch"), HISTORICAL_CACHE_TTL_SEC):
-                payload = dict(cached["payload"])
+        if not refresh:
+            cached = await ttl_cache_lookup(
+                self._historical_cache,
+                self._historical_lock,
+                request.cache_key,
+                ttl_sec=HISTORICAL_CACHE_TTL_SEC,
+                copy_fn=dict,
+            )
+            if cached.found and cached.fresh and isinstance(cached.payload, dict):
+                payload = dict(cached.payload)
                 payload["source"] = "cache"
                 return payload
 
@@ -117,13 +111,12 @@ class MarketDataHistoricalMixin:
             points=points,
             source_detail=source_detail,
         )
-
-        async with self._historical_lock:
-            self._historical_cache[request.cache_key] = {
-                "cached_epoch": time.time(),
-                "payload": historical_payload,
-            }
-
+        await ttl_cache_store(
+            self._historical_cache,
+            self._historical_lock,
+            request.cache_key,
+            historical_payload,
+        )
         return historical_payload
 
     @staticmethod
@@ -267,72 +260,13 @@ class MarketDataHistoricalMixin:
         end_date: str | None,
         refresh: bool = False,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        cached_full_points = await self.full_daily_history_store.get(symbol, copy=False)
-        cached_updated_epoch = await self.full_daily_history_store.last_updated_epoch(symbol)
-        if (
-            cached_full_points
-            and not refresh
-            and cached_updated_epoch is not None
-            and self._is_cache_fresh(cached_updated_epoch, HISTORICAL_CACHE_TTL_SEC)
-        ):
-            cached_slice = self._slice_daily_points(
-                cached_full_points,
-                start_date=start_date,
-                end_date=end_date,
-                outputsize=outputsize,
-            )
-            if cached_slice:
-                return cached_slice, {
-                    "mode": "stooq_cached",
-                    "dataset": "historical_daily",
-                    "provider": "stooq",
-                    "points": len(cached_slice),
-                }
-
-        fetch_stooq_daily_history = resolve_runtime_fetcher(
-            "fetch_stooq_daily_history",
-            default_fetch_stooq_daily_history,
-        )
-        try:
-            full_points = await fetch_stooq_daily_history(symbol, client=client)
-        except Exception as exc:
-            LOGGER.warning("Stooq daily CSV fetch failed for %s: %s", symbol, exc)
-            return [], build_stooq_historical_detail(
-                mode="stooq_fetch_failed",
-                points=0,
-                error=str(exc).strip(),
-            )
-
-        if full_points:
-            await self.full_daily_history_store.upsert(symbol, full_points)
-            fetched_slice = self._slice_daily_points(
-                full_points,
-                start_date=start_date,
-                end_date=end_date,
-                outputsize=outputsize,
-            )
-            if fetched_slice:
-                return fetched_slice, build_stooq_historical_detail(
-                    mode="stooq_live",
-                    points=len(fetched_slice),
-                )
-
-        if cached_full_points:
-            stale_slice = self._slice_daily_points(
-                cached_full_points,
-                start_date=start_date,
-                end_date=end_date,
-                outputsize=outputsize,
-            )
-            if stale_slice:
-                return stale_slice, build_stooq_historical_detail(
-                    mode="stooq_cached_stale",
-                    points=len(stale_slice),
-                )
-
-        return [], build_stooq_historical_detail(
-            mode="stooq_empty_range" if (start_date or end_date) else "stooq_empty",
-            points=0,
+        return await self._historical_ops().fetch_stooq_daily_points_with_detail(
+            client,
+            symbol=symbol,
+            outputsize=outputsize,
+            start_date=start_date,
+            end_date=end_date,
+            refresh=refresh,
         )
 
     async def _fetch_historical_points_with_detail(
@@ -344,53 +278,14 @@ class MarketDataHistoricalMixin:
         start_date: str,
         end_date: str,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        if self._should_use_jquants_for_symbol(symbol, interval):
-            return await self._fetch_jquants_historical_points_with_detail(
-                client=client,
-                symbol=symbol,
-                interval=interval,
-                outputsize=outputsize,
-                start_date=start_date,
-                end_date=end_date,
-            )
-
-        if self.provider == "both":
-            return await self._fetch_combined_historical_points_with_detail(
-                client=client,
-                symbol=symbol,
-                interval=interval,
-                outputsize=outputsize,
-                start_date=start_date,
-                end_date=end_date,
-            )
-
-        points = await self._fetch_primary_provider_series(
-            client=client,
-            symbol=symbol,
-            interval=interval,
-            outputsize=outputsize,
-            start_date=start_date,
-            end_date=end_date,
+        return await self._historical_ops().fetch_historical_points_with_detail(
+            client,
+            symbol,
+            interval,
+            outputsize,
+            start_date,
+            end_date,
         )
-        if self._should_try_fmp_daily_fallback(points=points, interval=interval):
-            fmp_points = await self._fetch_series_fmp(
-                client=client,
-                symbol=symbol,
-                interval=interval,
-                outputsize=outputsize,
-                start_date=start_date,
-                end_date=end_date,
-            )
-            if fmp_points:
-                detail = {
-                    "mode": "twelvedata_with_fmp_fallback",
-                    "dataset": "historical_daily",
-                    "provider": "fmp",
-                    "points": len(fmp_points),
-                }
-                return fmp_points, detail
-
-        return points, self._build_standard_historical_detail(points=points)
 
     async def _fetch_jquants_historical_points_with_detail(
         self,
@@ -402,7 +297,7 @@ class MarketDataHistoricalMixin:
         start_date: str,
         end_date: str,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        points = await self._fetch_series_jquants(
+        return await self._historical_ops().fetch_jquants_historical_points_with_detail(
             client=client,
             symbol=symbol,
             interval=interval,
@@ -410,7 +305,6 @@ class MarketDataHistoricalMixin:
             start_date=start_date,
             end_date=end_date,
         )
-        return points, build_jquants_historical_detail(points=len(points))
 
     async def _fetch_combined_historical_points_with_detail(
         self,
@@ -422,28 +316,13 @@ class MarketDataHistoricalMixin:
         start_date: str,
         end_date: str,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        td_task = self._fetch_series_twelvedata(
+        return await self._historical_ops().fetch_combined_historical_points_with_detail(
             client=client,
             symbol=symbol,
             interval=interval,
             outputsize=outputsize,
             start_date=start_date,
             end_date=end_date,
-        )
-        fmp_task = self._fetch_series_fmp(
-            client=client,
-            symbol=symbol,
-            interval=interval,
-            outputsize=outputsize,
-            start_date=start_date,
-            end_date=end_date,
-        )
-        td_points, fmp_points = await asyncio.gather(td_task, fmp_task)
-        merged = self._merge_points_by_timestamp(fmp_points, td_points)
-        return merged, build_combined_historical_detail(
-            td_points=td_points,
-            fmp_points=fmp_points,
-            merged_points=merged,
         )
 
     def _should_try_fmp_daily_fallback(
@@ -572,41 +451,10 @@ class MarketDataHistoricalMixin:
         return is_jquants_rate_limit_message(message)
 
     async def _await_jquants_request_slot(self) -> None:
-        spacing = max(
-            0.0,
-            float(
-                runtime_value(
-                    "JQUANTS_MIN_REQUEST_INTERVAL_SEC",
-                    DEFAULT_JQUANTS_MIN_REQUEST_INTERVAL_SEC,
-                )
-            ),
-        )
-        if spacing <= 0.0:
-            return
-
-        lock = getattr(self, "_jquants_request_lock", None)
-        if not isinstance(lock, asyncio.Lock):
-            lock = asyncio.Lock()
-            setattr(self, "_jquants_request_lock", lock)
-
-        async with lock:
-            now = time.monotonic()
-            next_request_at = float(getattr(self, "_jquants_next_request_at", 0.0) or 0.0)
-            if next_request_at > now:
-                await asyncio.sleep(next_request_at - now)
-                now = time.monotonic()
-            setattr(self, "_jquants_next_request_at", now + spacing)
+        await self._historical_ops().await_jquants_request_slot()
 
     async def _delay_future_jquants_requests(self, delay_sec: float) -> None:
-        lock = getattr(self, "_jquants_request_lock", None)
-        if not isinstance(lock, asyncio.Lock):
-            lock = asyncio.Lock()
-            setattr(self, "_jquants_request_lock", lock)
-
-        async with lock:
-            now = time.monotonic()
-            next_request_at = float(getattr(self, "_jquants_next_request_at", 0.0) or 0.0)
-            setattr(self, "_jquants_next_request_at", max(next_request_at, now + max(0.0, delay_sec)))
+        await self._historical_ops().delay_future_jquants_requests(delay_sec)
 
     async def _fetch_series_jquants(
         self,
@@ -617,121 +465,14 @@ class MarketDataHistoricalMixin:
         start_date: str | None = None,
         end_date: str | None = None,
     ) -> list[dict[str, Any]]:
-        del outputsize
-        if str(interval or "").strip().lower() not in {"1day", "1d", "day"}:
-            return []
-
-        code = self._normalize_jquants_code(symbol)
-        api_key = str(runtime_value("JQUANTS_API_KEY", DEFAULT_JQUANTS_API_KEY) or "").strip()
-        if not code or not api_key:
-            return []
-
-        headers = {"x-api-key": api_key}
-        cached_coverage = getattr(self, "_jquants_coverage_window", None)
-        bounded_dates = None
-        if (
-            isinstance(cached_coverage, tuple)
-            and len(cached_coverage) == 2
-            and isinstance(cached_coverage[0], date)
-            and isinstance(cached_coverage[1], date)
-        ):
-            bounded_dates = self._bound_jquants_request_dates(
-                start_date=start_date,
-                end_date=end_date,
-                coverage_window=(cached_coverage[0], cached_coverage[1]),
-            )
-        request_start, request_end = bounded_dates if bounded_dates is not None else (start_date, end_date)
-        adjusted_to_coverage = False
-        rate_limit_attempts = 0
-
-        while True:
-            params: dict[str, Any] = {"code": code}
-            if request_start:
-                params["from"] = request_start
-            if request_end:
-                params["to"] = request_end
-
-            points: list[dict[str, Any]] = []
-            pagination_key: str | None = None
-            should_retry = False
-
-            while True:
-                request_params = dict(params)
-                if pagination_key:
-                    request_params["pagination_key"] = pagination_key
-
-                try:
-                    await self._await_jquants_request_slot()
-                    response = await client.get(JQUANTS_DAILY_BARS_URL, params=request_params, headers=headers)
-                    payload = response.json()
-                except Exception as exc:
-                    LOGGER.warning("J-Quants daily bars fetch failed for %s: %s", symbol, exc)
-                    return []
-
-                if response.status_code >= 400:
-                    message = payload.get("message") if isinstance(payload, dict) else payload
-                    coverage_window = self._extract_jquants_coverage_window(message)
-                    if coverage_window is not None:
-                        setattr(self, "_jquants_coverage_window", coverage_window)
-                    clamped_dates = None
-                    if not adjusted_to_coverage:
-                        clamped_dates = self._clamp_jquants_request_dates(
-                            start_date=request_start,
-                            end_date=request_end,
-                            coverage_message=message,
-                        )
-                    if clamped_dates is not None:
-                        request_start, request_end = clamped_dates
-                        adjusted_to_coverage = True
-                        should_retry = True
-                        break
-
-                    if self._is_jquants_rate_limit_message(message) and rate_limit_attempts < 3:
-                        rate_limit_attempts += 1
-                        backoff_sec = float(
-                            runtime_value(
-                                "JQUANTS_RATE_LIMIT_BACKOFF_SEC",
-                                DEFAULT_JQUANTS_RATE_LIMIT_BACKOFF_SEC,
-                            )
-                        )
-                        await self._delay_future_jquants_requests(backoff_sec * rate_limit_attempts)
-                        should_retry = True
-                        break
-
-                    LOGGER.warning("J-Quants daily bars API error for %s: %s", symbol, payload)
-                    return []
-
-                values = None
-                if isinstance(payload, dict):
-                    for key in ("daily_quotes", "quotes", "bars", "dailyBars"):
-                        candidate = payload.get(key)
-                        if isinstance(candidate, list):
-                            values = candidate
-                            break
-                if not isinstance(values, list):
-                    return []
-
-                for item in values:
-                    point = normalize_ohlcv_point(
-                        item,
-                        timestamp_keys=("Date", "date"),
-                        open_keys=("Open", "open", "AdjustmentOpen", "adjustment_open"),
-                        high_keys=("High", "high", "AdjustmentHigh", "adjustment_high"),
-                        low_keys=("Low", "low", "AdjustmentLow", "adjustment_low"),
-                        close_keys=("Close", "close", "AdjustmentClose", "adjustment_close"),
-                        volume_keys=("Volume", "volume", "AdjustmentVolume", "adjustment_volume"),
-                        source="jquants",
-                    )
-                    if point is not None:
-                        points.append(point)
-
-                pagination_key = payload.get("pagination_key") if isinstance(payload, dict) else None
-                if not pagination_key:
-                    break
-
-            if should_retry:
-                continue
-            return sorted(points, key=lambda item: str(item.get("t") or ""))
+        return await self._historical_ops().fetch_series_jquants(
+            client,
+            symbol,
+            interval,
+            outputsize,
+            start_date=start_date,
+            end_date=end_date,
+        )
 
     async def _fetch_series_twelvedata(
         self,
@@ -742,51 +483,14 @@ class MarketDataHistoricalMixin:
         start_date: str | None = None,
         end_date: str | None = None,
     ) -> list[dict[str, Any]]:
-        try:
-            params: dict[str, Any] = {
-                "apikey": self.twelvedata_api_key,
-                "symbol": symbol,
-                "interval": interval,
-                "order": "ASC",
-                "outputsize": min(max(1, int(outputsize)), TIME_SERIES_MAX_OUTPUTSIZE),
-            }
-            if start_date:
-                params["start_date"] = start_date
-            if end_date:
-                params["end_date"] = end_date
-            response = await client.get(TIME_SERIES_URL, params=params)
-            async with self._credits_lock:
-                await self._update_minute_credits_from_response(response)
-                await self._consume_daily_credit_estimate(1, source=f"series:{symbol}:{interval}")
-            payload = response.json()
-        except Exception as exc:
-            LOGGER.warning("Time series fetch failed for %s %s: %s", symbol, interval, exc)
-            return []
-
-        if isinstance(payload, dict) and payload.get("status") == "error":
-            LOGGER.warning("Time series API error for %s %s: %s", symbol, interval, payload.get("message"))
-            return []
-
-        values = payload.get("values") if isinstance(payload, dict) else None
-        if not isinstance(values, list):
-            return []
-
-        points: list[dict[str, Any]] = []
-        for item in values:
-            point = normalize_ohlcv_point(
-                item,
-                timestamp_keys=("datetime",),
-                open_keys=("open",),
-                high_keys=("high",),
-                low_keys=("low",),
-                close_keys=("close",),
-                volume_keys=("volume",),
-                source="twelvedata",
-            )
-            if point is not None:
-                points.append(point)
-
-        return points
+        return await self._historical_ops().fetch_series_twelvedata(
+            client,
+            symbol,
+            interval,
+            outputsize,
+            start_date=start_date,
+            end_date=end_date,
+        )
 
     async def _fetch_series_both(
         self,
@@ -797,43 +501,14 @@ class MarketDataHistoricalMixin:
         start_date: str | None = None,
         end_date: str | None = None,
     ) -> list[dict[str, Any]]:
-        normalized_interval = str(interval or "").strip().lower()
-        if normalized_interval not in {"1day", "1d", "day"}:
-            return await self._fetch_series_twelvedata(
-                client=client,
-                symbol=symbol,
-                interval=interval,
-                outputsize=outputsize,
-                start_date=start_date,
-                end_date=end_date,
-            )
-
-        td_task = self._fetch_series_twelvedata(
-            client=client,
-            symbol=symbol,
-            interval=interval,
-            outputsize=outputsize,
+        return await self._historical_ops().fetch_series_both(
+            client,
+            symbol,
+            interval,
+            outputsize,
             start_date=start_date,
             end_date=end_date,
         )
-        fmp_task = self._fetch_series_fmp(
-            client=client,
-            symbol=symbol,
-            interval=interval,
-            outputsize=outputsize,
-            start_date=start_date,
-            end_date=end_date,
-        )
-        td_result, fmp_result = await asyncio.gather(td_task, fmp_task, return_exceptions=True)
-        td_points = td_result if isinstance(td_result, list) else []
-        fmp_points = fmp_result if isinstance(fmp_result, list) else []
-
-        if isinstance(td_result, Exception):
-            LOGGER.warning("Time series fetch failed (TD) for %s %s: %s", symbol, interval, td_result)
-        if isinstance(fmp_result, Exception):
-            LOGGER.warning("Time series fetch failed (FMP) for %s %s: %s", symbol, interval, fmp_result)
-
-        return self._merge_points_by_timestamp(fmp_points, td_points)
 
     async def _fetch_series_fmp(
         self,
@@ -844,57 +519,14 @@ class MarketDataHistoricalMixin:
         start_date: str | None = None,
         end_date: str | None = None,
     ) -> list[dict[str, Any]]:
-        if str(interval or "").strip().lower() not in {"1day", "1d", "day"}:
-            return []
-
-        params: dict[str, Any] = {
-            "apikey": self.fmp_api_key,
-            "symbol": symbol,
-        }
-        if start_date:
-            params["from"] = start_date
-        if end_date:
-            params["to"] = end_date
-
-        try:
-            response = await client.get(FMP_HISTORICAL_EOD_URL, params=params)
-            payload = response.json()
-        except Exception as exc:
-            LOGGER.warning("FMP time series fetch failed for %s %s: %s", symbol, interval, exc)
-            return []
-
-        if self._is_fmp_error(payload):
-            LOGGER.warning("FMP time series API error for %s %s: %s", symbol, interval, payload.get("Error Message"))
-            return []
-
-        if isinstance(payload, dict):
-            values = payload.get("historical") if isinstance(payload.get("historical"), list) else payload.get("data")
-        elif isinstance(payload, list):
-            values = payload
-        else:
-            values = None
-        if not isinstance(values, list):
-            return []
-
-        points: list[dict[str, Any]] = []
-        for item in values:
-            point = normalize_ohlcv_point(
-                item,
-                timestamp_keys=("date", "datetime"),
-                open_keys=("open",),
-                high_keys=("high",),
-                low_keys=("low",),
-                close_keys=("close",),
-                volume_keys=("volume",),
-                source="fmp",
-            )
-            if point is not None:
-                points.append(point)
-
-        points.sort(key=lambda item: str(item.get("t", "")))
-        if outputsize > 0 and len(points) > outputsize:
-            points = points[-outputsize:]
-        return points
+        return await self._historical_ops().fetch_series_fmp(
+            client,
+            symbol,
+            interval,
+            outputsize,
+            start_date=start_date,
+            end_date=end_date,
+        )
 
     async def _fetch_full_daily_series(
         self,
@@ -903,38 +535,15 @@ class MarketDataHistoricalMixin:
         refresh: bool = False,
         min_recheck_sec: int | None = None,
     ) -> list[dict[str, Any]]:
-        today = date.today()
-        cached_points = await self._load_cached_full_daily_series(symbol=symbol, refresh=refresh)
-        if cached_points:
-            last_date = self._point_date(cached_points[-1])
-            if last_date and last_date >= today:
-                return cached_points
-
-            if not await self._should_recheck_cached_full_daily_series(
-                symbol=symbol,
-                min_recheck_sec=min_recheck_sec,
-            ):
-                return cached_points
-
-            return await self._refresh_cached_full_daily_series(
-                client=client,
-                symbol=symbol,
-                cached_points=cached_points,
-                last_date=last_date,
-                today=today,
-            )
-
-        return await self._fetch_uncached_full_daily_series(
-            client=client,
-            symbol=symbol,
-            today=today,
+        return await self._historical_ops().fetch_full_daily_series(
+            client,
+            symbol,
+            refresh=refresh,
+            min_recheck_sec=min_recheck_sec,
         )
 
     async def _load_cached_full_daily_series(self, *, symbol: str, refresh: bool) -> list[dict[str, Any]]:
-        if refresh:
-            await self.full_daily_history_store.clear(symbol)
-            return []
-        return await self.full_daily_history_store.get(symbol, copy=False)
+        return await self._historical_ops().load_cached_full_daily_series(symbol=symbol, refresh=refresh)
 
     async def _should_recheck_cached_full_daily_series(
         self,
@@ -942,15 +551,9 @@ class MarketDataHistoricalMixin:
         symbol: str,
         min_recheck_sec: int | None,
     ) -> bool:
-        last_cache_update_epoch = await self.full_daily_history_store.last_updated_epoch(symbol)
-        if last_cache_update_epoch is None:
-            return True
-        last_cache_update_dt = datetime.fromtimestamp(last_cache_update_epoch, tz=timezone.utc)
-        now_utc = datetime.now(timezone.utc)
-        recheck_sec = DAILY_DIFF_MIN_RECHECK_SEC if min_recheck_sec is None else max(60, int(min_recheck_sec))
-        return not (
-            last_cache_update_dt.date() == now_utc.date()
-            and (now_utc.timestamp() - last_cache_update_epoch) < recheck_sec
+        return await self._historical_ops().should_recheck_cached_full_daily_series(
+            symbol=symbol,
+            min_recheck_sec=min_recheck_sec,
         )
 
     async def _refresh_cached_full_daily_series(
@@ -962,24 +565,13 @@ class MarketDataHistoricalMixin:
         last_date: date | None,
         today: date,
     ) -> list[dict[str, Any]]:
-        point_groups: list[list[dict[str, Any]]] = [cached_points]
-        start_cursor = (last_date - timedelta(days=5)) if last_date else (today - timedelta(days=10))
-        start_cursor = await self._extend_daily_history_in_chunks(
+        return await self._historical_ops().refresh_cached_full_daily_series(
             client=client,
             symbol=symbol,
-            start_cursor=start_cursor,
+            cached_points=cached_points,
+            last_date=last_date,
             today=today,
-            point_groups=point_groups,
         )
-        if start_cursor <= today:
-            LOGGER.warning(
-                "Daily cache catch-up truncated for %s: reached chunk limit (%s).",
-                symbol,
-                FULL_HISTORY_MAX_CHUNKS,
-            )
-        merged_cached = merge_ohlcv_points(*point_groups)
-        await self.full_daily_history_store.upsert(symbol, merged_cached)
-        return merged_cached
 
     async def _fetch_uncached_full_daily_series(
         self,
@@ -988,32 +580,11 @@ class MarketDataHistoricalMixin:
         symbol: str,
         today: date,
     ) -> list[dict[str, Any]]:
-        fallback_points = await self._fetch_daily_series_fallback(client=client, symbol=symbol)
-        if self._should_use_jquants_for_symbol(symbol, "1day"):
-            if fallback_points:
-                await self.full_daily_history_store.upsert(symbol, fallback_points)
-            return fallback_points
-
-        earliest = await self._fetch_earliest_date(client, symbol=symbol, interval="1day")
-        if earliest is None:
-            if fallback_points:
-                await self.full_daily_history_store.upsert(symbol, fallback_points)
-            return fallback_points
-
-        merged = await self._fetch_full_daily_series_from_earliest(
+        return await self._historical_ops().fetch_uncached_full_daily_series(
             client=client,
             symbol=symbol,
-            start_cursor=earliest,
             today=today,
         )
-        if not merged:
-            if fallback_points:
-                await self.full_daily_history_store.upsert(symbol, fallback_points)
-            return fallback_points
-
-        deduped = merge_ohlcv_points(merged)
-        await self.full_daily_history_store.upsert(symbol, deduped)
-        return deduped
 
     async def _fetch_daily_series_fallback(
         self,
@@ -1021,11 +592,9 @@ class MarketDataHistoricalMixin:
         client: httpx.AsyncClient | None,
         symbol: str,
     ) -> list[dict[str, Any]]:
-        return await self._fetch_series(
-            client,
+        return await self._historical_ops().fetch_daily_series_fallback(
+            client=client,
             symbol=symbol,
-            interval="1day",
-            outputsize=max(1300, HISTORICAL_MAX_POINTS),
         )
 
     async def _fetch_full_daily_series_from_earliest(
@@ -1036,21 +605,12 @@ class MarketDataHistoricalMixin:
         start_cursor: date,
         today: date,
     ) -> list[dict[str, Any]]:
-        merged: list[dict[str, Any]] = []
-        end_cursor = await self._extend_daily_history_in_chunks(
+        return await self._historical_ops().fetch_full_daily_series_from_earliest(
             client=client,
             symbol=symbol,
             start_cursor=start_cursor,
             today=today,
-            merged_points=merged,
         )
-        if end_cursor <= today:
-            LOGGER.warning(
-                "Daily full history truncated for %s: reached chunk limit (%s).",
-                symbol,
-                FULL_HISTORY_MAX_CHUNKS,
-            )
-        return merged
 
     async def _extend_daily_history_in_chunks(
         self,
@@ -1062,28 +622,14 @@ class MarketDataHistoricalMixin:
         point_groups: list[list[dict[str, Any]]] | None = None,
         merged_points: list[dict[str, Any]] | None = None,
     ) -> date:
-        chunks = 0
-        while start_cursor <= today and chunks < FULL_HISTORY_MAX_CHUNKS:
-            chunk_end = min(
-                today,
-                start_cursor + timedelta(days=(366 * FULL_HISTORY_CHUNK_YEARS) - 1),
-            )
-            points = await self._fetch_series(
-                client,
-                symbol=symbol,
-                interval="1day",
-                outputsize=TIME_SERIES_MAX_OUTPUTSIZE,
-                start_date=start_cursor.isoformat(),
-                end_date=chunk_end.isoformat(),
-            )
-            if points:
-                if point_groups is not None:
-                    point_groups.append(points)
-                if merged_points is not None:
-                    merged_points.extend(points)
-            start_cursor = chunk_end + timedelta(days=1)
-            chunks += 1
-        return start_cursor
+        return await self._historical_ops().extend_daily_history_in_chunks(
+            client=client,
+            symbol=symbol,
+            start_cursor=start_cursor,
+            today=today,
+            point_groups=point_groups,
+            merged_points=merged_points,
+        )
 
     async def _fetch_earliest_date(
         self,
@@ -1091,46 +637,4 @@ class MarketDataHistoricalMixin:
         symbol: str,
         interval: str,
     ) -> date | None:
-        if not self._uses_twelvedata() or client is None:
-            return None
-        try:
-            response = await client.get(
-                EARLIEST_TIMESTAMP_URL,
-                params={
-                    "apikey": self.twelvedata_api_key,
-                    "symbol": symbol,
-                    "interval": interval,
-                },
-            )
-            async with self._credits_lock:
-                await self._update_minute_credits_from_response(response)
-                await self._consume_daily_credit_estimate(1, source=f"earliest:{symbol}:{interval}")
-            payload = response.json()
-        except Exception as exc:
-            LOGGER.warning("Earliest timestamp fetch failed for %s %s: %s", symbol, interval, exc)
-            return None
-
-        if isinstance(payload, dict) and payload.get("status") == "error":
-            LOGGER.warning("Earliest timestamp API error for %s %s: %s", symbol, interval, payload.get("message"))
-            return None
-
-        raw_value = None
-        if isinstance(payload, dict):
-            raw_value = payload.get("datetime") or payload.get("timestamp")
-        if raw_value is None:
-            return None
-
-        parsed_iso = self._parse_timestamp(raw_value)
-        if not parsed_iso:
-            text = str(raw_value).strip()
-            if text:
-                try:
-                    return date.fromisoformat(text.split(" ")[0])
-                except ValueError:
-                    return None
-            return None
-
-        try:
-            return date.fromisoformat(parsed_iso[:10])
-        except ValueError:
-            return None
+        return await self._historical_ops().fetch_earliest_date(client, symbol, interval)

@@ -19,6 +19,7 @@ from ..config import (
     SYMBOL_CATALOG_COUNTRY,
     SYMBOL_CATALOG_MAX_ITEMS,
 )
+from ..services.market_data_provider_clients import FmpClient, TwelveDataClient
 from ..utils import is_valid_symbol, normalize_symbol, read_json_file, write_json_file
 
 
@@ -149,14 +150,12 @@ class SymbolCatalogStore:
     async def _fetch_from_twelvedata_api(self) -> list[dict[str, str]]:
         timeout = httpx.Timeout(40.0, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(
-                STOCKS_LIST_URL,
-                params={
-                    "apikey": self.twelvedata_api_key,
-                    "country": SYMBOL_CATALOG_COUNTRY,
-                },
-            )
-            payload = response.json()
+            payload = (
+                await TwelveDataClient(client, self.twelvedata_api_key).get_symbol_catalog(
+                    STOCKS_LIST_URL,
+                    country=SYMBOL_CATALOG_COUNTRY,
+                )
+            ).payload
 
         if isinstance(payload, dict) and payload.get("status") == "error":
             message = payload.get("message", "Failed to fetch symbol catalog.")
@@ -188,11 +187,10 @@ class SymbolCatalogStore:
     async def _fetch_from_fmp_api(self) -> list[dict[str, str]]:
         timeout = httpx.Timeout(40.0, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(FMP_STOCK_LIST_URL, params={"apikey": self.fmp_api_key})
-            payload = response.json()
+            fmp_client = FmpClient(client, self.fmp_api_key)
+            payload = await fmp_client.get_symbol_catalog(FMP_STOCK_LIST_URL)
             if self._is_fmp_error_payload(payload):
-                legacy_response = await client.get(FMP_STOCK_LIST_LEGACY_URL, params={"apikey": self.fmp_api_key})
-                payload = legacy_response.json()
+                payload = await fmp_client.get_symbol_catalog(FMP_STOCK_LIST_LEGACY_URL)
 
         rows = payload if isinstance(payload, list) else payload.get("data") if isinstance(payload, dict) else None
         if not isinstance(rows, list):

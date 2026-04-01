@@ -18,6 +18,7 @@ from ..config import (
     REST_PRICE_URL,
     WS_URL_TEMPLATE,
 )
+from .market_data_provider_clients import TwelveDataClient
 from ..utils import rest_request_spacing_seconds
 
 
@@ -184,17 +185,14 @@ class MarketDataRealtimeMixin:
             return False
 
         try:
-            response = await client.get(
+            api_response = await TwelveDataClient(client, self.twelvedata_api_key).get_price(
                 REST_PRICE_URL,
-                params={
-                    "apikey": self.twelvedata_api_key,
-                    "symbol": symbol,
-                },
+                symbol=symbol,
             )
             async with self._credits_lock:
-                await self._update_minute_credits_from_response(response)
+                await self._update_minute_credits_from_response(api_response.response)
                 await self._consume_daily_credit_estimate(1, source=f"rest:{symbol}")
-            payload = response.json()
+            payload = api_response.payload
         except Exception as exc:
             LOGGER.warning("REST fallback failed for %s: %s", symbol, exc)
             return False
@@ -241,9 +239,9 @@ class MarketDataRealtimeMixin:
 
         timeout = httpx.Timeout(10.0, connect=5.0)
         async with self._credits_lock, httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(API_USAGE_URL, params={"apikey": self.twelvedata_api_key})
-            await self._update_minute_credits_from_response(response)
-            payload = response.json()
+            api_response = await TwelveDataClient(client, self.twelvedata_api_key).get_json(API_USAGE_URL)
+            await self._update_minute_credits_from_response(api_response.response)
+            payload = api_response.payload
             if isinstance(payload, dict) and payload.get("status") == "error":
                 message = payload.get("message", "Failed to fetch API usage.")
                 raise HTTPException(status_code=400, detail=message)

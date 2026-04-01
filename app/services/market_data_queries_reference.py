@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
@@ -23,6 +22,8 @@ from ..config import (
     FMP_SPLITS_URL,
     SYMBOL_PATTERN,
 )
+from .market_data_provider_clients import FmpClient
+from .ttl_cache import ttl_cache_lookup, ttl_cache_pop, ttl_cache_store
 
 
 class MarketDataReferenceMixin:
@@ -38,18 +39,20 @@ class MarketDataReferenceMixin:
         if not self.fmp_api_key:
             raise HTTPException(status_code=400, detail="FMP_API_KEY is required for reference data.")
 
-        async with self._fmp_reference_lock:
-            cached = self._fmp_reference_cache.get(normalized)
-            if cached and not refresh:
-                is_fresh = self._is_cache_fresh(cached.get("cached_epoch"), FMP_REFERENCE_CACHE_TTL_SEC)
-                if not is_fresh and not cache_only:
-                    cached = None
-                if cached is not None:
-                    payload = dict(cached.get("payload") or {})
-                    payload["source"] = "cache-memory" if is_fresh else "cache-memory-stale"
-                    payload["cache_ttl_sec"] = FMP_REFERENCE_CACHE_TTL_SEC
-                    payload["cache_stale"] = not is_fresh
-                    return payload
+        if not refresh:
+            cached = await ttl_cache_lookup(
+                self._fmp_reference_cache,
+                self._fmp_reference_lock,
+                normalized,
+                ttl_sec=FMP_REFERENCE_CACHE_TTL_SEC,
+                copy_fn=dict,
+            )
+            if cached.found and (cached.fresh or cache_only) and isinstance(cached.payload, dict):
+                payload = dict(cached.payload)
+                payload["source"] = "cache-memory" if cached.fresh else "cache-memory-stale"
+                payload["cache_ttl_sec"] = FMP_REFERENCE_CACHE_TTL_SEC
+                payload["cache_stale"] = not cached.fresh
+                return payload
 
         if not refresh:
             disk_cached = await self.fmp_reference_store.get(normalized)
@@ -61,22 +64,24 @@ class MarketDataReferenceMixin:
                     payload["source"] = "cache-disk" if is_fresh else "cache-disk-stale"
                     payload["cache_ttl_sec"] = FMP_REFERENCE_CACHE_TTL_SEC
                     payload["cache_stale"] = not is_fresh
-                    async with self._fmp_reference_lock:
-                        self._fmp_reference_cache[normalized] = {
-                            "cached_epoch": time.time(),
-                            "payload": payload,
-                        }
+                    await ttl_cache_store(
+                        self._fmp_reference_cache,
+                        self._fmp_reference_lock,
+                        normalized,
+                        payload,
+                    )
                     return payload
 
         if cache_only:
             raise HTTPException(status_code=404, detail="No cached FMP reference data found for this symbol.")
 
         payload = await self._fetch_fmp_reference_live(normalized)
-        async with self._fmp_reference_lock:
-            self._fmp_reference_cache[normalized] = {
-                "cached_epoch": time.time(),
-                "payload": payload,
-            }
+        await ttl_cache_store(
+            self._fmp_reference_cache,
+            self._fmp_reference_lock,
+            normalized,
+            payload,
+        )
         await self.fmp_reference_store.upsert(normalized, payload)
         return payload
 
@@ -84,8 +89,11 @@ class MarketDataReferenceMixin:
         normalized = symbol.upper().strip()
         if not SYMBOL_PATTERN.match(normalized):
             raise HTTPException(status_code=400, detail="Invalid symbol format.")
-        async with self._fmp_reference_lock:
-            self._fmp_reference_cache.pop(normalized, None)
+        await ttl_cache_pop(
+            self._fmp_reference_cache,
+            self._fmp_reference_lock,
+            normalized,
+        )
         removed_disk = await self.fmp_reference_store.clear(normalized)
         return {
             "symbol": normalized,
@@ -231,10 +239,7 @@ class MarketDataReferenceMixin:
         url: str,
         params: dict[str, Any],
     ) -> Any:
-        request_params = dict(params or {})
-        request_params["apikey"] = self.fmp_api_key
-        response = await client.get(url, params=request_params)
-        payload = response.json()
+        payload = await FmpClient(client, self.fmp_api_key).get_json(url, params=params)
         if isinstance(payload, dict):
             message = str(payload.get("Error Message", "")).strip()
             if message:
