@@ -34,6 +34,30 @@ class MarketDataHub(MarketDataRealtimeMixin, MarketDataQueriesMixin, MarketDataS
         fmp_reference_store: FmpReferenceStore,
         ui_state_store: Any | None = None,
     ) -> None:
+        self._init_provider_state(
+            provider=provider,
+            twelvedata_api_key=twelvedata_api_key,
+            fmp_api_key=fmp_api_key,
+            symbols=symbols,
+            ui_state_store=ui_state_store,
+        )
+        self._init_store_state(
+            last_price_store=last_price_store,
+            full_daily_history_store=full_daily_history_store,
+            fmp_reference_store=fmp_reference_store,
+        )
+        self._init_runtime_state()
+        self._init_cache_state()
+
+    def _init_provider_state(
+        self,
+        *,
+        provider: str,
+        twelvedata_api_key: str,
+        fmp_api_key: str,
+        symbols: list[str],
+        ui_state_store: Any | None,
+    ) -> None:
         self.provider = str(provider or DATA_PROVIDER).strip().lower()
         self.twelvedata_api_key = str(twelvedata_api_key or "").strip()
         self.fmp_api_key = str(fmp_api_key or "").strip()
@@ -41,11 +65,21 @@ class MarketDataHub(MarketDataRealtimeMixin, MarketDataQueriesMixin, MarketDataS
         self.default_country_key = _normalize_country_key(SYMBOL_CATALOG_COUNTRY)
         self.symbol_country_map = parse_symbol_country_map(SYMBOL_COUNTRY_MAP_RAW)
         self.market_sessions = DEFAULT_MARKET_SESSIONS
-        self.prices: dict[str, dict[str, Any]] = {}
+        self.ui_state_store = ui_state_store
+
+    def _init_store_state(
+        self,
+        *,
+        last_price_store: LastPriceStore,
+        full_daily_history_store: FullDailyHistoryStore,
+        fmp_reference_store: FmpReferenceStore,
+    ) -> None:
         self.last_price_store = last_price_store
         self.full_daily_history_store = full_daily_history_store
         self.fmp_reference_store = fmp_reference_store
-        self.ui_state_store = ui_state_store
+
+    def _init_runtime_state(self) -> None:
+        self.prices: dict[str, dict[str, Any]] = {}
         self.ws_connected = False
         self.last_ws_message_at = 0.0
         self.mode = "starting"
@@ -64,6 +98,8 @@ class MarketDataHub(MarketDataRealtimeMixin, MarketDataQueriesMixin, MarketDataS
         self._restart_ws_event = asyncio.Event()
         self._state_lock = asyncio.Lock()
         self._credits_lock = asyncio.Lock()
+
+    def _init_cache_state(self) -> None:
         self._historical_cache: dict[tuple[str, str, str], dict[str, Any]] = {}
         self._historical_lock = asyncio.Lock()
         self._sparkline_cache: dict[str, dict[str, Any]] = {}

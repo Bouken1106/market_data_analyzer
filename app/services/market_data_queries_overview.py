@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
@@ -23,32 +22,19 @@ from ..config import (
     SYMBOL_PATTERN,
 )
 from ..utils import normalize_symbols
-
-
-@dataclass(frozen=True)
-class OverviewRequest:
-    symbol: str
-    include_intraday: bool
-    include_market: bool
-    include_qqq: bool
-
-    @property
-    def cache_key(self) -> tuple[str, bool, bool, bool]:
-        return (
-            self.symbol,
-            self.include_intraday,
-            self.include_market,
-            self.include_qqq,
-        )
-
-
-@dataclass(frozen=True)
-class OverviewInputs:
-    quote: dict[str, Any]
-    day_points: list[dict[str, Any]]
-    m1_points: list[dict[str, Any]]
-    m5_points: list[dict[str, Any]]
-    market_context: dict[str, Any] | None
+from .market_data_queries_overview_support import (
+    OverviewInputs,
+    OverviewRequest,
+    build_market_section,
+    build_overview_request,
+    build_price_context,
+    compute_change_metrics,
+    compute_spread_metrics,
+    compute_volume_metrics,
+    fill_day_fields_from_daily_series,
+    fill_day_fields_from_intraday,
+    support_status_payload,
+)
 
 
 class MarketDataOverviewMixin:
@@ -195,11 +181,7 @@ class MarketDataOverviewMixin:
                 "1day": inputs.day_points,
             },
             "support_status": {
-                "order_book": "not_supported_on_current_data_source",
-                "corporate_events": "not_supported_on_current_data_source",
-                "earnings_calendar": "not_supported_on_current_data_source",
-                "news_headlines": "not_supported_on_current_data_source",
-                "sector_etf": "not_supported_on_current_data_source",
+                **support_status_payload(),
             },
             "source": f"{self.provider}-live",
             "source_detail": source_detail,
@@ -228,22 +210,18 @@ class MarketDataOverviewMixin:
         include_market: bool,
         include_qqq: bool,
     ) -> dict[str, Any]:
-        spy_points = market_context.get("spy_points", []) if isinstance(market_context, dict) else []
-        qqq_points = market_context.get("qqq_points", []) if isinstance(market_context, dict) else []
-        beta_60, corr_60 = self._beta_and_corr_60d(day_points, spy_points) if include_market else (None, None)
-        spy_latest = spy_points[-1]["c"] if spy_points else None
-        spy_prev = spy_points[-2]["c"] if len(spy_points) >= 2 else None
-        qqq_latest = qqq_points[-1]["c"] if qqq_points else None
-        qqq_prev = qqq_points[-2]["c"] if len(qqq_points) >= 2 else None
+        market_section = build_market_section(
+            day_points=day_points,
+            market_context=market_context,
+            include_market=include_market,
+            include_qqq=include_qqq,
+            beta_and_corr_60d=self._beta_and_corr_60d,
+            build_market_item=self._build_market_item,
+        )
         return {
-            "spy_points": spy_points,
-            "qqq_points": qqq_points,
-            "payload": {
-                "sp500_proxy": self._build_market_item("SPY", spy_latest, spy_prev),
-                "nasdaq_proxy": self._build_market_item("QQQ", qqq_latest, qqq_prev) if include_qqq else None,
-                "beta_60d_vs_spy": beta_60,
-                "corr_60d_vs_spy": corr_60,
-            },
+            "spy_points": market_section.spy_points,
+            "qqq_points": market_section.qqq_points,
+            "payload": market_section.payload,
         }
 
     @staticmethod
@@ -275,14 +253,11 @@ class MarketDataOverviewMixin:
         include_market: bool,
         include_qqq: bool,
     ) -> OverviewRequest:
-        normalized = symbol.upper().strip()
-        if not SYMBOL_PATTERN.match(normalized):
-            raise HTTPException(status_code=400, detail="Invalid symbol format.")
-        return OverviewRequest(
-            symbol=normalized,
-            include_intraday=bool(include_intraday),
-            include_market=bool(include_market),
-            include_qqq=bool(include_qqq),
+        return build_overview_request(
+            symbol=symbol,
+            include_intraday=include_intraday,
+            include_market=include_market,
+            include_qqq=include_qqq,
         )
 
     def _build_price_context(
@@ -292,79 +267,14 @@ class MarketDataOverviewMixin:
         day_points: list[dict[str, Any]],
         m1_points: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        latest_day = day_points[-1]
-        previous_day = day_points[-2] if len(day_points) >= 2 else None
-        day_series_source = self._series_source_descriptor(day_points)
-        quote_source_detail = quote.get("_source_detail") if isinstance(quote, dict) else {}
-        if not isinstance(quote_source_detail, dict):
-            quote_source_detail = {}
-
-        current_price = self._pick_float(quote, "close", "price")
-        if current_price is None:
-            current_price = latest_day["c"]
-        previous_close = self._pick_float(quote, "previous_close", "prev_close")
-        if previous_close is None and previous_day:
-            previous_close = previous_day["c"]
-
-        field_values = {
-            "day_open": self._pick_float(quote, "open"),
-            "day_high": self._pick_float(quote, "high"),
-            "day_low": self._pick_float(quote, "low"),
-            "day_volume": self._pick_float(quote, "volume"),
-            "bid": self._pick_float(quote, "bid"),
-            "ask": self._pick_float(quote, "ask"),
-        }
-        field_sources = {
-            "day_open_source": quote_source_detail.get("open"),
-            "day_high_source": quote_source_detail.get("high"),
-            "day_low_source": quote_source_detail.get("low"),
-            "day_volume_source": quote_source_detail.get("volume"),
-            "current_price_source": quote_source_detail.get("close") or quote_source_detail.get("price"),
-            "previous_close_source": quote_source_detail.get("previous_close") or quote_source_detail.get("prev_close"),
-        }
-
-        self._fill_day_fields_from_intraday(field_values, field_sources, m1_points)
-        self._fill_day_fields_from_daily_series(field_values, field_sources, latest_day, day_series_source)
-
-        change_abs, change_pct = self._compute_change_metrics(
-            current=current_price,
-            previous=previous_close,
-        )
-        gap_abs, gap_pct = self._compute_change_metrics(
-            current=field_values["day_open"],
-            previous=previous_close,
-        )
-        avg_volume_20, avg_volume_ratio, turnover = self._compute_volume_metrics(
+        return build_price_context(
+            quote=quote,
             day_points=day_points,
-            day_volume=field_values["day_volume"],
-            current_price=current_price,
+            m1_points=m1_points,
+            pick_float=self._pick_float,
+            series_source_descriptor=self._series_source_descriptor,
+            extract_latest_session_points=self._extract_latest_session_points,
         )
-        spread_abs, spread_pct = self._compute_spread_metrics(
-            bid=field_values["bid"],
-            ask=field_values["ask"],
-            current_price=current_price,
-        )
-
-        return {
-            "current_price": current_price,
-            "previous_close": previous_close,
-            "day_open": field_values["day_open"],
-            "day_high": field_values["day_high"],
-            "day_low": field_values["day_low"],
-            "day_volume": field_values["day_volume"],
-            "bid": field_values["bid"],
-            "ask": field_values["ask"],
-            "change_abs": change_abs,
-            "change_pct": change_pct,
-            "gap_abs": gap_abs,
-            "gap_pct": gap_pct,
-            "avg_volume_20": avg_volume_20,
-            "avg_volume_ratio": avg_volume_ratio,
-            "turnover": turnover,
-            "spread_abs": spread_abs,
-            "spread_pct": spread_pct,
-            **field_sources,
-        }
 
     def _fill_day_fields_from_intraday(
         self,
@@ -372,29 +282,12 @@ class MarketDataOverviewMixin:
         field_sources: dict[str, str | None],
         m1_points: list[dict[str, Any]],
     ) -> None:
-        if not m1_points:
-            return
-        latest_session = self._extract_latest_session_points(m1_points)
-        if not latest_session:
-            return
-
-        if field_values["day_open"] is None:
-            field_values["day_open"] = latest_session[0]["o"]
-        if field_values["day_high"] is None:
-            field_values["day_high"] = max((item["h"] for item in latest_session), default=None)
-        if field_values["day_low"] is None:
-            field_values["day_low"] = min((item["l"] for item in latest_session), default=None)
-        if field_values["day_volume"] is None:
-            field_values["day_volume"] = sum((item["v"] or 0.0) for item in latest_session)
-
-        if not field_sources["day_open_source"]:
-            field_sources["day_open_source"] = "intraday_1min"
-        if not field_sources["day_high_source"]:
-            field_sources["day_high_source"] = "intraday_1min"
-        if not field_sources["day_low_source"]:
-            field_sources["day_low_source"] = "intraday_1min"
-        if not field_sources["day_volume_source"] and field_values["day_volume"] is not None:
-            field_sources["day_volume_source"] = "intraday_1min"
+        fill_day_fields_from_intraday(
+            field_values=field_values,
+            field_sources=field_sources,
+            m1_points=m1_points,
+            extract_latest_session_points=self._extract_latest_session_points,
+        )
 
     @staticmethod
     def _fill_day_fields_from_daily_series(
@@ -403,30 +296,16 @@ class MarketDataOverviewMixin:
         latest_day: dict[str, Any],
         day_series_source: str,
     ) -> None:
-        fallback_source = f"daily_series({day_series_source})"
-        if field_values["day_open"] is None:
-            field_values["day_open"] = latest_day["o"]
-            field_sources["day_open_source"] = fallback_source
-        if field_values["day_high"] is None:
-            field_values["day_high"] = latest_day["h"]
-            field_sources["day_high_source"] = fallback_source
-        if field_values["day_low"] is None:
-            field_values["day_low"] = latest_day["l"]
-            field_sources["day_low_source"] = fallback_source
-        if field_values["day_volume"] is None:
-            field_values["day_volume"] = latest_day["v"]
-            field_sources["day_volume_source"] = fallback_source
-        if not field_sources["current_price_source"]:
-            field_sources["current_price_source"] = fallback_source
-        if field_sources["previous_close_source"] is None:
-            field_sources["previous_close_source"] = fallback_source
+        fill_day_fields_from_daily_series(
+            field_values=field_values,
+            field_sources=field_sources,
+            latest_day=latest_day,
+            day_series_source=day_series_source,
+        )
 
     @staticmethod
     def _compute_change_metrics(current: float | None, previous: float | None) -> tuple[float | None, float | None]:
-        if current is None or previous is None or previous <= 0:
-            return None, None
-        change_abs = current - previous
-        return change_abs, (change_abs / previous) * 100
+        return compute_change_metrics(current=current, previous=previous)
 
     @staticmethod
     def _compute_volume_metrics(
@@ -435,15 +314,11 @@ class MarketDataOverviewMixin:
         day_volume: float | None,
         current_price: float | None,
     ) -> tuple[float | None, float | None, float | None]:
-        recent_daily_volumes = [p["v"] for p in day_points[-21:-1] if p.get("v") is not None and p["v"] > 0]
-        avg_volume_20 = sum(recent_daily_volumes) / len(recent_daily_volumes) if recent_daily_volumes else None
-        avg_volume_ratio = (
-            (day_volume / avg_volume_20)
-            if day_volume is not None and avg_volume_20 is not None and avg_volume_20 > 0
-            else None
+        return compute_volume_metrics(
+            day_points=day_points,
+            day_volume=day_volume,
+            current_price=current_price,
         )
-        turnover = current_price * day_volume if current_price is not None and day_volume is not None else None
-        return avg_volume_20, avg_volume_ratio, turnover
 
     @staticmethod
     def _compute_spread_metrics(
@@ -452,13 +327,11 @@ class MarketDataOverviewMixin:
         ask: float | None,
         current_price: float | None,
     ) -> tuple[float | None, float | None]:
-        spread_abs = ask - bid if ask is not None and bid is not None else None
-        spread_pct = (
-            (spread_abs / current_price) * 100
-            if spread_abs is not None and current_price is not None and current_price > 0
-            else None
+        return compute_spread_metrics(
+            bid=bid,
+            ask=ask,
+            current_price=current_price,
         )
-        return spread_abs, spread_pct
 
     def _build_overview_source_detail(
         self,
