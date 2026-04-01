@@ -82,7 +82,6 @@ LMSTUDIO_CHAT_COMPLETIONS_URL=http://127.0.0.1:1234/v1/chat/completions
 LMSTUDIO_MODEL=ministral-3-3b
 LMSTUDIO_API_KEY=
 LMSTUDIO_TIMEOUT_SEC=25
-STOCK_ML_PAGE_ROLE=admin
 ```
 
 プロバイダー切替:
@@ -114,17 +113,8 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 - `/`: US Stock Live Monitor（リアルタイム監視）
 - `/leadlag-lab`: Lead-Lag Lab（日米業種 ETF の部分空間正則化付き PCA 検証）
-- `/ml-lab`: 次営業日株価予測ページ（予測ダッシュボード、学習・検証、バックテスト、モデル管理、運用監視）
 - `/relationship-lab`: Relationship Lab（複数銘柄の相関・共分散・ローリング相関・高相関ペア乖離を可視化）
-- `/strategy-lab`: Strategy Lab（配分ルール + リバランス提案 + コスト込みバックテスト）
-- `/compare-lab`: Model Compare Lab（複数銘柄 × 複数モデルの一括比較）
 - `/` には Paper Portfolio（仮想資産）パネルを搭載し、実注文なしで売買シミュレーション可能
-
-`/ml-lab` の stock ML 画面は `STOCK_ML_PAGE_ROLE` で操作権限を切り替えます。
-
-- `viewer`: 閲覧 + CSV 出力のみ
-- `analyst`: 閲覧 + 学習ジョブ作成 + レポート出力 + バックテスト実行
-- `admin`: 上記に加えてデータ更新、推論実行、採用モデル切替
 
 ## 使い方
 
@@ -147,32 +137,16 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 6. テーブルに価格・更新時刻が表示され、取得ソース（`websocket` / `rest` / `stored`）は更新時刻の下に小さく表示
    - `change(%)` は営業中は「現在値 vs 前営業日終値」、休場中は「直近営業日終値 vs その1つ前の営業日終値」で表示
 7. `Refresh Credits` で日次の残APIクレジットを手動更新（`/api_usage` を呼ぶため 1 クレジット消費）
-8. `/ml-lab` では日本株 / 日足 / 翌日方向分類の stock ML ページとして以下を表示:
-   - prediction_daily 互換の予測ダッシュボード（`prob_up`, `score_cls`, `score_rank`, `expected_return`）
-   - LightGBM Classifier と Logistic Regression の walk-forward + gap 比較
-   - コスト込みのバックテスト結果（CAGR, Sharpe, Max Drawdown, Turnover, 勝率, 約定不能件数）
-   - 採用中モデルと候補モデルの比較、採用切替、監査情報
-   - 取得件数異常、欠損率、スコア分布ドリフト、監査ログを含む運用・監視タブ
-9. `/compare-lab` では、複数銘柄（例: AAPL, MSFT, GOOG, JPM, XOM, UNH, WMT, META, LLY, BRK.B, NVDA, HD）に同一ハイパーパラメータを適用してモデルを一括学習・比較
-   - 比較期間（test）は「最新データから直近2カ月」
-   - 学習/検証は残り期間を `4:1` で分割（train=80%, val=20%）
-   - モデル別サマリーと、銘柄×モデル詳細（Pinball/MAE/RMSE/MAPE/SMAPE/Coverage）を表示
-10. `/strategy-lab` では、指定銘柄群に対してポートフォリオ戦略を即時評価
-   - 配分方式: `equal_weight` / `inverse_volatility` / `min_variance`
-   - リバランス頻度: `weekly` / `monthly` / `quarterly` + 乖離しきい値
-   - 売買コスト: 手数料bps + スリッページbps を日次バックテストに反映
-   - サマリー: CAGR, Total Return, Volatility, Sharpe, Max Drawdown, ベンチマーク比較
-   - 現在の Paper Portfolio 状態を使ったリバランス提案（売買方向・数量・金額差分）
-11. `/relationship-lab` では、指定銘柄群の関係性を即時分析
+8. `/relationship-lab` では、指定銘柄群の関係性を即時分析
    - 日次リターンの相関行列 / 共分散行列
    - 上位ペアの 20 / 60 / 120 日相関
    - 直近窓のローリング相関スパークライン
    - ログスプレッドの z-score による乖離確認
    - 平均絶対相関から「最もつながりが強い銘柄」「最も分散に寄与しやすい銘柄」を表示
-12. `/` の右側パネル上部に Watchlist Comment を表示
+9. `/` の右側パネル上部に Watchlist Comment を表示
    - LM Studio (`LMSTUDIO_MODEL=ministral-3-3b`) に、監視中銘柄の前日比/30日リターン/30日ボラティリティを渡して短評を生成
    - 右上の `↻` ボタンで、指標再取得 + コメント再生成
-13. `/leadlag-lab` では、論文準拠の日米業種リードラグ戦略を検証
+10. `/leadlag-lab` では、論文準拠の日米業種リードラグ戦略を検証
    - 米国業種 ETF の当日 Close-to-Close を情報集合に利用
    - 日本業種 ETF の翌営業日 Open-to-Close を予測対象に利用
    - 履歴日足は API ではなく Stooq の公開CSVを優先し、`app/cache/daily_history/` へ保存して再利用
@@ -231,30 +205,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `GET /api/fmp-reference/{symbol}`: FMPの企業情報・財務・コーポレートアクションを取得（`refresh=true`で再取得）
 - `POST /api/fmp-reference/{symbol}/clear-cache`: FMP reference キャッシュを削除
 - `GET /api/watchlist-commentary?symbols=AAPL,AMZN,...`: 監視銘柄の前日比/30日リターン/30日ボラを計算し、LM Studioで短評を生成
-- `GET /api/ml/models`: ML Forecast Lab のモデル一覧（Ready / Coming Soon）
-- `GET /api/ml/models?scope=stock-page`: 次営業日株価予測ページのモデルレジストリ
-- `GET /api/ml/predictions/daily`: prediction_daily 互換レスポンス
-- `POST /api/ml/predictions/run`: 次営業日株価予測の推論ジョブを起動
-- `POST /api/ml/training/jobs`: 学習・検証ジョブを起動
-- `GET /api/ml/training/jobs/{job_id}`: 学習・検証ジョブ状態取得（`status`: `QUEUED` / `RUNNING` / `SUCCEEDED` / `FAILED` / `CANCELLED`、失敗時は `stage_name` / `error_code` / `retryable` を返却）
-- `GET /api/ml/backtests`: バックテスト結果取得
-- `POST /api/ml/backtests/run`: バックテスト再計算ジョブを起動
-- `POST /api/ml/models/{model_version}/adopt`: 採用モデル切替
-- `GET /api/ml/ops/status`: 運用・監視ステータス取得
-- `POST /api/ml/stock-page/actions/export-csv`: 画面絞り込み後の `prediction_daily` 互換 CSV を出力し、監査ログへ記録
-- `POST /api/ml/stock-page/actions/export-report`: 現在スナップショットの JSON レポートを出力し、監査ログへ記録
-- `GET /api/ml/quantile-lstm?...`: Quantile LSTM を学習・推論し、分位点/評価/描画データを返却（`months=3..60`, デフォルト `60`）
-- `GET /api/ml/patchtst?...`: PatchTST Quantile を学習・推論し、分位点/評価/描画データを返却（`months=3..60`, デフォルト `60`）
-- `POST /api/ml/quantile-lstm/jobs`: Quantile LSTM 非同期ジョブを開始
-- `POST /api/ml/patchtst/jobs`: PatchTST 非同期ジョブを開始
-- `POST /api/ml/compare/jobs`: 複数銘柄 × 複数モデル比較ジョブを開始（直近2カ月評価、残り4:1分割）
-- `GET /api/ml/jobs/{job_id}`: 非同期ジョブ状態を取得（従来の `status` に加えて、仕様寄りの `status_code` も返却）
-- `POST /api/ml/jobs/{job_id}/cancel`: 実行中ジョブの停止を要求
 - `GET /api/stream`: SSE でリアルタイム配信
-- `GET /ml-lab`: 次営業日株価予測ページ
-- `POST /api/strategy/evaluate`: ポートフォリオ戦略を評価（配分案・リバランス提案・コスト込みバックテスト結果）
-- `GET /strategy-lab`: 戦略検証ページ
-- `GET /compare-lab`: モデル一括比較ページ
 
 `MARKET_DATA_PROVIDER=both` の場合、主要レスポンスに `source_detail` が含まれます。
 - `/api/snapshot` の各 row: 現在価格の取得元（例: `twelvedata` / `fmp`）

@@ -47,16 +47,6 @@ class _FakeHub:
         return {"symbol": symbol, "points": points}
 
 
-class _FakeMlJobStore:
-    def get(self, job_id: str):
-        del job_id
-        return None
-
-    def request_cancel(self, job_id: str):
-        del job_id
-        return None
-
-
 class RelationshipApiTest(unittest.TestCase):
     def test_relationship_api_returns_summary_and_pairs(self) -> None:
         services = AppServices(
@@ -64,8 +54,6 @@ class RelationshipApiTest(unittest.TestCase):
             symbol_catalog_store=object(),
             paper_portfolio_store=object(),
             ui_state_store=object(),
-            stock_ml_page_store=object(),
-            ml_job_store=_FakeMlJobStore(),
         )
         app = create_app(services)
 

@@ -9,15 +9,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
 from .config import (
     API_LIMIT_PER_DAY,
     API_LIMIT_PER_MIN,
     DAILY_BUDGET_UTILIZATION,
-    ML_HISTORY_MAX_MONTHS,
-    ML_HISTORY_MIN_MONTHS,
     PER_MIN_LIMIT_UTILIZATION,
     REST_MIN_POLL_INTERVAL_SEC,
     SYMBOL_PATTERN,
@@ -182,17 +179,3 @@ def fallback_interval_seconds(symbol_count: int) -> int:
 
 def ok_json_response(**payload: Any) -> JSONResponse:
     return JSONResponse({"ok": True, **payload})
-
-
-# ---------------------------------------------------------------------------
-# ML validation
-# ---------------------------------------------------------------------------
-
-def normalize_ml_history_months(months: int) -> int:
-    value = int(months)
-    if value < ML_HISTORY_MIN_MONTHS or value > ML_HISTORY_MAX_MONTHS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"months は {ML_HISTORY_MIN_MONTHS}〜{ML_HISTORY_MAX_MONTHS} の範囲で指定してください。",
-        )
-    return value

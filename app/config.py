@@ -133,7 +133,6 @@ FULL_DAILY_HISTORY_CACHE_DIR = _APP_DIR / "cache" / "daily_history"
 FMP_REFERENCE_CACHE_DIR = _APP_DIR / "cache" / "fmp_reference"
 PAPER_PORTFOLIO_CACHE_PATH = _APP_DIR / "cache" / "paper_portfolio.json"
 UI_STATE_CACHE_PATH = _APP_DIR / "cache" / "ui_state.json"
-STOCK_ML_PAGE_STATE_CACHE_PATH = _APP_DIR / "cache" / "stock_ml_page_state.json"
 PAPER_INITIAL_CASH = _float_env("PAPER_INITIAL_CASH", default=1_000_000, minimum=1)
 AUTO_REFRESH_ON_STARTUP = _bool_env("AUTO_REFRESH_ON_STARTUP", default=False)
 
@@ -188,24 +187,8 @@ LMSTUDIO_MODEL = os.getenv("LMSTUDIO_MODEL", "ministral-3-3b").strip() or "minis
 LMSTUDIO_API_KEY = os.getenv("LMSTUDIO_API_KEY", "").strip()
 LMSTUDIO_TIMEOUT_SEC = _float_env("LMSTUDIO_TIMEOUT_SEC", default=25.0, minimum=3.0)
 
-# ---------------------------------------------------------------------------
-# ML defaults
-# ---------------------------------------------------------------------------
-
-ML_HISTORY_DEFAULT_MONTHS = 60
 ML_HISTORY_MIN_MONTHS = 3
 ML_HISTORY_MAX_MONTHS = 60
-ML_EVAL_MONTHS = 2
-ML_SPLIT_EVAL_DAYS = ML_EVAL_MONTHS * 31
-ML_SPLIT_TRAIN_VAL_RATIO = 0.8
-STOCK_ML_PAGE_SUPPORTED_ROLES = {"viewer", "analyst", "admin"}
-STOCK_ML_PAGE_ROLE = os.getenv("STOCK_ML_PAGE_ROLE", "admin").strip().lower() or "admin"
-if STOCK_ML_PAGE_ROLE not in STOCK_ML_PAGE_SUPPORTED_ROLES:
-    LOGGER.warning(
-        "Unsupported STOCK_ML_PAGE_ROLE=%s. Falling back to admin.",
-        STOCK_ML_PAGE_ROLE,
-    )
-    STOCK_ML_PAGE_ROLE = "admin"
 
 # ---------------------------------------------------------------------------
 # Default symbols

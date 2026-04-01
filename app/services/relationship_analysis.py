@@ -7,7 +7,66 @@ from typing import Any
 
 import numpy as np
 
-from ..strategy_engine import build_price_matrix, compute_returns
+
+def _extract_close(point: dict[str, Any]) -> float | None:
+    for key in ("c", "close", "price"):
+        value = point.get(key)
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(parsed) and parsed > 0:
+            return parsed
+    return None
+
+
+def _extract_time(point: dict[str, Any]) -> str:
+    for key in ("t", "date", "datetime", "timestamp"):
+        value = point.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _build_price_matrix(points_by_symbol: dict[str, list[dict[str, Any]]]) -> tuple[list[str], np.ndarray, list[str]]:
+    normalized: dict[str, dict[str, float]] = {}
+    common_dates: set[str] | None = None
+    ordered_symbols: list[str] = []
+
+    for symbol, points in points_by_symbol.items():
+        series: dict[str, float] = {}
+        for point in points:
+            if not isinstance(point, dict):
+                continue
+            date = _extract_time(point)
+            close = _extract_close(point)
+            if not date or close is None:
+                continue
+            series[date] = close
+        if not series:
+            continue
+        normalized[symbol] = series
+        ordered_symbols.append(symbol)
+        series_dates = set(series.keys())
+        common_dates = series_dates if common_dates is None else (common_dates & series_dates)
+
+    if not ordered_symbols or not common_dates:
+        return [], np.empty((0, 0), dtype=np.float64), []
+
+    price_dates = sorted(common_dates)
+    prices = np.asarray(
+        [[normalized[symbol][date] for symbol in ordered_symbols] for date in price_dates],
+        dtype=np.float64,
+    )
+    return price_dates, prices, ordered_symbols
+
+
+def _compute_returns(prices: np.ndarray) -> np.ndarray:
+    if prices.ndim != 2 or prices.shape[0] < 2:
+        return np.empty((0, 0), dtype=np.float64)
+    previous = prices[:-1, :]
+    current = prices[1:, :]
+    return (current / previous) - 1.0
 
 
 def _matrix_to_rows(symbols: list[str], matrix: np.ndarray) -> list[dict[str, Any]]:
@@ -103,11 +162,11 @@ def build_relationship_analysis(
     top_pairs: int = 10,
     rolling_pair_limit: int = 3,
 ) -> dict[str, Any]:
-    price_dates, prices, symbols = build_price_matrix(points_by_symbol)
+    price_dates, prices, symbols = _build_price_matrix(points_by_symbol)
     if not price_dates or prices.shape[0] < 4 or len(symbols) < 2:
         raise ValueError("Not enough aligned historical data to analyze relationships.")
 
-    returns = compute_returns(prices)
+    returns = _compute_returns(prices)
     return_dates = price_dates[1:]
     if returns.shape[0] < 3:
         raise ValueError("Not enough return observations to analyze relationships.")

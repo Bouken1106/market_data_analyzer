@@ -14,20 +14,17 @@ from .config import (
     MAX_BASIC_SYMBOLS,
     PAPER_INITIAL_CASH,
     PAPER_PORTFOLIO_CACHE_PATH,
-    STOCK_ML_PAGE_STATE_CACHE_PATH,
     SYMBOL_CATALOG_CACHE_PATH,
     SYMBOL_CATALOG_TTL_SEC,
     TWELVE_DATA_API_KEY,
     UI_STATE_CACHE_PATH,
 )
 from .hub import MarketDataHub
-from .ml.job_store import MlJobStore
 from .stores import (
     FmpReferenceStore,
     FullDailyHistoryStore,
     LastPriceStore,
     PaperPortfolioStore,
-    StockMlPageStore,
     SymbolCatalogStore,
     UiStateStore,
 )
@@ -40,8 +37,6 @@ class AppServices:
     symbol_catalog_store: SymbolCatalogStore
     paper_portfolio_store: PaperPortfolioStore
     ui_state_store: UiStateStore
-    stock_ml_page_store: StockMlPageStore
-    ml_job_store: MlJobStore
 
 
 def resolve_default_symbols() -> list[str]:
@@ -94,8 +89,6 @@ def build_services() -> AppServices:
         ttl_sec=SYMBOL_CATALOG_TTL_SEC,
     )
     ui_state_store = UiStateStore(cache_path=UI_STATE_CACHE_PATH)
-    stock_ml_page_store = StockMlPageStore(cache_path=STOCK_ML_PAGE_STATE_CACHE_PATH)
-    ml_job_store = MlJobStore(max_jobs=120)
     initial_symbols = resolve_initial_symbols(ui_state_store)
 
     hub = MarketDataHub(
@@ -113,6 +106,4 @@ def build_services() -> AppServices:
         symbol_catalog_store=symbol_catalog_store,
         paper_portfolio_store=paper_portfolio_store,
         ui_state_store=ui_state_store,
-        stock_ml_page_store=stock_ml_page_store,
-        ml_job_store=ml_job_store,
     )

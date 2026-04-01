@@ -47,8 +47,6 @@ def create_app(services: AppServices | None = None) -> FastAPI:
         symbol_catalog_store=resolved_services.symbol_catalog_store,
         paper_portfolio_store=resolved_services.paper_portfolio_store,
         ui_state_store=resolved_services.ui_state_store,
-        stock_ml_page_store=resolved_services.stock_ml_page_store,
-        ml_job_store=resolved_services.ml_job_store,
     )
     register_no_cache_middleware(app)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
