@@ -12,6 +12,8 @@ from .market_session import (
     parse_symbol_country_map,
 )
 from .services.market_data_queries import MarketDataQueriesMixin
+from .services.market_data_historical_service import MarketDataHistoricalQueryService
+from .services.market_data_overview_service import MarketDataOverviewQueryService
 from .services.market_data_realtime import MarketDataRealtimeMixin
 from .services.market_data_state import MarketDataStateMixin
 from .stores import FmpReferenceStore, FullDailyHistoryStore, LastPriceStore
@@ -43,6 +45,7 @@ class MarketDataHub(MarketDataRealtimeMixin, MarketDataQueriesMixin, MarketDataS
         )
         self._init_runtime_state()
         self._init_cache_state()
+        self._init_query_services()
 
     def _init_provider_state(
         self,
@@ -86,6 +89,10 @@ class MarketDataHub(MarketDataRealtimeMixin, MarketDataQueriesMixin, MarketDataS
     def _init_cache_state(self) -> None:
         self._cache_state = CacheState()
         assign_state_fields(self, self._cache_state)
+
+    def _init_query_services(self) -> None:
+        self.historical_query_service = MarketDataHistoricalQueryService(self)
+        self.overview_query_service = MarketDataOverviewQueryService(self)
 
     def _uses_twelvedata(self) -> bool:
         return self.provider in {"twelvedata", "both"}

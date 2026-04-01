@@ -1,94 +1,12 @@
-"""Watchlist commentary generation for the market API."""
+"""Watchlist commentary entrypoints for the market API."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import HTTPException
+from .watchlist_commentary_service import WatchlistCommentaryService
 
-from ..config import (
-    LMSTUDIO_API_KEY,
-    LMSTUDIO_CHAT_COMPLETIONS_URL,
-    LMSTUDIO_MODEL,
-    LMSTUDIO_TIMEOUT_SEC,
-)
-from ..utils import utc_now_iso
-from .lmstudio_client import LmStudioClient
-from .watchlist_commentary_support import (
-    WATCHLIST_RESPONSE_FORMAT,
-    build_base_messages,
-    build_repair_messages,
-    build_watchlist_prompt,
-    commentary_from_json,
-    compute_watch_metrics,
-    fallback_commentary,
-    metrics_payload,
-)
-
-
-async def _request_lmstudio_commentary(prompt: str, valid_symbols: list[str]) -> tuple[str, str]:
-    client = LmStudioClient(
-        api_url=LMSTUDIO_CHAT_COMPLETIONS_URL,
-        api_key=LMSTUDIO_API_KEY,
-        model=LMSTUDIO_MODEL,
-        timeout_sec=LMSTUDIO_TIMEOUT_SEC,
-    )
-    base_messages = build_base_messages(prompt)
-    initial_result = await client.chat(
-        messages=base_messages,
-        max_tokens=320,
-        response_format=WATCHLIST_RESPONSE_FORMAT,
-    )
-    raw_commentary = initial_result.content
-    used_model = initial_result.model
-    if initial_result.status_code >= 400:
-        fallback_result = initial_result
-        if initial_result.status_code in {400, 404, 422}:
-            fallback_result = await client.chat(
-                messages=base_messages,
-                max_tokens=320,
-                response_format=None,
-            )
-            raw_commentary = fallback_result.content
-            used_model = fallback_result.model
-        if fallback_result.status_code >= 400:
-            raise HTTPException(
-                status_code=502,
-                detail=f"LM Studio error: {fallback_result.error_detail or f'HTTP {fallback_result.status_code}'}",
-            )
-
-    if not raw_commentary:
-        raise HTTPException(status_code=502, detail="LM Studio returned an empty commentary.")
-
-    commentary = commentary_from_json(raw_commentary, valid_symbols)
-    if commentary:
-        return commentary, used_model
-
-    repair_messages = build_repair_messages(raw_commentary, valid_symbols)
-    repair_result = await client.chat(
-        messages=repair_messages,
-        max_tokens=220,
-        response_format=WATCHLIST_RESPONSE_FORMAT,
-    )
-    if repair_result.status_code >= 400 and repair_result.status_code in {400, 404, 422}:
-        repair_result = await client.chat(
-            messages=repair_messages,
-            max_tokens=220,
-            response_format=None,
-        )
-    if repair_result.status_code < 400:
-        repaired = commentary_from_json(repair_result.content, valid_symbols)
-        if repaired:
-            return repaired, repair_result.model
-
-    if repair_result.status_code >= 400 and not raw_commentary:
-        raise HTTPException(
-            status_code=502,
-            detail=f"LM Studio error: {repair_result.error_detail or f'HTTP {repair_result.status_code}'}",
-        )
-
-    return fallback_commentary(raw_commentary, valid_symbols), used_model
+_watchlist_commentary_service = WatchlistCommentaryService()
 
 
 async def build_watchlist_commentary_payload(
@@ -97,28 +15,7 @@ async def build_watchlist_commentary_payload(
     *,
     refresh: bool = False,
 ) -> dict[str, Any]:
-    sparkline_items = await hub.sparkline_payload(symbols, refresh=refresh)
-    items_by_symbol: dict[str, dict[str, Any]] = {}
-    for item in sparkline_items:
-        symbol = str(item.get("symbol") or "").strip().upper()
-        if not symbol:
-            continue
-        items_by_symbol[symbol] = item
-
-    metrics = [compute_watch_metrics(symbol, items_by_symbol.get(symbol)) for symbol in symbols]
-    current_date = datetime.now(timezone.utc).astimezone().date().isoformat()
-    prompt = build_watchlist_prompt(current_date=current_date, metrics=metrics)
-    commentary, used_model = await _request_lmstudio_commentary(prompt, symbols)
-
-    return {
-        "symbols": symbols,
-        "current_date": current_date,
-        "model": used_model,
-        "generated_at": utc_now_iso(),
-        "comment": commentary,
-        "prompt": prompt,
-        "metrics": metrics_payload(metrics),
-    }
+    return await _watchlist_commentary_service.build_payload(hub, symbols, refresh=refresh)
 
 
 __all__ = ["build_watchlist_commentary_payload"]

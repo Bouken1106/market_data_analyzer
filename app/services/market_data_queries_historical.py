@@ -6,10 +6,8 @@ from datetime import date
 from typing import Any
 
 import httpx
-from fastapi import HTTPException
 
 from ..config import (
-    HISTORICAL_CACHE_TTL_SEC,
     HISTORICAL_DEFAULT_YEARS,
     HISTORICAL_INTERVAL,
     HISTORICAL_MAX_POINTS,
@@ -18,6 +16,7 @@ from ..config import (
     JQUANTS_RATE_LIMIT_BACKOFF_SEC as DEFAULT_JQUANTS_RATE_LIMIT_BACKOFF_SEC,
 )
 from .market_data_historical_ops import MarketDataHistoricalOps
+from .market_data_historical_service import MarketDataHistoricalQueryService
 from .market_data_queries_historical_runtime import (
     bound_jquants_request_dates,
     build_standard_historical_detail,
@@ -30,16 +29,23 @@ from .market_data_queries_historical_runtime import (
 )
 from .market_data_queries_historical_support import (
     HistoricalRequest,
-    build_historical_payload,
     build_historical_request,
     build_no_historical_data_detail,
     is_daily_interval,
     slice_daily_points,
 )
-from .ttl_cache import ttl_cache_lookup_response, ttl_cache_store
 
 
 class MarketDataHistoricalMixin:
+    def _historical_query_service(self) -> MarketDataHistoricalQueryService:
+        service = getattr(self, "historical_query_service", None)
+        if service is None:
+            service = getattr(self, "_historical_query_service_instance", None)
+        if service is None:
+            service = MarketDataHistoricalQueryService(self)
+            setattr(self, "_historical_query_service_instance", service)
+        return service
+
     def _historical_ops(self) -> MarketDataHistoricalOps:
         ops = getattr(self, "_historical_ops_service", None)
         if ops is None:
@@ -71,55 +77,14 @@ class MarketDataHistoricalMixin:
         source_preference: str | None = None,
         allow_api_fallback: bool = True,
     ) -> dict[str, Any]:
-        request = self._build_historical_request(
+        return await self._historical_query_service().historical_payload(
             symbol=symbol,
             years=years,
             months=months,
+            refresh=refresh,
             source_preference=source_preference,
+            allow_api_fallback=allow_api_fallback,
         )
-        if not refresh:
-            cached_payload = await ttl_cache_lookup_response(
-                self._historical_cache,
-                self._historical_lock,
-                request.cache_key,
-                ttl_sec=HISTORICAL_CACHE_TTL_SEC,
-                copy_fn=dict,
-            )
-            if cached_payload is not None:
-                return cached_payload
-
-        timeout = httpx.Timeout(40.0, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            points, source_detail = await self._resolve_historical_points(
-                client=client,
-                request=request,
-                refresh=refresh,
-                allow_api_fallback=allow_api_fallback,
-            )
-
-        if not points:
-            raise HTTPException(
-                status_code=404,
-                detail=self._build_no_historical_data_detail(
-                    symbol=request.symbol,
-                    source_mode=request.source_mode,
-                    source_detail=source_detail,
-                    allow_api_fallback=allow_api_fallback,
-                ),
-            )
-
-        historical_payload = self._build_historical_payload(
-            request=request,
-            points=points,
-            source_detail=source_detail,
-        )
-        await ttl_cache_store(
-            self._historical_cache,
-            self._historical_lock,
-            request.cache_key,
-            historical_payload,
-        )
-        return historical_payload
 
     @staticmethod
     def _is_daily_interval(interval: str) -> bool:

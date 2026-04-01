@@ -1,9 +1,6 @@
-"""Market data and stream routes."""
+"""Market data routes."""
 
 from __future__ import annotations
-
-import asyncio
-import json
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -22,6 +19,7 @@ from ..services.watchlist_commentary import build_watchlist_commentary_payload
 from ..utils import normalize_symbols, ok_json_response
 from ..validation import require_symbols
 from .deps import HubDep, SymbolCatalogStoreDep, UiStateStoreDep
+from .market_stream import build_market_stream_response
 
 router = APIRouter()
 
@@ -166,30 +164,4 @@ async def watchlist_commentary_latest(ui_state_store: UiStateStoreDep) -> JSONRe
 
 @router.get("/api/stream")
 async def stream(request: Request, hub: HubDep) -> StreamingResponse:
-    queue = hub.register_listener()
-
-    async def event_generator():
-        initial_payload = await hub.snapshot_payload()
-        yield f"data: {json.dumps(initial_payload)}\n\n"
-
-        try:
-            while True:
-                if await request.is_disconnected():
-                    break
-                try:
-                    event = await asyncio.wait_for(queue.get(), timeout=15)
-                    yield f"data: {json.dumps(event)}\n\n"
-                except asyncio.TimeoutError:
-                    yield ": keep-alive\n\n"
-        finally:
-            hub.unregister_listener(queue)
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    return build_market_stream_response(request, hub)

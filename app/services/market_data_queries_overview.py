@@ -5,11 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
-from fastapi import HTTPException
 
-from ..config import OVERVIEW_CACHE_TTL_SEC, SPARKLINE_CACHE_TTL_SEC, SYMBOL_PATTERN
-from ..utils import normalize_symbols
 from .market_data_overview_ops import MarketDataOverviewOps
+from .market_data_overview_service import MarketDataOverviewQueryService
 from .market_data_queries_overview_support import (
     OverviewInputs,
     OverviewRequest,
@@ -23,10 +21,18 @@ from .market_data_queries_overview_support import (
     fill_day_fields_from_intraday,
     support_status_payload,
 )
-from .ttl_cache import ttl_cache_lookup_response, ttl_cache_pop_matching, ttl_cache_store
 
 
 class MarketDataOverviewMixin:
+    def _overview_query_service(self) -> MarketDataOverviewQueryService:
+        service = getattr(self, "overview_query_service", None)
+        if service is None:
+            service = getattr(self, "_overview_query_service_instance", None)
+        if service is None:
+            service = MarketDataOverviewQueryService(self)
+            setattr(self, "_overview_query_service_instance", service)
+        return service
+
     def _overview_ops(self) -> MarketDataOverviewOps:
         ops = getattr(self, "_overview_ops_service", None)
         if ops is None:
@@ -42,39 +48,13 @@ class MarketDataOverviewMixin:
         include_market: bool = True,
         include_qqq: bool = True,
     ) -> dict[str, Any]:
-        request = self._build_overview_request(
+        return await self._overview_query_service().security_overview_payload(
             symbol=symbol,
+            refresh=refresh,
             include_intraday=include_intraday,
             include_market=include_market,
             include_qqq=include_qqq,
         )
-
-        if not refresh:
-            cached_payload = await ttl_cache_lookup_response(
-                self._overview_cache,
-                self._overview_lock,
-                request.cache_key,
-                ttl_sec=OVERVIEW_CACHE_TTL_SEC,
-                copy_fn=dict,
-            )
-            if cached_payload is not None:
-                return cached_payload
-
-        timeout = httpx.Timeout(30.0, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            inputs = await self._fetch_overview_inputs(client=client, request=request, refresh=refresh)
-
-        if not inputs.day_points:
-            raise HTTPException(status_code=404, detail="No overview data found for this symbol.")
-
-        overview_payload = self._build_overview_payload(request=request, inputs=inputs)
-        await ttl_cache_store(
-            self._overview_cache,
-            self._overview_lock,
-            request.cache_key,
-            overview_payload,
-        )
-        return overview_payload
 
     async def _fetch_overview_inputs(
         self,
@@ -346,27 +326,7 @@ class MarketDataOverviewMixin:
         }
 
     async def clear_symbol_overview_cache(self, symbol: str) -> dict[str, Any]:
-        normalized = symbol.upper().strip()
-        if not SYMBOL_PATTERN.match(normalized):
-            raise HTTPException(status_code=400, detail="Invalid symbol format.")
-
-        removed_overview = await ttl_cache_pop_matching(
-            self._overview_cache,
-            self._overview_lock,
-            lambda key: key[0] == normalized,
-        )
-        removed_historical = await ttl_cache_pop_matching(
-            self._historical_cache,
-            self._historical_lock,
-            lambda key: key[0] == normalized,
-        )
-        removed_daily_files = await self.full_daily_history_store.clear(normalized)
-        return {
-            "symbol": normalized,
-            "removed_overview_entries": removed_overview,
-            "removed_historical_entries": removed_historical,
-            "removed_daily_history_files": removed_daily_files,
-        }
+        return await self._overview_query_service().clear_symbol_overview_cache(symbol)
 
     async def _fetch_market_context(
         self,
@@ -393,44 +353,7 @@ class MarketDataOverviewMixin:
         return await self._overview_ops().fetch_quote_fmp(client, symbol)
 
     async def sparkline_payload(self, symbols: list[str], refresh: bool = False) -> list[dict[str, Any]]:
-        target_symbols = normalize_symbols(symbols)
-        if not target_symbols:
-            return []
-
-        items_by_symbol: dict[str, dict[str, Any]] = {}
-        missing_symbols: list[str] = []
-        if not refresh:
-            for symbol in target_symbols:
-                cached_payload = await ttl_cache_lookup_response(
-                    self._sparkline_cache,
-                    self._sparkline_lock,
-                    symbol,
-                    ttl_sec=SPARKLINE_CACHE_TTL_SEC,
-                    copy_fn=dict,
-                )
-                if cached_payload is None:
-                    missing_symbols.append(symbol)
-                    continue
-                items_by_symbol[symbol] = cached_payload
-        else:
-            missing_symbols = list(target_symbols)
-
-        if missing_symbols:
-            timeout = httpx.Timeout(20.0, connect=10.0)
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                for symbol in missing_symbols:
-                    item = await self._fetch_sparkline_item(client, symbol)
-                    if not item:
-                        continue
-                    items_by_symbol[symbol] = item
-                    await ttl_cache_store(
-                        self._sparkline_cache,
-                        self._sparkline_lock,
-                        symbol,
-                        item,
-                    )
-
-        return [items_by_symbol[symbol] for symbol in target_symbols if symbol in items_by_symbol]
+        return await self._overview_query_service().sparkline_payload(symbols, refresh=refresh)
 
     async def _fetch_sparkline_item(self, client: httpx.AsyncClient, symbol: str) -> dict[str, Any] | None:
         return await self._overview_ops().fetch_sparkline_item(client, symbol)
