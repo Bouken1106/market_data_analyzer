@@ -42,6 +42,15 @@ class OverviewRequest:
         )
 
 
+@dataclass(frozen=True)
+class OverviewInputs:
+    quote: dict[str, Any]
+    day_points: list[dict[str, Any]]
+    m1_points: list[dict[str, Any]]
+    m5_points: list[dict[str, Any]]
+    market_context: dict[str, Any] | None
+
+
 class MarketDataOverviewMixin:
     async def security_overview_payload(
         self,
@@ -67,64 +76,92 @@ class MarketDataOverviewMixin:
 
         timeout = httpx.Timeout(30.0, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
-            quote_task = self._fetch_quote(client, request.symbol)
-            day_task = self._fetch_full_daily_series(client, request.symbol, refresh=refresh)
-            quote, day_points = await asyncio.gather(quote_task, day_task)
+            inputs = await self._fetch_overview_inputs(client=client, request=request, refresh=refresh)
 
-            m1_points: list[dict[str, Any]] = []
-            m5_points: list[dict[str, Any]] = []
-            if request.include_intraday:
-                m1_points, m5_points = await asyncio.gather(
-                    self._fetch_series(client, request.symbol, "1min", outputsize=390),
-                    self._fetch_series(client, request.symbol, "5min", outputsize=390),
-                )
-
-            market_context: dict[str, Any] | None = None
-            if request.include_market:
-                market_context = await self._fetch_market_context(
-                    client,
-                    refresh=refresh,
-                    include_qqq=request.include_qqq,
-                )
-
-        if not day_points:
+        if not inputs.day_points:
             raise HTTPException(status_code=404, detail="No overview data found for this symbol.")
 
-        latest_day = day_points[-1]
-        price_context = self._build_price_context(
-            quote=quote,
-            day_points=day_points,
-            m1_points=m1_points,
-        )
+        overview_payload = self._build_overview_payload(request=request, inputs=inputs)
 
-        ma_short = self._moving_average(day_points, window=20)
-        ma_mid = self._moving_average(day_points, window=50)
-        atr_14 = self._atr(day_points, window=14)
-        intraday_vwap_1m = self._intraday_vwap(m1_points)
-        intraday_vwap_5m = self._intraday_vwap(m5_points)
+        async with self._overview_lock:
+            self._overview_cache[request.cache_key] = {
+                "cached_epoch": time.time(),
+                "payload": overview_payload,
+            }
 
-        spy_points = market_context.get("spy_points", []) if isinstance(market_context, dict) else []
-        qqq_points = market_context.get("qqq_points", []) if isinstance(market_context, dict) else []
-        beta_60, corr_60 = self._beta_and_corr_60d(day_points, spy_points) if request.include_market else (None, None)
+        return overview_payload
 
-        spy_latest = spy_points[-1]["c"] if spy_points else None
-        spy_prev = spy_points[-2]["c"] if len(spy_points) >= 2 else None
-        qqq_latest = qqq_points[-1]["c"] if qqq_points else None
-        qqq_prev = qqq_points[-2]["c"] if len(qqq_points) >= 2 else None
+    async def _fetch_overview_inputs(
+        self,
+        *,
+        client: httpx.AsyncClient,
+        request: OverviewRequest,
+        refresh: bool,
+    ) -> OverviewInputs:
+        quote_task = self._fetch_quote(client, request.symbol)
+        day_task = self._fetch_full_daily_series(client, request.symbol, refresh=refresh)
+        quote, day_points = await asyncio.gather(quote_task, day_task)
 
-        source_detail = self._build_overview_source_detail(
+        m1_points: list[dict[str, Any]] = []
+        m5_points: list[dict[str, Any]] = []
+        if request.include_intraday:
+            m1_points, m5_points = await asyncio.gather(
+                self._fetch_series(client, request.symbol, "1min", outputsize=390),
+                self._fetch_series(client, request.symbol, "5min", outputsize=390),
+            )
+
+        market_context: dict[str, Any] | None = None
+        if request.include_market:
+            market_context = await self._fetch_market_context(
+                client,
+                refresh=refresh,
+                include_qqq=request.include_qqq,
+            )
+
+        return OverviewInputs(
             quote=quote,
             day_points=day_points,
             m1_points=m1_points,
             m5_points=m5_points,
-            spy_points=spy_points,
-            qqq_points=qqq_points,
+            market_context=market_context,
+        )
+
+    def _build_overview_payload(
+        self,
+        *,
+        request: OverviewRequest,
+        inputs: OverviewInputs,
+    ) -> dict[str, Any]:
+        price_context = self._build_price_context(
+            quote=inputs.quote,
+            day_points=inputs.day_points,
+            m1_points=inputs.m1_points,
+        )
+        technical = self._build_overview_technicals(
+            day_points=inputs.day_points,
+            m1_points=inputs.m1_points,
+            m5_points=inputs.m5_points,
+        )
+        market = self._build_overview_market_section(
+            day_points=inputs.day_points,
+            market_context=inputs.market_context,
+            include_market=request.include_market,
+            include_qqq=request.include_qqq,
+        )
+        source_detail = self._build_overview_source_detail(
+            quote=inputs.quote,
+            day_points=inputs.day_points,
+            m1_points=inputs.m1_points,
+            m5_points=inputs.m5_points,
+            spy_points=market["spy_points"],
+            qqq_points=market["qqq_points"],
             price_context=price_context,
         )
-        overview_payload = {
+
+        return {
             "symbol": request.symbol,
-            "name": self._pick_string(quote, "name", "instrument_name"),
-            "exchange": self._pick_string(quote, "exchange"),
+            "name": self._pick_string(inputs.quote, "name", "instrument_name"),
+            "exchange": self._pick_string(inputs.quote, "exchange"),
             "price": {
                 "current": price_context["current_price"],
                 "previous_close": price_context["previous_close"],
@@ -135,7 +172,7 @@ class MarketDataOverviewMixin:
                 "day_low": price_context["day_low"],
                 "gap_abs": price_context["gap_abs"],
                 "gap_pct": price_context["gap_pct"],
-                "updated_at": self._best_updated_at(quote, m1_points, day_points),
+                "updated_at": self._best_updated_at(inputs.quote, inputs.m1_points, inputs.day_points),
                 "delay_note": self._delay_note(),
             },
             "volume": {
@@ -150,23 +187,12 @@ class MarketDataOverviewMixin:
                 "spread_abs": price_context["spread_abs"],
                 "spread_pct": price_context["spread_pct"],
             },
-            "technical": {
-                "vwap_1m": intraday_vwap_1m,
-                "vwap_5m": intraday_vwap_5m,
-                "ma_short_20": ma_short,
-                "ma_mid_50": ma_mid,
-                "atr_14": atr_14,
-            },
-            "market": {
-                "sp500_proxy": self._build_market_item("SPY", spy_latest, spy_prev),
-                "nasdaq_proxy": self._build_market_item("QQQ", qqq_latest, qqq_prev) if request.include_qqq else None,
-                "beta_60d_vs_spy": beta_60,
-                "corr_60d_vs_spy": corr_60,
-            },
+            "technical": technical,
+            "market": market["payload"],
             "charts": {
-                "1min": m1_points,
-                "5min": m5_points,
-                "1day": day_points,
+                "1min": inputs.m1_points,
+                "5min": inputs.m5_points,
+                "1day": inputs.day_points,
             },
             "support_status": {
                 "order_book": "not_supported_on_current_data_source",
@@ -179,13 +205,46 @@ class MarketDataOverviewMixin:
             "source_detail": source_detail,
         }
 
-        async with self._overview_lock:
-            self._overview_cache[request.cache_key] = {
-                "cached_epoch": time.time(),
-                "payload": overview_payload,
-            }
+    def _build_overview_technicals(
+        self,
+        *,
+        day_points: list[dict[str, Any]],
+        m1_points: list[dict[str, Any]],
+        m5_points: list[dict[str, Any]],
+    ) -> dict[str, float | None]:
+        return {
+            "vwap_1m": self._intraday_vwap(m1_points),
+            "vwap_5m": self._intraday_vwap(m5_points),
+            "ma_short_20": self._moving_average(day_points, window=20),
+            "ma_mid_50": self._moving_average(day_points, window=50),
+            "atr_14": self._atr(day_points, window=14),
+        }
 
-        return overview_payload
+    def _build_overview_market_section(
+        self,
+        *,
+        day_points: list[dict[str, Any]],
+        market_context: dict[str, Any] | None,
+        include_market: bool,
+        include_qqq: bool,
+    ) -> dict[str, Any]:
+        spy_points = market_context.get("spy_points", []) if isinstance(market_context, dict) else []
+        qqq_points = market_context.get("qqq_points", []) if isinstance(market_context, dict) else []
+        beta_60, corr_60 = self._beta_and_corr_60d(day_points, spy_points) if include_market else (None, None)
+        spy_latest = spy_points[-1]["c"] if spy_points else None
+        spy_prev = spy_points[-2]["c"] if len(spy_points) >= 2 else None
+        qqq_latest = qqq_points[-1]["c"] if qqq_points else None
+        qqq_prev = qqq_points[-2]["c"] if len(qqq_points) >= 2 else None
+        return {
+            "spy_points": spy_points,
+            "qqq_points": qqq_points,
+            "payload": {
+                "sp500_proxy": self._build_market_item("SPY", spy_latest, spy_prev),
+                "nasdaq_proxy": self._build_market_item("QQQ", qqq_latest, qqq_prev) if include_qqq else None,
+                "beta_60d_vs_spy": beta_60,
+                "corr_60d_vs_spy": corr_60,
+            },
+        }
 
     @staticmethod
     def _quote_source_detail(provider: str) -> dict[str, str]:

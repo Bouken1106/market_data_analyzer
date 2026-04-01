@@ -11,6 +11,40 @@ from ..utils import finite_float_or_none
 _PRICE_UNAVAILABLE_DETAIL = "Current market price is unavailable. Set price manually."
 
 
+def _as_position_symbols(positions_raw: dict[str, Any]) -> list[str]:
+    return sorted(str(symbol).upper().strip() for symbol in positions_raw.keys())
+
+
+def _build_price_map(rows: list[Any]) -> dict[str, float | None]:
+    price_map: dict[str, float | None] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol") or "").upper().strip()
+        if not symbol:
+            continue
+        price_map[symbol] = to_valid_price(row.get("price"))
+    return price_map
+
+
+def _position_pnl_fields(quantity: float, avg_cost: float, last_price: float | None) -> dict[str, float | None]:
+    if last_price is None:
+        return {"market_value": None, "unrealized_pnl": None, "unrealized_pnl_pct": None}
+
+    cost_basis = abs(quantity) * avg_cost
+    market_value = quantity * last_price
+    if quantity > 0:
+        unrealized_pnl = (last_price - avg_cost) * quantity
+    else:
+        unrealized_pnl = (avg_cost - last_price) * abs(quantity)
+    unrealized_pnl_pct = (unrealized_pnl / cost_basis) * 100 if cost_basis > 0 else None
+    return {
+        "market_value": market_value,
+        "unrealized_pnl": unrealized_pnl,
+        "unrealized_pnl_pct": unrealized_pnl_pct,
+    }
+
+
 def to_valid_price(value: Any) -> float | None:
     return finite_float_or_none(value, minimum=0.0, strict_minimum=True)
 
@@ -43,16 +77,9 @@ async def paper_portfolio_payload(hub: Any, paper_portfolio_store: Any) -> dict[
     if not isinstance(positions_raw, dict):
         positions_raw = {}
 
-    symbols = sorted(str(symbol).upper().strip() for symbol in positions_raw.keys())
+    symbols = _as_position_symbols(positions_raw)
     rows = await hub.current_rows(symbols) if symbols else []
-    price_map: dict[str, float | None] = {}
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        symbol = str(row.get("symbol") or "").upper().strip()
-        if not symbol:
-            continue
-        price_map[symbol] = to_valid_price(row.get("price"))
+    price_map = _build_price_map(rows)
 
     positions: list[dict[str, Any]] = []
     total_market_value = 0.0
@@ -69,19 +96,11 @@ async def paper_portfolio_payload(hub: Any, paper_portfolio_store: Any) -> dict[
         cost_basis = abs(quantity) * avg_cost
         total_cost_basis += cost_basis
         last_price = price_map.get(symbol)
-        market_value = None
-        unrealized_pnl = None
-        unrealized_pnl_pct = None
-        if last_price is not None:
+        pnl_fields = _position_pnl_fields(quantity, avg_cost, last_price)
+        market_value = pnl_fields["market_value"]
+        if market_value is not None:
             has_market_value = True
-            market_value = quantity * last_price
-            total_market_value += market_value if isinstance(market_value, (int, float)) else 0.0
-            if quantity > 0:
-                unrealized_pnl = (last_price - avg_cost) * quantity
-            else:
-                unrealized_pnl = (avg_cost - last_price) * abs(quantity)
-            if cost_basis > 0:
-                unrealized_pnl_pct = (unrealized_pnl / cost_basis) * 100
+            total_market_value += market_value
 
         positions.append(
             {
@@ -91,8 +110,8 @@ async def paper_portfolio_payload(hub: Any, paper_portfolio_store: Any) -> dict[
                 "cost_basis": cost_basis,
                 "last_price": last_price,
                 "market_value": market_value,
-                "unrealized_pnl": unrealized_pnl,
-                "unrealized_pnl_pct": unrealized_pnl_pct,
+                "unrealized_pnl": pnl_fields["unrealized_pnl"],
+                "unrealized_pnl_pct": pnl_fields["unrealized_pnl_pct"],
                 "weight": None,
             }
         )
