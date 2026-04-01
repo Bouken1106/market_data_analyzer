@@ -12,9 +12,6 @@ const mostConnectedEl = document.getElementById("rel-most-connected");
 const mostDiversifyingEl = document.getElementById("rel-most-diversifying");
 const dataSummaryEl = document.getElementById("rel-data-summary");
 const skippedEl = document.getElementById("rel-skipped");
-const rollingListEl = document.getElementById("rel-rolling-list");
-const correlationWrapEl = document.getElementById("rel-correlation-wrap");
-const covarianceWrapEl = document.getElementById("rel-covariance-wrap");
 const pairsBodyEl = document.getElementById("rel-pairs-body");
 
 function closeParamHelpPopovers(exceptDetail = null) {
@@ -48,51 +45,6 @@ async function fetchJson(url, options) {
   return { response, result };
 }
 
-function createHeatColor(value, isCovariance = false) {
-  const num = Number(value);
-  if (!Number.isFinite(num)) return "transparent";
-  const clamped = isCovariance
-    ? Math.max(-1, Math.min(1, num * 1000))
-    : Math.max(-1, Math.min(1, num));
-  if (Math.abs(clamped) < 1e-9) return "rgba(120, 138, 158, 0.10)";
-  if (clamped > 0) {
-    return `rgba(20, 184, 166, ${0.16 + Math.abs(clamped) * 0.42})`;
-  }
-  return `rgba(239, 68, 68, ${0.16 + Math.abs(clamped) * 0.42})`;
-}
-
-function renderMatrix(targetEl, rows, isCovariance = false) {
-  const safeRows = Array.isArray(rows) ? rows : [];
-  if (!safeRows.length) {
-    targetEl.innerHTML = "<p>No matrix data.</p>";
-    return;
-  }
-
-  const symbols = safeRows.map((item) => item.symbol || "-");
-  const headerCells = symbols.map((symbol) => `<th>${symbol}</th>`).join("");
-  const bodyRows = safeRows.map((row) => {
-    const cells = Array.isArray(row.values) ? row.values : [];
-    const valueCells = cells.map((value) => {
-      const text = isCovariance ? fmtNum(value, 6) : fmtNum(value, 3);
-      const bg = createHeatColor(value, isCovariance);
-      return `<td style="background:${bg}">${text}</td>`;
-    }).join("");
-    return `<tr><th>${row.symbol || "-"}</th>${valueCells}</tr>`;
-  }).join("");
-
-  targetEl.innerHTML = `
-    <table class="rel-matrix-table">
-      <thead>
-        <tr>
-          <th>Symbol</th>
-          ${headerCells}
-        </tr>
-      </thead>
-      <tbody>${bodyRows}</tbody>
-    </table>
-  `;
-}
-
 function renderPairs(pairs) {
   const safePairs = Array.isArray(pairs) ? pairs : [];
   pairsBodyEl.innerHTML = "";
@@ -123,55 +75,6 @@ function renderPairs(pairs) {
     `;
     pairsBodyEl.appendChild(tr);
   });
-}
-
-function sparklineSvg(series) {
-  const values = (Array.isArray(series) ? series : [])
-    .map((item) => Number(item?.value))
-    .filter((value) => Number.isFinite(value));
-  if (values.length < 2) {
-    return '<div class="hint">Not enough rolling points.</div>';
-  }
-
-  const width = 260;
-  const height = 70;
-  const min = Math.min(...values, -1);
-  const max = Math.max(...values, 1);
-  const range = Math.max(max - min, 1e-6);
-  const points = values.map((value, index) => {
-    const x = (index / (values.length - 1)) * width;
-    const y = height - ((value - min) / range) * height;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(" ");
-  const latest = values[values.length - 1];
-  const stroke = latest >= 0 ? "#14b8a6" : "#ef4444";
-  return `
-    <svg viewBox="0 0 ${width} ${height}" class="rel-sparkline" preserveAspectRatio="none" aria-hidden="true">
-      <polyline fill="none" stroke="${stroke}" stroke-width="3" points="${points}"></polyline>
-    </svg>
-  `;
-}
-
-function renderRolling(items) {
-  const safeItems = Array.isArray(items) ? items : [];
-  if (!safeItems.length) {
-    rollingListEl.innerHTML = '<p class="hint">No rolling correlation series.</p>';
-    return;
-  }
-
-  rollingListEl.innerHTML = safeItems.map((item) => {
-    const series = Array.isArray(item.series) ? item.series : [];
-    const latest = series.length ? series[series.length - 1] : null;
-    return `
-      <article class="rel-rolling-card">
-        <div class="rel-rolling-head">
-          <strong>${item.left || "-"} / ${item.right || "-"}</strong>
-          <span>${fmtNum(latest?.value, 3)}</span>
-        </div>
-        ${sparklineSvg(series)}
-      </article>
-    `;
-  }).join("");
 }
 
 function renderSummary(result) {
@@ -217,9 +120,6 @@ async function runAnalysis() {
   }
 
   renderSummary(result);
-  renderRolling(result.rolling_correlations);
-  renderMatrix(correlationWrapEl, result.correlation_matrix, false);
-  renderMatrix(covarianceWrapEl, result.covariance_matrix, true);
   renderPairs(result.pair_candidates);
   setStatus(`Relationship analysis completed for ${Array.isArray(result.analyzed_symbols) ? result.analyzed_symbols.length : 0} symbols.`);
 }

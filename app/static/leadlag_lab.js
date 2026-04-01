@@ -29,14 +29,9 @@ const summaryGridEl = document.getElementById("llg-summary-grid");
 const activeUsEl = document.getElementById("llg-active-us");
 const activeJpEl = document.getElementById("llg-active-jp");
 const excludedBodyEl = document.getElementById("llg-excluded-body");
-const regularizationMetaEl = document.getElementById("llg-regularization-meta");
-const d0BodyEl = document.getElementById("llg-d0-body");
 
 const latestMetaEl = document.getElementById("llg-latest-meta");
-const factorStripEl = document.getElementById("llg-factor-strip");
 const latestBodyEl = document.getElementById("llg-latest-body");
-const transferWrapEl = document.getElementById("llg-transfer-wrap");
-const transferTextEl = document.getElementById("llg-transfer-matrix-text");
 
 const strategyGridEl = document.getElementById("llg-strategy-grid");
 const strategyRangeFromEl = document.getElementById("llg-strategy-range-from");
@@ -48,7 +43,6 @@ const strategyChartMetaEl = document.getElementById("llg-strategy-chart-meta");
 const strategyChartEl = document.getElementById("llg-strategy-chart");
 const strategyDailyChartMetaEl = document.getElementById("llg-strategy-daily-chart-meta");
 const strategyDailyChartEl = document.getElementById("llg-strategy-daily-chart");
-const recentBodyEl = document.getElementById("llg-recent-body");
 
 let running = false;
 const selectorState = {
@@ -84,12 +78,6 @@ const strategyMetricHelp = {
   "Max Drawdown": "運用期間中の最大の落ち込み幅です。ピークからどれだけ深く下げたかを示します。",
   "Signal Days": "実際に売買シグナルを出せた日数です。",
   "Average Breadth": "1 回の signal date あたりに long/short へ配分された平均銘柄数です。広いほど分散が効きます。",
-};
-
-const priorDirectionHelp = {
-  global_equal_weight: "全銘柄が同じ向きに動く、市場全体の共通因子を表す prior 方向です。",
-  country_spread: "US 群と JP 群の強弱差を表す prior 方向です。国ごとの相対優位を捉えます。",
-  cyclical_defensive: "景気敏感群と defensive 群の差を表す prior 方向です。",
 };
 
 const SYMBOL_DISPLAY_NAMES = {
@@ -570,47 +558,16 @@ function renderExcluded(rows) {
   });
 }
 
-function renderRegularization(regularization, latestSignal) {
-  regularizationMetaEl.textContent = `Cfull ${latestSignal ? latestSignal.signal_date : "-"} run / observations=${regularization?.c0?.length || 0} assets`;
-  d0BodyEl.innerHTML = "";
-  const names = Array.isArray(regularization?.prior_subspace?.direction_names)
-    ? regularization.prior_subspace.direction_names
-    : [];
-  const d0 = Array.isArray(regularization?.d0) ? regularization.d0 : [];
-  if (!names.length || !d0.length) {
-    d0BodyEl.innerHTML = '<tr><td colspan="2">No regularization diagnostics</td></tr>';
-    return;
-  }
-  names.forEach((name, index) => {
-    const tr = document.createElement("tr");
-    const nameTd = document.createElement("td");
-    nameTd.appendChild(buildLabeledHelpRow(name, priorDirectionHelp[name] || null, "llg-th-help"));
-    const valueTd = document.createElement("td");
-    valueTd.textContent = fmtNum(d0[index], 6);
-    tr.append(nameTd, valueTd);
-    d0BodyEl.appendChild(tr);
-  });
-}
-
 function renderLatestSignal(latestSignal) {
   latestBodyEl.innerHTML = "";
-  factorStripEl.innerHTML = "";
 
   if (!latestSignal) {
     latestMetaEl.textContent = "No signal.";
     latestBodyEl.innerHTML = '<tr><td colspan="3">No signal</td></tr>';
-    transferWrapEl.classList.add("hidden");
     return;
   }
 
   latestMetaEl.textContent = `signal=${latestSignal.signal_date} / target=${latestSignal.target_date}`;
-  const factors = Array.isArray(latestSignal.factors) ? latestSignal.factors : [];
-  factors.forEach((value, index) => {
-    const pill = document.createElement("span");
-    pill.className = "pill chip-green";
-    pill.textContent = `f${index + 1}: ${fmtNum(value, 4)}`;
-    factorStripEl.appendChild(pill);
-  });
 
   const rows = Array.isArray(latestSignal.predicted_rows) ? latestSignal.predicted_rows : [];
   rows.forEach((row) => {
@@ -624,14 +581,6 @@ function renderLatestSignal(latestSignal) {
   });
   if (!rows.length) {
     latestBodyEl.innerHTML = '<tr><td colspan="3">No predicted rows</td></tr>';
-  }
-
-  if (latestSignal.transfer_matrix) {
-    transferWrapEl.classList.remove("hidden");
-    transferTextEl.textContent = JSON.stringify(latestSignal.transfer_matrix, null, 2);
-  } else {
-    transferWrapEl.classList.add("hidden");
-    transferTextEl.textContent = "";
   }
 }
 
@@ -1385,8 +1334,6 @@ function renderStrategy(strategy, fromDate = "", toDate = "") {
     }
   }
   renderMetricCards(strategyGridEl, cards);
-  renderStrategyChart(filteredRows);
-  renderStrategyDailyChart(filteredRows);
 }
 
 function applyStrategyRange() {
@@ -1407,25 +1354,6 @@ function applyStrategyRange() {
   if (strategyRangeFromEl) strategyRangeFromEl.value = from;
   if (strategyRangeToEl) strategyRangeToEl.value = to;
   renderStrategy(strategy, from, to);
-}
-
-function renderRecent(rows) {
-  recentBodyEl.innerHTML = "";
-  const values = Array.isArray(rows) ? rows : [];
-  if (!values.length) {
-    recentBodyEl.innerHTML = '<tr><td colspan="4">No recent signals</td></tr>';
-    return;
-  }
-  values.slice().reverse().forEach((row) => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${row.signal_date || "-"}</td>
-      <td>${row.target_date || "-"}</td>
-      <td>${Array.isArray(row.top_symbols) ? row.top_symbols.join(", ") : "-"}</td>
-      <td>${Array.isArray(row.bottom_symbols) ? row.bottom_symbols.join(", ") : "-"}</td>
-    `;
-    recentBodyEl.appendChild(tr);
-  });
 }
 
 function renderResult(result) {
@@ -1456,11 +1384,9 @@ function renderResult(result) {
   renderChipList(activeUsEl, summary.included_us_symbols);
   renderChipList(activeJpEl, summary.included_jp_symbols);
   renderExcluded(summary.excluded_symbols);
-  renderRegularization(result?.regularization, result?.latest_signal);
   renderLatestSignal(result?.latest_signal);
   configureStrategyPeriodInputs(result?.strategy);
   applyStrategyRange();
-  renderRecent(result?.recent_signals);
 }
 
 async function bootstrap() {

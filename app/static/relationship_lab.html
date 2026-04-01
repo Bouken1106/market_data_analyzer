@@ -28,34 +28,10 @@
       <div class="header-top">
         <div>
           <h1>Relationship Lab</h1>
-          <p>複数銘柄の相関、共分散、ローリング関係、高相関ペアの乖離を一度に確認します。</p>
+          <p>複数銘柄の関係性を要約し、実用的なペア候補だけを確認します。</p>
         </div>
       </div>
-      <div class="live-monitor-chips">
-        <span class="pill chip-cyan">Return Correlation</span>
-        <span class="pill chip-green">Rolling Window</span>
-        <span class="pill chip-amber">Pair Divergence</span>
-      </div>
     </header>
-
-    <nav class="flow-strip" aria-label="Primary actions">
-      <a class="flow-card flow-start" href="#rel-settings-panel">
-        <span class="flow-icon" aria-hidden="true">🧾</span>
-        <span class="flow-label">対象設定</span>
-      </a>
-      <a class="flow-card" href="#rel-summary-panel">
-        <span class="flow-icon" aria-hidden="true">🧠</span>
-        <span class="flow-label">要約</span>
-      </a>
-      <a class="flow-card" href="#rel-heatmap-panel">
-        <span class="flow-icon" aria-hidden="true">🌡️</span>
-        <span class="flow-label">Heatmap</span>
-      </a>
-      <a class="flow-card" href="#rel-pairs-panel">
-        <span class="flow-icon" aria-hidden="true">🔗</span>
-        <span class="flow-label">Pairs</span>
-      </a>
-    </nav>
 
     <section id="rel-settings-panel" class="card rel-panel">
       <h2>Relationship Settings</h2>
@@ -135,23 +111,6 @@
         <p id="rel-skipped" class="hint">-</p>
       </article>
 
-      <article class="card rel-summary-card">
-        <h2>Rolling Correlations</h2>
-        <div id="rel-rolling-list" class="rel-rolling-list">
-          <p class="hint">Analyze 後に上位ペアの推移を表示します。</p>
-        </div>
-      </article>
-    </section>
-
-    <section id="rel-heatmap-panel" class="rel-heatmap-grid">
-      <article class="card rel-panel">
-        <h2>Correlation Heatmap</h2>
-        <div id="rel-correlation-wrap" class="table-wrap rel-heatmap-wrap"></div>
-      </article>
-      <article class="card rel-panel">
-        <h2>Covariance Matrix</h2>
-        <div id="rel-covariance-wrap" class="table-wrap rel-heatmap-wrap"></div>
-      </article>
     </section>
 
     <section id="rel-pairs-panel" class="card rel-panel">

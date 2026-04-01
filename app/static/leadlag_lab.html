@@ -31,11 +31,6 @@
           <h1>Lead-Lag Lab</h1>
           <p>日米業種 ETF を結合し、部分空間正則化付き PCA で翌営業日の日本側 Open-to-Close シグナルを作る検証ページです。</p>
         </div>
-        <div class="live-monitor-chips">
-          <span class="pill chip-cyan">US close-to-close</span>
-          <span class="pill chip-green">JP next open-to-close</span>
-          <span class="pill chip-amber">Subspace PCA</span>
-        </div>
       </div>
     </header>
 
@@ -313,45 +308,6 @@
         </div>
       </section>
 
-      <section class="card llg-panel">
-        <h2>
-          <span class="llg-heading-row">
-            <span>Regularization</span>
-            <details class="param-help llg-param-help">
-              <summary>?</summary>
-              <p>足元の相関だけでなく、事前に想定した市場構造を混ぜて相関行列を安定化する処理です。Cfull, C0, D0, prior subspace はその中身を示します。</p>
-            </details>
-          </span>
-        </h2>
-        <p id="llg-regularization-meta" class="hint">-</p>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>
-                  <span class="llg-th-help">
-                    <span>Direction</span>
-                    <details class="param-help llg-param-help">
-                      <summary>?</summary>
-                      <p>prior subspace を構成する仮説方向です。市場全体、US vs JP、景気敏感 vs defensive のような軸を表します。</p>
-                    </details>
-                  </span>
-                </th>
-                <th>
-                  <span class="llg-th-help">
-                    <span>D0</span>
-                    <details class="param-help llg-param-help">
-                      <summary>?</summary>
-                      <p>各 prior 方向に対して与える固有値の強さです。大きいほど、その方向を相関構造として強く持たせます。</p>
-                    </details>
-                  </span>
-                </th>
-              </tr>
-            </thead>
-            <tbody id="llg-d0-body"></tbody>
-          </table>
-        </div>
-      </section>
     </section>
 
     <section class="card llg-panel">
@@ -365,7 +321,6 @@
         </span>
       </h2>
       <p id="llg-latest-meta" class="hint">-</p>
-      <div id="llg-factor-strip" class="llg-factor-strip"></div>
       <div class="table-wrap">
         <table>
           <thead>
@@ -402,14 +357,9 @@
           <tbody id="llg-latest-body"></tbody>
         </table>
       </div>
-      <details id="llg-transfer-wrap" class="llg-transfer-wrap hidden">
-        <summary>Latest B_t Matrix</summary>
-        <pre id="llg-transfer-matrix-text"></pre>
-      </details>
     </section>
 
-    <section class="llg-two-column">
-      <section class="card llg-panel">
+    <section class="card llg-panel">
         <h2>
           <span class="llg-heading-row">
             <span>Strategy Summary</span>
@@ -449,90 +399,6 @@
           <p id="llg-strategy-period-meta" class="hint">解析後に signal date の期間を指定できます。</p>
         </div>
         <div id="llg-strategy-grid" class="llg-summary-grid"></div>
-        <div class="llg-subsection">
-          <h3>
-            <span class="llg-heading-row">
-              <span>Annual Return Trace</span>
-              <details class="param-help llg-param-help">
-                <summary>?</summary>
-                <p>選択した期間の signal day を先頭から順に積み上げ、その時点までの平均日次 long-short リターンを年率換算した推移です。最終点は上の Strategy Summary の Annual Return と整合します。</p>
-              </details>
-            </span>
-          </h3>
-          <p id="llg-strategy-chart-meta" class="hint">選択期間ベースの cumulative annualized return を表示します。</p>
-          <div id="llg-strategy-chart" class="chart-wrap llg-strategy-chart"></div>
-        </div>
-        <div class="llg-subsection">
-          <h3>
-            <span class="llg-heading-row">
-              <span>Daily Return Trace</span>
-              <details class="param-help llg-param-help">
-                <summary>?</summary>
-                <p>選択した期間に含まれる各 target date の long-short 日次リターンをそのまま表示します。日ごとの当たり外れを直接確認したいときに使います。</p>
-              </details>
-            </span>
-          </h3>
-          <p id="llg-strategy-daily-chart-meta" class="hint">各 target date の daily gross return を表示します。</p>
-          <div id="llg-strategy-daily-chart" class="chart-wrap llg-strategy-chart"></div>
-        </div>
-      </section>
-
-      <section class="card llg-panel">
-        <h2>
-          <span class="llg-heading-row">
-            <span>Recent Signals</span>
-            <details class="param-help llg-param-help">
-              <summary>?</summary>
-              <p>直近の signal date ごとの上位・下位シグナル銘柄の履歴です。シグナルの入れ替わり方や一貫性をざっと確認できます。</p>
-            </details>
-          </span>
-        </h2>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>
-                  <span class="llg-th-help">
-                    <span>Signal Date</span>
-                    <details class="param-help llg-param-help">
-                      <summary>?</summary>
-                      <p>US 側の情報がそろって予測を作った日です。ここで見えている US データを使って、次の JP 営業日を予測します。</p>
-                    </details>
-                  </span>
-                </th>
-                <th>
-                  <span class="llg-th-help">
-                    <span>Target Date</span>
-                    <details class="param-help llg-param-help">
-                      <summary>?</summary>
-                      <p>予測の当たり外れを評価する日本側の対象日です。通常は Signal Date の次の日本営業日になります。</p>
-                    </details>
-                  </span>
-                </th>
-                <th>
-                  <span class="llg-th-help">
-                    <span>Top</span>
-                    <details class="param-help llg-param-help">
-                      <summary>?</summary>
-                      <p>Predicted z が高かった銘柄群です。long 候補として使われます。</p>
-                    </details>
-                  </span>
-                </th>
-                <th>
-                  <span class="llg-th-help">
-                    <span>Bottom</span>
-                    <details class="param-help llg-param-help">
-                      <summary>?</summary>
-                      <p>Predicted z が低かった銘柄群です。short 候補として使われます。</p>
-                    </details>
-                  </span>
-                </th>
-              </tr>
-            </thead>
-            <tbody id="llg-recent-body"></tbody>
-          </table>
-        </div>
-      </section>
     </section>
   </main>
 
