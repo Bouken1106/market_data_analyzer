@@ -23,12 +23,16 @@ from .market_data_queries_overview_support import (
     fill_day_fields_from_intraday,
     support_status_payload,
 )
-from .ttl_cache import ttl_cache_lookup, ttl_cache_pop_matching, ttl_cache_store
+from .ttl_cache import ttl_cache_lookup_response, ttl_cache_pop_matching, ttl_cache_store
 
 
 class MarketDataOverviewMixin:
     def _overview_ops(self) -> MarketDataOverviewOps:
-        return MarketDataOverviewOps(self)
+        ops = getattr(self, "_overview_ops_service", None)
+        if ops is None:
+            ops = MarketDataOverviewOps(self)
+            setattr(self, "_overview_ops_service", ops)
+        return ops
 
     async def security_overview_payload(
         self,
@@ -46,17 +50,15 @@ class MarketDataOverviewMixin:
         )
 
         if not refresh:
-            cached = await ttl_cache_lookup(
+            cached_payload = await ttl_cache_lookup_response(
                 self._overview_cache,
                 self._overview_lock,
                 request.cache_key,
                 ttl_sec=OVERVIEW_CACHE_TTL_SEC,
                 copy_fn=dict,
             )
-            if cached.found and cached.fresh and isinstance(cached.payload, dict):
-                payload = dict(cached.payload)
-                payload["source"] = "cache"
-                return payload
+            if cached_payload is not None:
+                return cached_payload
 
         timeout = httpx.Timeout(30.0, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -399,17 +401,17 @@ class MarketDataOverviewMixin:
         missing_symbols: list[str] = []
         if not refresh:
             for symbol in target_symbols:
-                cached = await ttl_cache_lookup(
+                cached_payload = await ttl_cache_lookup_response(
                     self._sparkline_cache,
                     self._sparkline_lock,
                     symbol,
                     ttl_sec=SPARKLINE_CACHE_TTL_SEC,
                     copy_fn=dict,
                 )
-                if cached.found and cached.fresh and isinstance(cached.payload, dict):
-                    items_by_symbol[symbol] = dict(cached.payload)
-                else:
+                if cached_payload is None:
                     missing_symbols.append(symbol)
+                    continue
+                items_by_symbol[symbol] = cached_payload
         else:
             missing_symbols = list(target_symbols)
 

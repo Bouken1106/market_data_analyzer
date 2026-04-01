@@ -20,6 +20,7 @@ from ..config import (
     SYMBOL_CATALOG_MAX_ITEMS,
 )
 from ..services.market_data_provider_clients import FmpClient, TwelveDataClient
+from ..services.ttl_cache import ttl_cache_is_fresh
 from ..utils import is_valid_symbol, normalize_symbol, read_json_file, write_json_file
 
 
@@ -46,38 +47,23 @@ class SymbolCatalogStore:
     async def get_catalog(self, refresh: bool = False, cache_only: bool = False) -> dict[str, Any]:
         async with self._lock:
             if cache_only:
-                if self._symbols:
-                    self._loaded_from = "memory-cache"
+                if self._try_use_cache_only_payload():
                     return self._payload()
-                cached = self._load_from_cache(require_fresh=False)
-                if cached:
-                    self._apply_state(cached["symbols"], cached["updated_at"], source="cache-only")
-                    return self._payload()
-                self._symbols = []
-                self._updated_at = None
-                self._loaded_from = "cache-miss"
-                self._loaded_epoch = time.time()
+                self._mark_cache_miss()
                 return self._payload()
 
             if not refresh and self._symbols and self._is_memory_fresh():
                 return self._payload()
 
-            if not refresh:
-                cached = self._load_from_cache(require_fresh=True)
-                if cached:
-                    self._apply_state(cached["symbols"], cached["updated_at"], source="cache")
-                    return self._payload()
+            if not refresh and self._try_apply_cached_payload(require_fresh=True, source="cache"):
+                return self._payload()
 
             try:
-                symbols = await self._fetch_from_api()
-                updated_at = datetime.now(timezone.utc).isoformat()
-                self._apply_state(symbols, updated_at, source=f"{self.provider}-live")
-                self._write_cache()
+                await self._refresh_live_catalog()
             except Exception as exc:
                 LOGGER.warning("Failed to fetch symbol catalog from %s: %s", self.provider, exc)
-                cached = self._load_from_cache(require_fresh=False)
-                if cached:
-                    self._apply_state(cached["symbols"], cached["updated_at"], source="cache-stale")
+                if self._try_apply_cached_payload(require_fresh=False, source="cache-stale"):
+                    pass
                 elif self._symbols:
                     self._loaded_from = "memory-stale"
                 else:
@@ -88,7 +74,7 @@ class SymbolCatalogStore:
             return self._payload()
 
     def _is_memory_fresh(self) -> bool:
-        return (time.time() - self._loaded_epoch) <= self.ttl_sec
+        return ttl_cache_is_fresh(self._loaded_epoch, self.ttl_sec)
 
     def _apply_state(self, symbols: list[dict[str, str]], updated_at: str, source: str) -> None:
         self._symbols = symbols
@@ -103,6 +89,31 @@ class SymbolCatalogStore:
             "count": len(self._symbols),
             "symbols": self._symbols,
         }
+
+    def _mark_cache_miss(self) -> None:
+        self._symbols = []
+        self._updated_at = None
+        self._loaded_from = "cache-miss"
+        self._loaded_epoch = time.time()
+
+    def _try_use_cache_only_payload(self) -> bool:
+        if self._symbols:
+            self._loaded_from = "memory-cache"
+            return True
+        return self._try_apply_cached_payload(require_fresh=False, source="cache-only")
+
+    def _try_apply_cached_payload(self, *, require_fresh: bool, source: str) -> bool:
+        cached = self._load_from_cache(require_fresh=require_fresh)
+        if not cached:
+            return False
+        self._apply_state(cached["symbols"], cached["updated_at"], source=source)
+        return True
+
+    async def _refresh_live_catalog(self) -> None:
+        symbols = await self._fetch_from_api()
+        updated_at = datetime.now(timezone.utc).isoformat()
+        self._apply_state(symbols, updated_at, source=f"{self.provider}-live")
+        self._write_cache()
 
     @staticmethod
     def _catalog_row(
@@ -280,9 +291,7 @@ class SymbolCatalogStore:
             return None
 
         if require_fresh:
-            if not isinstance(cached_epoch, (int, float)):
-                return None
-            if (time.time() - float(cached_epoch)) > self.ttl_sec:
+            if not ttl_cache_is_fresh(cached_epoch, self.ttl_sec):
                 return None
 
         normalized: list[dict[str, str]] = []

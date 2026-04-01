@@ -3,9 +3,22 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+
+
+@dataclass(frozen=True)
+class RelationshipDataset:
+    symbols: list[str]
+    price_dates: list[str]
+    return_dates: list[str]
+    prices: np.ndarray
+    returns: np.ndarray
+    correlation: np.ndarray
+    covariance: np.ndarray
+    symbol_indices: dict[str, int]
 
 
 def _extract_close(point: dict[str, Any]) -> float | None:
@@ -107,13 +120,8 @@ def _rolling_corr_series(
 
     series: list[dict[str, Any]] = []
     for end in range(size, len(dates) + 1):
-        corr = np.corrcoef(x[end - size:end], y[end - size:end])[0, 1]
-        series.append(
-            {
-                "date": dates[end - 1],
-                "value": _safe_scalar(corr),
-            }
-        )
+        corr = np.corrcoef(x[end - size : end], y[end - size : end])[0, 1]
+        series.append({"date": dates[end - 1], "value": _safe_scalar(corr)})
     return series
 
 
@@ -151,51 +159,54 @@ def _beta(left_returns: np.ndarray, right_returns: np.ndarray) -> float | None:
     if not np.isfinite(variance) or variance <= 1e-12:
         return None
     covariance = float(np.cov(left_returns, right_returns, ddof=1)[0, 1])
-    beta = covariance / variance
-    return _safe_scalar(beta)
+    return _safe_scalar(covariance / variance)
 
 
-def build_relationship_analysis(
-    points_by_symbol: dict[str, list[dict[str, Any]]],
-    *,
-    window_days: int = 60,
-    top_pairs: int = 10,
-    rolling_pair_limit: int = 3,
-) -> dict[str, Any]:
+def _prepare_dataset(points_by_symbol: dict[str, list[dict[str, Any]]]) -> RelationshipDataset:
     price_dates, prices, symbols = _build_price_matrix(points_by_symbol)
     if not price_dates or prices.shape[0] < 4 or len(symbols) < 2:
         raise ValueError("Not enough aligned historical data to analyze relationships.")
 
     returns = _compute_returns(prices)
-    return_dates = price_dates[1:]
     if returns.shape[0] < 3:
         raise ValueError("Not enough return observations to analyze relationships.")
 
-    correlation = np.corrcoef(returns, rowvar=False)
-    covariance = np.cov(returns, rowvar=False, ddof=1)
-    correlation = np.atleast_2d(np.asarray(correlation, dtype=np.float64))
-    covariance = np.atleast_2d(np.asarray(covariance, dtype=np.float64))
+    correlation = np.atleast_2d(np.asarray(np.corrcoef(returns, rowvar=False), dtype=np.float64))
+    covariance = np.atleast_2d(np.asarray(np.cov(returns, rowvar=False, ddof=1), dtype=np.float64))
+    return RelationshipDataset(
+        symbols=symbols,
+        price_dates=price_dates,
+        return_dates=price_dates[1:],
+        prices=prices,
+        returns=returns,
+        correlation=correlation,
+        covariance=covariance,
+        symbol_indices={symbol: index for index, symbol in enumerate(symbols)},
+    )
 
+
+def _build_pair_candidates(dataset: RelationshipDataset, *, window_days: int) -> list[dict[str, Any]]:
     pair_candidates: list[dict[str, Any]] = []
-    for left_index in range(len(symbols)):
-        for right_index in range(left_index + 1, len(symbols)):
-            left_returns = returns[:, left_index]
-            right_returns = returns[:, right_index]
-            left_prices = prices[:, left_index]
-            right_prices = prices[:, right_index]
-            corr = float(correlation[left_index, right_index])
+    for left_index, left in enumerate(dataset.symbols):
+        for right_index in range(left_index + 1, len(dataset.symbols)):
+            right = dataset.symbols[right_index]
+            left_returns = dataset.returns[:, left_index]
+            right_returns = dataset.returns[:, right_index]
+            left_prices = dataset.prices[:, left_index]
+            right_prices = dataset.prices[:, right_index]
+            corr = float(dataset.correlation[left_index, right_index])
             pair_candidates.append(
                 {
-                    "left": symbols[left_index],
-                    "right": symbols[right_index],
+                    "left": left,
+                    "right": right,
                     "correlation": _safe_scalar(corr),
                     "abs_correlation": abs(corr) if np.isfinite(corr) else None,
-                    "covariance": _safe_scalar(covariance[left_index, right_index]),
+                    "covariance": _safe_scalar(dataset.covariance[left_index, right_index]),
                     "beta_left_to_right": _beta(left_returns, right_returns),
                     "corr_20d": _window_corr(left_returns, right_returns, 20),
                     "corr_60d": _window_corr(left_returns, right_returns, 60),
                     "corr_120d": _window_corr(left_returns, right_returns, 120),
-                    "observations": int(returns.shape[0]),
+                    "observations": int(dataset.returns.shape[0]),
                     **_spread_stats(left_prices, right_prices, window_days),
                 }
             )
@@ -207,36 +218,43 @@ def build_relationship_analysis(
             str(item.get("right") or ""),
         )
     )
+    return pair_candidates
 
+
+def _build_rolling_pairs(
+    dataset: RelationshipDataset,
+    pair_candidates: list[dict[str, Any]],
+    *,
+    rolling_pair_limit: int,
+    window_days: int,
+) -> list[dict[str, Any]]:
     rolling_pairs: list[dict[str, Any]] = []
     for item in pair_candidates[: max(1, int(rolling_pair_limit))]:
         left = str(item["left"])
         right = str(item["right"])
-        left_index = symbols.index(left)
-        right_index = symbols.index(right)
+        left_index = dataset.symbol_indices[left]
+        right_index = dataset.symbol_indices[right]
         rolling_pairs.append(
             {
                 "left": left,
                 "right": right,
                 "series": _rolling_corr_series(
-                    return_dates,
-                    returns[:, left_index],
-                    returns[:, right_index],
+                    dataset.return_dates,
+                    dataset.returns[:, left_index],
+                    dataset.returns[:, right_index],
                     max(3, int(window_days)),
                 ),
             }
         )
+    return rolling_pairs
 
+
+def _summarize_symbol_correlation(dataset: RelationshipDataset) -> tuple[list[dict[str, Any]], dict[str, Any] | None, dict[str, Any] | None]:
     avg_abs_corr_by_symbol: list[dict[str, Any]] = []
-    for index, symbol in enumerate(symbols):
-        values = [abs(float(correlation[index, col])) for col in range(len(symbols)) if col != index]
+    for index, symbol in enumerate(dataset.symbols):
+        values = [abs(float(dataset.correlation[index, col])) for col in range(len(dataset.symbols)) if col != index]
         mean_abs_corr = float(np.mean(values)) if values else float("nan")
-        avg_abs_corr_by_symbol.append(
-            {
-                "symbol": symbol,
-                "mean_abs_correlation": _safe_scalar(mean_abs_corr),
-            }
-        )
+        avg_abs_corr_by_symbol.append({"symbol": symbol, "mean_abs_correlation": _safe_scalar(mean_abs_corr)})
 
     strongest = max(
         avg_abs_corr_by_symbol,
@@ -248,30 +266,52 @@ def build_relationship_analysis(
         key=lambda item: float(item["mean_abs_correlation"]) if isinstance(item.get("mean_abs_correlation"), (int, float)) else math.inf,
         default=None,
     )
+    return avg_abs_corr_by_symbol, strongest, weakest
 
+
+def _average_abs_correlation(dataset: RelationshipDataset) -> float | None:
     off_diag_values = [
-        abs(float(correlation[row, col]))
-        for row in range(len(symbols))
-        for col in range(row + 1, len(symbols))
-        if np.isfinite(correlation[row, col])
+        abs(float(dataset.correlation[row, col]))
+        for row in range(len(dataset.symbols))
+        for col in range(row + 1, len(dataset.symbols))
+        if np.isfinite(dataset.correlation[row, col])
     ]
+    return _safe_scalar(float(np.mean(off_diag_values))) if off_diag_values else None
+
+
+def build_relationship_analysis(
+    points_by_symbol: dict[str, list[dict[str, Any]]],
+    *,
+    window_days: int = 60,
+    top_pairs: int = 10,
+    rolling_pair_limit: int = 3,
+) -> dict[str, Any]:
+    dataset = _prepare_dataset(points_by_symbol)
+    pair_candidates = _build_pair_candidates(dataset, window_days=window_days)
+    rolling_pairs = _build_rolling_pairs(
+        dataset,
+        pair_candidates,
+        rolling_pair_limit=rolling_pair_limit,
+        window_days=window_days,
+    )
+    _, strongest, weakest = _summarize_symbol_correlation(dataset)
 
     return {
-        "symbols": symbols,
+        "symbols": dataset.symbols,
         "data_summary": {
-            "from": price_dates[0],
-            "to": price_dates[-1],
-            "price_points": int(prices.shape[0]),
-            "return_points": int(returns.shape[0]),
+            "from": dataset.price_dates[0],
+            "to": dataset.price_dates[-1],
+            "price_points": int(dataset.prices.shape[0]),
+            "return_points": int(dataset.returns.shape[0]),
             "window_days": int(window_days),
         },
         "summary": {
-            "average_abs_correlation": _safe_scalar(float(np.mean(off_diag_values))) if off_diag_values else None,
+            "average_abs_correlation": _average_abs_correlation(dataset),
             "most_connected_symbol": strongest,
             "most_diversifying_symbol": weakest,
         },
-        "correlation_matrix": _matrix_to_rows(symbols, correlation),
-        "covariance_matrix": _matrix_to_rows(symbols, covariance),
+        "correlation_matrix": _matrix_to_rows(dataset.symbols, dataset.correlation),
+        "covariance_matrix": _matrix_to_rows(dataset.symbols, dataset.covariance),
         "pair_candidates": pair_candidates[: max(1, int(top_pairs))],
         "rolling_correlations": rolling_pairs,
     }

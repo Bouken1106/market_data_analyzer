@@ -4,21 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .config import (
-    DATA_PROVIDER,
-    DEFAULT_SYMBOLS_RAW,
-    FMP_API_KEY,
-    FMP_REFERENCE_CACHE_DIR,
-    FULL_DAILY_HISTORY_CACHE_DIR,
-    LAST_PRICE_CACHE_PATH,
-    MAX_BASIC_SYMBOLS,
-    PAPER_INITIAL_CASH,
-    PAPER_PORTFOLIO_CACHE_PATH,
-    SYMBOL_CATALOG_CACHE_PATH,
-    SYMBOL_CATALOG_TTL_SEC,
-    TWELVE_DATA_API_KEY,
-    UI_STATE_CACHE_PATH,
-)
+from .config import settings
 from .hub import MarketDataHub
 from .stores import (
     FmpReferenceStore,
@@ -40,22 +26,22 @@ class AppServices:
 
 
 def resolve_default_symbols() -> list[str]:
-    symbols = normalize_symbols(DEFAULT_SYMBOLS_RAW, max_items=MAX_BASIC_SYMBOLS)
+    symbols = normalize_symbols(settings.default_symbols_raw, max_items=settings.max_basic_symbols)
     return symbols or ["AAPL"]
 
 
 def validate_provider_configuration() -> None:
-    if DATA_PROVIDER == "twelvedata" and not TWELVE_DATA_API_KEY:
+    if settings.data_provider == "twelvedata" and not settings.twelve_data_api_key:
         raise RuntimeError("TWELVE_DATA_API_KEY is required. Set it in your environment or .env file.")
-    if DATA_PROVIDER == "fmp" and not FMP_API_KEY:
+    if settings.data_provider == "fmp" and not settings.fmp_api_key:
         raise RuntimeError("FMP_API_KEY is required. Set it in your environment or .env file.")
-    if DATA_PROVIDER != "both":
+    if settings.data_provider != "both":
         return
 
     missing: list[str] = []
-    if not TWELVE_DATA_API_KEY:
+    if not settings.twelve_data_api_key:
         missing.append("TWELVE_DATA_API_KEY")
-    if not FMP_API_KEY:
+    if not settings.fmp_api_key:
         missing.append("FMP_API_KEY")
     if missing:
         raise RuntimeError(f"{', '.join(missing)} is required when MARKET_DATA_PROVIDER=both.")
@@ -74,27 +60,27 @@ def resolve_initial_symbols(ui_state_store: UiStateStore) -> list[str]:
 def build_services() -> AppServices:
     validate_provider_configuration()
 
-    last_price_store = LastPriceStore(cache_path=LAST_PRICE_CACHE_PATH)
-    full_daily_history_store = FullDailyHistoryStore(cache_dir=FULL_DAILY_HISTORY_CACHE_DIR)
-    fmp_reference_store = FmpReferenceStore(cache_dir=FMP_REFERENCE_CACHE_DIR)
+    last_price_store = LastPriceStore(cache_path=settings.last_price_cache_path)
+    full_daily_history_store = FullDailyHistoryStore(cache_dir=settings.full_daily_history_cache_dir)
+    fmp_reference_store = FmpReferenceStore(cache_dir=settings.fmp_reference_cache_dir)
     paper_portfolio_store = PaperPortfolioStore(
-        cache_path=PAPER_PORTFOLIO_CACHE_PATH,
-        default_initial_cash=PAPER_INITIAL_CASH,
+        cache_path=settings.paper_portfolio_cache_path,
+        default_initial_cash=settings.paper_initial_cash,
     )
     symbol_catalog_store = SymbolCatalogStore(
-        provider=DATA_PROVIDER,
-        twelvedata_api_key=TWELVE_DATA_API_KEY,
-        fmp_api_key=FMP_API_KEY,
-        cache_path=SYMBOL_CATALOG_CACHE_PATH,
-        ttl_sec=SYMBOL_CATALOG_TTL_SEC,
+        provider=settings.data_provider,
+        twelvedata_api_key=settings.twelve_data_api_key,
+        fmp_api_key=settings.fmp_api_key,
+        cache_path=settings.symbol_catalog_cache_path,
+        ttl_sec=settings.symbol_catalog_ttl_sec,
     )
-    ui_state_store = UiStateStore(cache_path=UI_STATE_CACHE_PATH)
+    ui_state_store = UiStateStore(cache_path=settings.ui_state_cache_path)
     initial_symbols = resolve_initial_symbols(ui_state_store)
 
     hub = MarketDataHub(
-        provider=DATA_PROVIDER,
-        twelvedata_api_key=TWELVE_DATA_API_KEY,
-        fmp_api_key=FMP_API_KEY,
+        provider=settings.data_provider,
+        twelvedata_api_key=settings.twelve_data_api_key,
+        fmp_api_key=settings.fmp_api_key,
         symbols=initial_symbols,
         last_price_store=last_price_store,
         full_daily_history_store=full_daily_history_store,

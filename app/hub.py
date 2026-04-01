@@ -4,13 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from .config import (
-    API_LIMIT_PER_DAY,
-    DATA_PROVIDER,
-    SYMBOL_CATALOG_COUNTRY,
-    SYMBOL_COUNTRY_MAP_RAW,
-)
-from .hub_state import CacheState, ProviderState, RuntimeState, assign_state_fields
+from .config import settings
+from .hub_state import CacheState, ProviderState, RuntimeState, StoreState, assign_state_fields
 from .market_session import (
     DEFAULT_MARKET_SESSIONS,
     _normalize_country_key,
@@ -39,12 +34,12 @@ class MarketDataHub(MarketDataRealtimeMixin, MarketDataQueriesMixin, MarketDataS
             twelvedata_api_key=twelvedata_api_key,
             fmp_api_key=fmp_api_key,
             symbols=symbols,
-            ui_state_store=ui_state_store,
         )
         self._init_store_state(
             last_price_store=last_price_store,
             full_daily_history_store=full_daily_history_store,
             fmp_reference_store=fmp_reference_store,
+            ui_state_store=ui_state_store,
         )
         self._init_runtime_state()
         self._init_cache_state()
@@ -56,17 +51,15 @@ class MarketDataHub(MarketDataRealtimeMixin, MarketDataQueriesMixin, MarketDataS
         twelvedata_api_key: str,
         fmp_api_key: str,
         symbols: list[str],
-        ui_state_store: Any | None,
     ) -> None:
         self._provider_state = ProviderState(
-            provider=str(provider or DATA_PROVIDER).strip().lower(),
+            provider=str(provider or settings.data_provider).strip().lower(),
             twelvedata_api_key=str(twelvedata_api_key or "").strip(),
             fmp_api_key=str(fmp_api_key or "").strip(),
             symbols=symbols,
-            default_country_key=_normalize_country_key(SYMBOL_CATALOG_COUNTRY),
-            symbol_country_map=parse_symbol_country_map(SYMBOL_COUNTRY_MAP_RAW),
+            default_country_key=_normalize_country_key(settings.symbol_catalog_country),
+            symbol_country_map=parse_symbol_country_map(settings.symbol_country_map_raw),
             market_sessions=DEFAULT_MARKET_SESSIONS,
-            ui_state_store=ui_state_store,
         )
         assign_state_fields(self, self._provider_state)
 
@@ -76,13 +69,18 @@ class MarketDataHub(MarketDataRealtimeMixin, MarketDataQueriesMixin, MarketDataS
         last_price_store: LastPriceStore,
         full_daily_history_store: FullDailyHistoryStore,
         fmp_reference_store: FmpReferenceStore,
+        ui_state_store: Any | None,
     ) -> None:
-        self.last_price_store = last_price_store
-        self.full_daily_history_store = full_daily_history_store
-        self.fmp_reference_store = fmp_reference_store
+        self._store_state = StoreState(
+            last_price_store=last_price_store,
+            full_daily_history_store=full_daily_history_store,
+            fmp_reference_store=fmp_reference_store,
+            ui_state_store=ui_state_store,
+        )
+        assign_state_fields(self, self._store_state)
 
     def _init_runtime_state(self) -> None:
-        self._runtime_state = RuntimeState(daily_credits_limit=API_LIMIT_PER_DAY)
+        self._runtime_state = RuntimeState(daily_credits_limit=settings.api_limit_per_day)
         assign_state_fields(self, self._runtime_state)
 
     def _init_cache_state(self) -> None:

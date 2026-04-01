@@ -36,12 +36,16 @@ from .market_data_queries_historical_support import (
     is_daily_interval,
     slice_daily_points,
 )
-from .ttl_cache import ttl_cache_lookup, ttl_cache_store
+from .ttl_cache import ttl_cache_lookup_response, ttl_cache_store
 
 
 class MarketDataHistoricalMixin:
     def _historical_ops(self) -> MarketDataHistoricalOps:
-        return MarketDataHistoricalOps(self)
+        ops = getattr(self, "_historical_ops_service", None)
+        if ops is None:
+            ops = MarketDataHistoricalOps(self)
+            setattr(self, "_historical_ops_service", ops)
+        return ops
 
     @staticmethod
     def _build_no_historical_data_detail(
@@ -74,17 +78,15 @@ class MarketDataHistoricalMixin:
             source_preference=source_preference,
         )
         if not refresh:
-            cached = await ttl_cache_lookup(
+            cached_payload = await ttl_cache_lookup_response(
                 self._historical_cache,
                 self._historical_lock,
                 request.cache_key,
                 ttl_sec=HISTORICAL_CACHE_TTL_SEC,
                 copy_fn=dict,
             )
-            if cached.found and cached.fresh and isinstance(cached.payload, dict):
-                payload = dict(cached.payload)
-                payload["source"] = "cache"
-                return payload
+            if cached_payload is not None:
+                return cached_payload
 
         timeout = httpx.Timeout(40.0, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:

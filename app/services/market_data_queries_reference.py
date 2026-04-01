@@ -23,7 +23,7 @@ from ..config import (
     SYMBOL_PATTERN,
 )
 from .market_data_provider_clients import FmpClient
-from .ttl_cache import ttl_cache_lookup, ttl_cache_pop, ttl_cache_store
+from .ttl_cache import build_cached_response, ttl_cache_lookup_response, ttl_cache_pop, ttl_cache_store
 
 
 class MarketDataReferenceMixin:
@@ -40,19 +40,19 @@ class MarketDataReferenceMixin:
             raise HTTPException(status_code=400, detail="FMP_API_KEY is required for reference data.")
 
         if not refresh:
-            cached = await ttl_cache_lookup(
+            cached_payload = await ttl_cache_lookup_response(
                 self._fmp_reference_cache,
                 self._fmp_reference_lock,
                 normalized,
                 ttl_sec=FMP_REFERENCE_CACHE_TTL_SEC,
                 copy_fn=dict,
+                allow_stale=cache_only,
+                source_fresh="cache-memory",
+                source_stale="cache-memory-stale",
+                include_cache_metadata=True,
             )
-            if cached.found and (cached.fresh or cache_only) and isinstance(cached.payload, dict):
-                payload = dict(cached.payload)
-                payload["source"] = "cache-memory" if cached.fresh else "cache-memory-stale"
-                payload["cache_ttl_sec"] = FMP_REFERENCE_CACHE_TTL_SEC
-                payload["cache_stale"] = not cached.fresh
-                return payload
+            if cached_payload is not None:
+                return cached_payload
 
         if not refresh:
             disk_cached = await self.fmp_reference_store.get(normalized)
@@ -60,10 +60,12 @@ class MarketDataReferenceMixin:
                 cached_at = self._parse_iso_epoch(disk_cached.get("cached_at"))
                 is_fresh = cached_at is not None and self._is_cache_fresh(cached_at, FMP_REFERENCE_CACHE_TTL_SEC)
                 if is_fresh or cache_only:
-                    payload = dict(disk_cached)
-                    payload["source"] = "cache-disk" if is_fresh else "cache-disk-stale"
-                    payload["cache_ttl_sec"] = FMP_REFERENCE_CACHE_TTL_SEC
-                    payload["cache_stale"] = not is_fresh
+                    payload = build_cached_response(
+                        disk_cached,
+                        source="cache-disk" if is_fresh else "cache-disk-stale",
+                        ttl_sec=FMP_REFERENCE_CACHE_TTL_SEC,
+                        stale=not is_fresh,
+                    )
                     await ttl_cache_store(
                         self._fmp_reference_cache,
                         self._fmp_reference_lock,

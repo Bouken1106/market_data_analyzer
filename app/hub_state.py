@@ -16,6 +16,13 @@ class ProviderState:
     default_country_key: str
     symbol_country_map: dict[str, str]
     market_sessions: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class StoreState:
+    last_price_store: Any
+    full_daily_history_store: Any
+    fmp_reference_store: Any
     ui_state_store: Any | None
 
 
