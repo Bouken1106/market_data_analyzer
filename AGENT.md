@@ -30,6 +30,8 @@
 - Treat store-returned cached data as read-only unless you explicitly requested a copied structure.
 - For strategy changes, preserve API response shape expected by `app/api/strategy.py` and the frontend.
 - For ML changes, keep train/val/test chronological and avoid leakage from future rows.
+- Prefer fail-fast behavior over silent recovery when assumptions are violated or required data is missing.
+- Do not add speculative or low-signal fallbacks just to keep execution limping along; surface the error clearly unless there is a well-justified product requirement for recovery.
 - If the user gives a durable instruction, preference, or project-specific operating rule, treat it as project intent and update `agent.md` so the guidance persists for later work.
 - For any help mark / tooltip / popover UI, do not rely on naive absolute positioning inside the local container. Verify viewport-fit, scroll/resize repositioning, and z-index/overflow behavior so the popup cannot be clipped or hidden behind other layers on smaller screens.
 
