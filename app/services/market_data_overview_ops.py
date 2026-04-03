@@ -13,6 +13,8 @@ from ..utils import normalize_symbols
 from .market_data_provider_clients import owner_fmp_client, owner_twelvedata_client
 from .market_data_queries_overview_support import OverviewInputs
 
+SparklineValue = tuple[str, float]
+
 
 class MarketDataOverviewOps:
     def __init__(self, owner: Any) -> None:
@@ -174,58 +176,54 @@ class MarketDataOverviewOps:
             "_source_detail": self.owner._quote_source_detail("fmp"),
         }
 
-    async def fetch_sparkline_item(self, client: httpx.AsyncClient, symbol: str) -> dict[str, Any] | None:
-        points = await self.owner._fetch_series(
-            client=client,
-            symbol=symbol,
-            interval="1day",
-            outputsize=max(settings.overview.sparkline_points + 2, 32),
-        )
-        if not points:
-            return None
-
-        values: list[tuple[str, float]] = []
+    def _daily_close_values(self, points: list[dict[str, Any]]) -> list[SparklineValue]:
+        values: list[SparklineValue] = []
         for item in points:
             dt = str(item.get("t", "")).strip()
             close_value = self.owner._try_parse_float(item.get("c"))
             if not dt or close_value is None:
                 continue
             values.append((dt, close_value))
-
-        if len(values) < 2:
-            return None
-
         values.sort(key=lambda item: item[0], reverse=True)
-        quote = await self.owner._fetch_quote(client, symbol)
+        return values
+
+    @staticmethod
+    def _completed_daily_values(values: list[SparklineValue], *, today_iso: str) -> list[SparklineValue]:
+        if len(values) < 2:
+            return []
+        start_index = 1 if values[0][0].startswith(today_iso) and len(values) >= 2 else 0
+        completed = values[start_index:]
+        return completed if len(completed) >= 2 else []
+
+    def _build_sparkline_snapshot(
+        self,
+        *,
+        symbol: str,
+        points: list[dict[str, Any]],
+        completed: list[SparklineValue],
+        quote: dict[str, Any],
+    ) -> dict[str, Any]:
         current_price = self.owner._pick_float(quote, "close", "price")
         reference_close = self.owner._pick_float(quote, "previous_close", "prev_close")
         updated_at = self.owner._best_updated_at(quote, [], [])
-        if reference_close is None and len(values) >= 2:
-            reference_close = values[1][1]
+        if reference_close is None and len(completed) >= 2:
+            reference_close = completed[1][1]
+
         change_abs = None
         change_pct = None
         if current_price is not None and reference_close is not None and reference_close > 0:
             change_abs = current_price - reference_close
             change_pct = (change_abs / reference_close) * 100
 
-        today_iso = date.today().isoformat()
-        start_index = 1 if values[0][0].startswith(today_iso) and len(values) >= 2 else 0
-        completed = values[start_index:]
-        if len(completed) < 2:
-            return None
-
-        latest_completed_close = completed[0][1]
-        previous_completed_close = completed[1][1] if len(completed) >= 2 else None
         recent_desc = completed[: settings.overview.sparkline_points]
         recent_asc = list(reversed(recent_desc))
-
         trend_values = [point[1] for point in recent_asc]
         trend_source = self.owner._series_source_descriptor(points)
         return {
             "symbol": symbol,
-            "latest_close": latest_completed_close,
+            "latest_close": completed[0][1],
             "latest_close_date": completed[0][0],
-            "previous_close": previous_completed_close,
+            "previous_close": completed[1][1] if len(completed) >= 2 else None,
             "previous_close_date": completed[1][0] if len(completed) >= 2 else None,
             "current_price": current_price,
             "reference_close": reference_close,
@@ -238,6 +236,31 @@ class MarketDataOverviewOps:
             "points": len(trend_values),
             "source": trend_source,
         }
+
+    async def fetch_sparkline_item(self, client: httpx.AsyncClient, symbol: str) -> dict[str, Any] | None:
+        points = await self.owner._fetch_series(
+            client=client,
+            symbol=symbol,
+            interval="1day",
+            outputsize=max(settings.overview.sparkline_points + 2, 32),
+        )
+        if not points:
+            return None
+
+        values = self._daily_close_values(points)
+        if len(values) < 2:
+            return None
+
+        quote = await self.owner._fetch_quote(client, symbol)
+        completed = self._completed_daily_values(values, today_iso=date.today().isoformat())
+        if not completed:
+            return None
+        return self._build_sparkline_snapshot(
+            symbol=symbol,
+            points=points,
+            completed=completed,
+            quote=quote,
+        )
 
     @staticmethod
     def normalize_symbols(symbols: list[str]) -> list[str]:

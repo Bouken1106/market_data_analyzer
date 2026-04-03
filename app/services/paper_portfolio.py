@@ -53,40 +53,23 @@ def to_finite_number(value: Any) -> float | None:
     return finite_float_or_none(value)
 
 
-async def resolve_trade_price(hub: Any, symbol: str, explicit_price: float | None) -> tuple[float, str]:
-    if explicit_price is not None:
-        parsed = to_valid_price(explicit_price)
-        if parsed is None:
-            raise HTTPException(status_code=400, detail="price must be greater than 0.")
-        return parsed, "manual"
-
-    rows = await hub.current_rows([symbol])
-    if not rows:
-        raise HTTPException(status_code=400, detail=_PRICE_UNAVAILABLE_DETAIL)
-
-    latest = rows[0] if isinstance(rows[0], dict) else {}
-    parsed = to_valid_price(latest.get("price"))
-    if parsed is None:
-        raise HTTPException(status_code=400, detail=_PRICE_UNAVAILABLE_DETAIL)
-    return parsed, "market"
-
-
-async def paper_portfolio_payload(hub: Any, paper_portfolio_store: Any) -> dict[str, Any]:
-    state = await paper_portfolio_store.get_state()
+def _normalize_positions_raw(state: Any) -> dict[str, Any]:
     positions_raw = state.get("positions") if isinstance(state, dict) else {}
     if not isinstance(positions_raw, dict):
-        positions_raw = {}
+        return {}
+    return positions_raw
 
-    symbols = _as_position_symbols(positions_raw)
-    rows = await hub.current_rows(symbols) if symbols else []
-    price_map = _build_price_map(rows)
 
+def _build_position_rows(
+    positions_raw: dict[str, Any],
+    price_map: dict[str, float | None],
+) -> tuple[list[dict[str, Any]], float, float, bool]:
     positions: list[dict[str, Any]] = []
     total_market_value = 0.0
     total_cost_basis = 0.0
     has_market_value = False
 
-    for symbol in symbols:
+    for symbol in _as_position_symbols(positions_raw):
         item = positions_raw.get(symbol, {})
         quantity = to_finite_number(item.get("quantity")) or 0.0
         avg_cost = to_valid_price(item.get("avg_cost")) or 0.0
@@ -116,24 +99,36 @@ async def paper_portfolio_payload(hub: Any, paper_portfolio_store: Any) -> dict[
             }
         )
 
-    if total_market_value > 0:
-        for item in positions:
-            market_value = item.get("market_value")
-            if isinstance(market_value, (int, float)):
-                item["weight"] = (float(market_value) / total_market_value) * 100
+    return positions, total_market_value, total_cost_basis, has_market_value
 
+
+def _apply_position_weights(positions: list[dict[str, Any]], total_market_value: float) -> None:
+    if total_market_value <= 0:
+        return
+    for item in positions:
+        market_value = item.get("market_value")
+        if isinstance(market_value, (int, float)):
+            item["weight"] = (float(market_value) / total_market_value) * 100
+
+
+def _build_recent_trades(state: Any) -> tuple[list[dict[str, Any]], int]:
+    trades = state.get("trades") if isinstance(state, dict) and isinstance(state.get("trades"), list) else []
+    recent_trades = [dict(item) for item in reversed(trades[-50:]) if isinstance(item, dict)]
+    return recent_trades, len(trades)
+
+
+def _portfolio_summary(
+    *,
+    state: Any,
+    total_market_value: float,
+    total_cost_basis: float,
+    has_market_value: bool,
+) -> dict[str, float | None]:
     cash = to_valid_price(state.get("cash")) or 0.0
     initial_cash = to_valid_price(state.get("initial_cash")) or cash
     equity = cash + total_market_value
     unrealized_total = total_market_value - total_cost_basis if has_market_value else None
     total_return_pct = ((equity - initial_cash) / initial_cash * 100) if initial_cash > 0 else None
-
-    trades = state.get("trades") if isinstance(state.get("trades"), list) else []
-    recent_trades = []
-    for item in reversed(trades[-50:]):
-        if isinstance(item, dict):
-            recent_trades.append(dict(item))
-
     return {
         "initial_cash": initial_cash,
         "cash": cash,
@@ -142,8 +137,50 @@ async def paper_portfolio_payload(hub: Any, paper_portfolio_store: Any) -> dict[
         "cost_basis": total_cost_basis,
         "unrealized_pnl": unrealized_total,
         "total_return_pct": total_return_pct,
+    }
+
+
+async def resolve_trade_price(hub: Any, symbol: str, explicit_price: float | None) -> tuple[float, str]:
+    if explicit_price is not None:
+        parsed = to_valid_price(explicit_price)
+        if parsed is None:
+            raise HTTPException(status_code=400, detail="price must be greater than 0.")
+        return parsed, "manual"
+
+    rows = await hub.current_rows([symbol])
+    if not rows:
+        raise HTTPException(status_code=400, detail=_PRICE_UNAVAILABLE_DETAIL)
+
+    latest = rows[0] if isinstance(rows[0], dict) else {}
+    parsed = to_valid_price(latest.get("price"))
+    if parsed is None:
+        raise HTTPException(status_code=400, detail=_PRICE_UNAVAILABLE_DETAIL)
+    return parsed, "market"
+
+
+async def paper_portfolio_payload(hub: Any, paper_portfolio_store: Any) -> dict[str, Any]:
+    state = await paper_portfolio_store.get_state()
+    positions_raw = _normalize_positions_raw(state)
+
+    symbols = _as_position_symbols(positions_raw)
+    rows = await hub.current_rows(symbols) if symbols else []
+    price_map = _build_price_map(rows)
+    positions, total_market_value, total_cost_basis, has_market_value = _build_position_rows(
+        positions_raw,
+        price_map,
+    )
+    _apply_position_weights(positions, total_market_value)
+    recent_trades, trade_count = _build_recent_trades(state)
+
+    return {
+        **_portfolio_summary(
+            state=state,
+            total_market_value=total_market_value,
+            total_cost_basis=total_cost_basis,
+            has_market_value=has_market_value,
+        ),
         "positions": positions,
         "recent_trades": recent_trades,
-        "trade_count": len(trades),
+        "trade_count": trade_count,
         "updated_at": state.get("updated_at"),
     }

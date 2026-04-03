@@ -2,15 +2,41 @@ from __future__ import annotations
 
 import unittest
 
+from app.services.market_data_historical_jquants import JQuantsHistoricalClient
 from app.services.market_data_math import atr, beta_and_corr, moving_average
+from app.services.market_data_overview_ops import MarketDataOverviewOps
 from app.services.market_data_queries_overview_support import (
     OverviewInputs,
     OverviewRequest,
     build_overview_payload,
     build_overview_source_detail,
 )
+from app.services.paper_portfolio import _apply_position_weights, _build_position_rows, _portfolio_summary
 from app.services.watchlist_commentary_parser import commentary_from_json, fallback_commentary
 from app.services.watchlist_commentary_prompt import build_watchlist_prompt
+
+
+class _OverviewOwner:
+    def _try_parse_float(self, value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _pick_float(self, payload, *keys):
+        for key in keys:
+            value = payload.get(key) if isinstance(payload, dict) else None
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    def _best_updated_at(self, quote, _intraday_points, _day_points):
+        return quote.get("updated_at") if isinstance(quote, dict) else None
+
+    def _series_source_descriptor(self, points):
+        return points[0].get("_src", "unknown") if points else "empty"
 
 
 class RefactorHelperTest(unittest.TestCase):
@@ -127,6 +153,80 @@ class RefactorHelperTest(unittest.TestCase):
         self.assertEqual(payload["market"]["spy"]["symbol"], "SPY")
         self.assertEqual(payload["source"], "both-live")
         self.assertEqual(payload["source_detail"]["quote_provider"], "both")
+
+    def test_jquants_helpers_build_request_and_extract_values(self) -> None:
+        client = JQuantsHistoricalClient(owner=object())
+
+        params = client._build_request_params(
+            code="1617",
+            start_date="2024-01-01",
+            end_date="2024-01-31",
+            pagination_key="next",
+        )
+        values = client._extract_daily_quote_values(
+            {
+                "dailyBars": [
+                    {"Date": "2024-01-05", "Open": 101.0, "High": 102.0, "Low": 100.0, "Close": 101.5, "Volume": 10}
+                ]
+            }
+        )
+        normalized = client._normalize_values(values or [])
+
+        self.assertEqual(
+            params,
+            {"code": "1617", "from": "2024-01-01", "to": "2024-01-31", "pagination_key": "next"},
+        )
+        self.assertEqual(normalized[0]["t"], "2024-01-05")
+        self.assertEqual(normalized[0]["_src"], "jquants")
+
+    def test_paper_portfolio_helpers_build_rows_and_summary(self) -> None:
+        positions, total_market_value, total_cost_basis, has_market_value = _build_position_rows(
+            {
+                "AAPL": {"quantity": 2, "avg_cost": 100},
+                "MSFT": {"quantity": 1, "avg_cost": 50},
+            },
+            {"AAPL": 125.0, "MSFT": 55.0},
+        )
+        _apply_position_weights(positions, total_market_value)
+        summary = _portfolio_summary(
+            state={"cash": 700.0, "initial_cash": 1_000.0},
+            total_market_value=total_market_value,
+            total_cost_basis=total_cost_basis,
+            has_market_value=has_market_value,
+        )
+
+        self.assertEqual(total_market_value, 305.0)
+        self.assertEqual(total_cost_basis, 250.0)
+        self.assertTrue(has_market_value)
+        self.assertAlmostEqual(positions[0]["weight"], 250.0 / 305.0 * 100.0)
+        self.assertAlmostEqual(positions[1]["weight"], 55.0 / 305.0 * 100.0)
+        self.assertEqual(summary["equity"], 1_005.0)
+        self.assertEqual(summary["unrealized_pnl"], 55.0)
+
+    def test_market_data_overview_ops_helpers_build_completed_snapshot(self) -> None:
+        ops = MarketDataOverviewOps(owner=_OverviewOwner())
+        points = [
+            {"t": "2026-04-03", "c": 110.0, "_src": "fmp"},
+            {"t": "2026-04-02", "c": 108.0, "_src": "fmp"},
+            {"t": "2026-04-01", "c": 106.0, "_src": "fmp"},
+        ]
+
+        values = ops._daily_close_values(points)
+        completed = ops._completed_daily_values(values, today_iso="2026-04-03")
+        snapshot = ops._build_sparkline_snapshot(
+            symbol="AAPL",
+            points=points,
+            completed=completed,
+            quote={"close": 111.0, "updated_at": "2026-04-03T00:00:00Z"},
+        )
+
+        self.assertEqual(values[0], ("2026-04-03", 110.0))
+        self.assertEqual(completed[0], ("2026-04-02", 108.0))
+        self.assertEqual(snapshot["latest_close"], 108.0)
+        self.assertEqual(snapshot["reference_close"], 106.0)
+        self.assertEqual(snapshot["change_abs"], 5.0)
+        self.assertEqual(snapshot["trend_30d"], [106.0, 108.0])
+        self.assertEqual(snapshot["source"], "fmp")
 
 
 if __name__ == "__main__":
