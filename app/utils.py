@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import math
-from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -121,14 +120,6 @@ def _datetime_from_unix(value: Any) -> datetime | None:
         return datetime.fromtimestamp(numeric, tz=timezone.utc)
     except (OverflowError, OSError, ValueError):
         return None
-
-
-# ---------------------------------------------------------------------------
-# JSON helpers
-# ---------------------------------------------------------------------------
-
-def clone_json_like(value: Any) -> Any:
-    return deepcopy(value)
 
 
 def read_json_file(path: Path) -> Any | None:

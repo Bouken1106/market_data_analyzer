@@ -9,7 +9,6 @@ from typing import Any
 import httpx
 
 from ..config import LOGGER, settings
-from ..utils import normalize_symbols
 from .market_data_provider_clients import owner_fmp_client, owner_twelvedata_client
 from .market_data_queries_overview_support import OverviewInputs
 
@@ -261,7 +260,3 @@ class MarketDataOverviewOps:
             completed=completed,
             quote=quote,
         )
-
-    @staticmethod
-    def normalize_symbols(symbols: list[str]) -> list[str]:
-        return normalize_symbols(symbols)
