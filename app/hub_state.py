@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from typing import Any
 
 
-@dataclass(frozen=True)
+@dataclass
 class ProviderState:
     provider: str
     twelvedata_api_key: str
@@ -58,8 +58,3 @@ class CacheState:
     _overview_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _fmp_reference_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
     _fmp_reference_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-
-
-def assign_state_fields(target: Any, state: Any) -> None:
-    for item in fields(state):
-        setattr(target, item.name, getattr(state, item.name))

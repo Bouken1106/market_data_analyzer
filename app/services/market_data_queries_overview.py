@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from ..config import SYMBOL_PATTERN
+from ..config import settings
 from ..utils import normalize_symbols
 from .market_data_overview_ops import MarketDataOverviewOps
 from .market_data_overview_service import (
@@ -22,11 +22,6 @@ from .market_data_queries_overview_support import (
     build_overview_request,
     build_overview_source_detail,
     build_price_context,
-    compute_change_metrics,
-    compute_spread_metrics,
-    compute_volume_metrics,
-    fill_day_fields_from_daily_series,
-    fill_day_fields_from_intraday,
 )
 
 
@@ -53,7 +48,7 @@ class MarketDataOverviewMixin:
             historical_cache=self._historical_cache,
             historical_lock=self._historical_lock,
             full_daily_history_store=self.full_daily_history_store,
-            symbol_pattern=SYMBOL_PATTERN,
+            symbol_pattern=settings.provider.symbol_pattern,
         )
 
     def _overview_query_dependencies(self) -> OverviewQueryDependencies:
@@ -115,17 +110,6 @@ class MarketDataOverviewMixin:
             "ma_mid_50": self._moving_average(day_points, window=50),
             "atr_14": self._atr(day_points, window=14),
         }
-
-    def _build_overview_payload(
-        self,
-        *,
-        request: OverviewRequest,
-        inputs: OverviewInputs,
-    ) -> dict[str, Any]:
-        return self._overview_query_service()._build_overview_payload(
-            request=request,
-            inputs=inputs,
-        )
 
     def _compose_overview_payload(
         self,
@@ -247,99 +231,8 @@ class MarketDataOverviewMixin:
             extract_latest_session_points=self._extract_latest_session_points,
         )
 
-    def _fill_day_fields_from_intraday(
-        self,
-        field_values: dict[str, float | None],
-        field_sources: dict[str, str | None],
-        m1_points: list[dict[str, Any]],
-    ) -> None:
-        fill_day_fields_from_intraday(
-            field_values=field_values,
-            field_sources=field_sources,
-            m1_points=m1_points,
-            extract_latest_session_points=self._extract_latest_session_points,
-        )
-
-    @staticmethod
-    def _fill_day_fields_from_daily_series(
-        field_values: dict[str, float | None],
-        field_sources: dict[str, str | None],
-        latest_day: dict[str, Any],
-        day_series_source: str,
-    ) -> None:
-        fill_day_fields_from_daily_series(
-            field_values=field_values,
-            field_sources=field_sources,
-            latest_day=latest_day,
-            day_series_source=day_series_source,
-        )
-
-    @staticmethod
-    def _compute_change_metrics(current: float | None, previous: float | None) -> tuple[float | None, float | None]:
-        return compute_change_metrics(current=current, previous=previous)
-
-    @staticmethod
-    def _compute_volume_metrics(
-        *,
-        day_points: list[dict[str, Any]],
-        day_volume: float | None,
-        current_price: float | None,
-    ) -> tuple[float | None, float | None, float | None]:
-        return compute_volume_metrics(
-            day_points=day_points,
-            day_volume=day_volume,
-            current_price=current_price,
-        )
-
-    @staticmethod
-    def _compute_spread_metrics(
-        *,
-        bid: float | None,
-        ask: float | None,
-        current_price: float | None,
-    ) -> tuple[float | None, float | None]:
-        return compute_spread_metrics(
-            bid=bid,
-            ask=ask,
-            current_price=current_price,
-        )
-
-    def _build_overview_source_detail(
-        self,
-        *,
-        quote: dict[str, Any],
-        day_points: list[dict[str, Any]],
-        m1_points: list[dict[str, Any]],
-        m5_points: list[dict[str, Any]],
-        spy_points: list[dict[str, Any]],
-        qqq_points: list[dict[str, Any]],
-        price_context: dict[str, Any],
-    ) -> dict[str, Any]:
-        return build_overview_source_detail(
-            quote=quote,
-            day_points=day_points,
-            m1_points=m1_points,
-            m5_points=m5_points,
-            spy_points=spy_points,
-            qqq_points=qqq_points,
-            price_context=price_context,
-            series_source_descriptor=self._series_source_descriptor,
-        )
-
     async def clear_symbol_overview_cache(self, symbol: str) -> dict[str, Any]:
         return await self._overview_query_service().clear_symbol_overview_cache(symbol)
-
-    async def _fetch_market_context(
-        self,
-        client: httpx.AsyncClient,
-        refresh: bool = False,
-        include_qqq: bool = True,
-    ) -> dict[str, Any]:
-        return await self._overview_ops().fetch_market_context(
-            client,
-            refresh=refresh,
-            include_qqq=include_qqq,
-        )
 
     async def _fetch_quote(self, client: httpx.AsyncClient, symbol: str) -> dict[str, Any]:
         return await self._overview_ops().fetch_quote(client, symbol)

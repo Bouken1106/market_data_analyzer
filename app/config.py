@@ -167,22 +167,6 @@ class AppSettings:
     lmstudio: LmStudioSettings
     behavior: BehaviorSettings
 
-    def __getattr__(self, name: str) -> object:
-        for section_name in (
-            "provider",
-            "endpoints",
-            "budget",
-            "storage",
-            "historical",
-            "overview",
-            "lmstudio",
-            "behavior",
-        ):
-            section = object.__getattribute__(self, section_name)
-            if hasattr(section, name):
-                return getattr(section, name)
-        raise AttributeError(name)
-
 
 def _resolve_data_provider(supported_data_providers: frozenset[str]) -> str:
     configured = os.getenv("MARKET_DATA_PROVIDER", "twelvedata").strip().lower()

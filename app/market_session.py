@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .config import SYMBOL_CATALOG_COUNTRY, SYMBOL_PATTERN
+from .config import settings
 from .models import MarketSession
 
 
@@ -62,7 +62,7 @@ def _build_default_market_sessions() -> dict[str, MarketSession]:
 
 DEFAULT_MARKET_SESSIONS = _build_default_market_sessions()
 
-DEFAULT_COUNTRY_KEY = _normalize_country_key(SYMBOL_CATALOG_COUNTRY)
+DEFAULT_COUNTRY_KEY = _normalize_country_key(settings.storage.symbol_catalog_country)
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +82,7 @@ def parse_symbol_country_map(raw: str) -> dict[str, str]:
         country = country_raw.strip()
         if not symbol or not country:
             continue
-        if not SYMBOL_PATTERN.match(symbol):
+        if not settings.provider.symbol_pattern.match(symbol):
             continue
         mapping[symbol] = _normalize_country_key(country)
     return mapping

@@ -8,7 +8,7 @@ from typing import Any, Awaitable, Callable, Pattern
 import httpx
 from fastapi import HTTPException
 
-from ..config import OVERVIEW_CACHE_TTL_SEC, SPARKLINE_CACHE_TTL_SEC
+from ..config import settings
 from .market_data_queries_overview_support import (
     OverviewInputs,
     OverviewRequest,
@@ -68,7 +68,7 @@ class MarketDataOverviewQueryService:
                 self.context.overview_cache,
                 self.context.overview_lock,
                 request.cache_key,
-                ttl_sec=OVERVIEW_CACHE_TTL_SEC,
+                ttl_sec=settings.overview.overview_cache_ttl_sec,
                 copy_fn=dict,
             )
             if cached_payload is not None:
@@ -103,7 +103,7 @@ class MarketDataOverviewQueryService:
                     self.context.sparkline_cache,
                     self.context.sparkline_lock,
                     symbol,
-                    ttl_sec=SPARKLINE_CACHE_TTL_SEC,
+                    ttl_sec=settings.overview.sparkline_cache_ttl_sec,
                     copy_fn=dict,
                 )
                 if cached_payload is None:

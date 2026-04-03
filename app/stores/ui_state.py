@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..config import MAX_BASIC_SYMBOLS
+from ..config import settings
 from ..utils import normalize_symbols
 from .json_state import JsonStateStore
 
@@ -24,10 +24,10 @@ class UiStateStore(JsonStateStore):
         raw = self._state.get("symbols")
         if not isinstance(raw, list):
             return []
-        return normalize_symbols(raw, max_items=MAX_BASIC_SYMBOLS)
+        return normalize_symbols(raw, max_items=settings.provider.max_basic_symbols)
 
     def set_symbols(self, symbols: list[str]) -> None:
-        self._state["symbols"] = normalize_symbols(symbols, max_items=MAX_BASIC_SYMBOLS)
+        self._state["symbols"] = normalize_symbols(symbols, max_items=settings.provider.max_basic_symbols)
         self._touch_and_write()
 
     def get_watchlist_commentary(self) -> dict[str, Any] | None:

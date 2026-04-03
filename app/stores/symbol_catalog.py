@@ -10,11 +10,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from ..config import (
-    LOGGER,
-    SYMBOL_CATALOG_COUNTRY,
-    SYMBOL_CATALOG_MAX_ITEMS,
-)
+from ..config import LOGGER
 from ..services.ttl_cache import ttl_cache_is_fresh
 from ..utils import read_json_file, write_json_file
 from .symbol_catalog_sources import (
@@ -31,19 +27,24 @@ class SymbolCatalogStore:
         fmp_api_key: str,
         cache_path: Path,
         ttl_sec: int,
+        *,
+        country: str,
+        max_items: int,
     ) -> None:
         self.provider = str(provider or "twelvedata").strip().lower()
         self.twelvedata_api_key = str(twelvedata_api_key or "").strip()
         self.fmp_api_key = str(fmp_api_key or "").strip()
         self.cache_path = cache_path
         self.ttl_sec = ttl_sec
-        self._row_normalizer = SymbolCatalogRowNormalizer(max_items=SYMBOL_CATALOG_MAX_ITEMS)
+        self.country = str(country or "").strip()
+        self.max_items = max(1, int(max_items))
+        self._row_normalizer = SymbolCatalogRowNormalizer(max_items=self.max_items)
         self._fetcher = build_symbol_catalog_fetcher(
             provider=self.provider,
             twelvedata_api_key=self.twelvedata_api_key,
             fmp_api_key=self.fmp_api_key,
-            country=SYMBOL_CATALOG_COUNTRY,
-            max_items=SYMBOL_CATALOG_MAX_ITEMS,
+            country=self.country,
+            max_items=self.max_items,
         )
         self._symbols: list[dict[str, str]] = []
         self._updated_at: str | None = None
@@ -158,7 +159,7 @@ class SymbolCatalogStore:
             return None
 
         return {
-            "symbols": normalized[:SYMBOL_CATALOG_MAX_ITEMS],
+            "symbols": normalized[: self.max_items],
             "updated_at": updated_at,
         }
 

@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from ..config import LMSTUDIO_MODEL, LOGGER, MAX_BASIC_SYMBOLS
+from ..config import LOGGER, settings
 from ..validation import require_symbols
 from .relationship_analysis import build_relationship_analysis
 
@@ -109,12 +109,13 @@ def build_relationship_payload(
 
 
 def require_basic_watchlist_symbols(symbols: str) -> list[str]:
+    max_symbols = settings.provider.max_basic_symbols
     return require_symbols(
         symbols,
         min_count=2,
-        max_count=MAX_BASIC_SYMBOLS,
+        max_count=max_symbols,
         empty_detail="At least two valid symbols are required.",
-        max_detail=f"You can request up to {MAX_BASIC_SYMBOLS} symbols at once.",
+        max_detail=f"You can request up to {max_symbols} symbols at once.",
     )
 
 
@@ -125,7 +126,7 @@ def latest_watchlist_commentary_payload(ui_state_store: Any) -> dict[str, Any]:
     return {
         "comment": None,
         "generated_at": None,
-        "model": LMSTUDIO_MODEL,
+        "model": settings.lmstudio.lmstudio_model,
         "symbols": [],
     }
 

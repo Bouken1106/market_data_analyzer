@@ -8,13 +8,10 @@ from typing import Any
 import httpx
 
 from ..config import (
-    HISTORICAL_DEFAULT_YEARS,
-    HISTORICAL_CACHE_TTL_SEC,
-    HISTORICAL_INTERVAL,
-    HISTORICAL_MAX_POINTS,
     JQUANTS_API_KEY as DEFAULT_JQUANTS_API_KEY,
     JQUANTS_MIN_REQUEST_INTERVAL_SEC as DEFAULT_JQUANTS_MIN_REQUEST_INTERVAL_SEC,
     JQUANTS_RATE_LIMIT_BACKOFF_SEC as DEFAULT_JQUANTS_RATE_LIMIT_BACKOFF_SEC,
+    settings,
 )
 from .market_data_historical_ops import MarketDataHistoricalOps
 from .market_data_historical_service import (
@@ -59,9 +56,9 @@ class MarketDataHistoricalMixin:
             provider=self.provider,
             historical_cache=self._historical_cache,
             historical_lock=self._historical_lock,
-            historical_cache_ttl_sec=HISTORICAL_CACHE_TTL_SEC,
-            historical_interval=HISTORICAL_INTERVAL,
-            historical_max_points=HISTORICAL_MAX_POINTS,
+            historical_cache_ttl_sec=settings.historical.historical_cache_ttl_sec,
+            historical_interval=settings.historical.historical_interval,
+            historical_max_points=settings.historical.historical_max_points,
         )
 
     def _historical_query_dependencies(self) -> HistoricalQueryDependencies:
@@ -82,7 +79,7 @@ class MarketDataHistoricalMixin:
     async def historical_payload(
         self,
         symbol: str,
-        years: int = HISTORICAL_DEFAULT_YEARS,
+        years: int = settings.historical.historical_default_years,
         months: int | None = None,
         refresh: bool = False,
         source_preference: str | None = None,
@@ -174,7 +171,7 @@ class MarketDataHistoricalMixin:
             points=points,
             source_detail=source_detail,
             provider=self.provider,
-            interval=HISTORICAL_INTERVAL,
+            interval=settings.historical.historical_interval,
         )
 
     @staticmethod
@@ -227,44 +224,6 @@ class MarketDataHistoricalMixin:
             outputsize,
             start_date,
             end_date,
-        )
-
-    async def _fetch_jquants_historical_points_with_detail(
-        self,
-        *,
-        client: httpx.AsyncClient,
-        symbol: str,
-        interval: str,
-        outputsize: int,
-        start_date: str,
-        end_date: str,
-    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        return await self._historical_ops().fetch_jquants_historical_points_with_detail(
-            client=client,
-            symbol=symbol,
-            interval=interval,
-            outputsize=outputsize,
-            start_date=start_date,
-            end_date=end_date,
-        )
-
-    async def _fetch_combined_historical_points_with_detail(
-        self,
-        *,
-        client: httpx.AsyncClient,
-        symbol: str,
-        interval: str,
-        outputsize: int,
-        start_date: str,
-        end_date: str,
-    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        return await self._historical_ops().fetch_combined_historical_points_with_detail(
-            client=client,
-            symbol=symbol,
-            interval=interval,
-            outputsize=outputsize,
-            start_date=start_date,
-            end_date=end_date,
         )
 
     def _should_try_fmp_daily_fallback(
@@ -482,95 +441,6 @@ class MarketDataHistoricalMixin:
             symbol,
             refresh=refresh,
             min_recheck_sec=min_recheck_sec,
-        )
-
-    async def _load_cached_full_daily_series(self, *, symbol: str, refresh: bool) -> list[dict[str, Any]]:
-        return await self._historical_ops().load_cached_full_daily_series(symbol=symbol, refresh=refresh)
-
-    async def _should_recheck_cached_full_daily_series(
-        self,
-        *,
-        symbol: str,
-        min_recheck_sec: int | None,
-    ) -> bool:
-        return await self._historical_ops().should_recheck_cached_full_daily_series(
-            symbol=symbol,
-            min_recheck_sec=min_recheck_sec,
-        )
-
-    async def _refresh_cached_full_daily_series(
-        self,
-        *,
-        client: httpx.AsyncClient | None,
-        symbol: str,
-        cached_points: list[dict[str, Any]],
-        last_date: date | None,
-        today: date,
-    ) -> list[dict[str, Any]]:
-        return await self._historical_ops().refresh_cached_full_daily_series(
-            client=client,
-            symbol=symbol,
-            cached_points=cached_points,
-            last_date=last_date,
-            today=today,
-        )
-
-    async def _fetch_uncached_full_daily_series(
-        self,
-        *,
-        client: httpx.AsyncClient | None,
-        symbol: str,
-        today: date,
-    ) -> list[dict[str, Any]]:
-        return await self._historical_ops().fetch_uncached_full_daily_series(
-            client=client,
-            symbol=symbol,
-            today=today,
-        )
-
-    async def _fetch_daily_series_fallback(
-        self,
-        *,
-        client: httpx.AsyncClient | None,
-        symbol: str,
-    ) -> list[dict[str, Any]]:
-        return await self._historical_ops().fetch_daily_series_fallback(
-            client=client,
-            symbol=symbol,
-        )
-
-    async def _fetch_full_daily_series_from_earliest(
-        self,
-        *,
-        client: httpx.AsyncClient | None,
-        symbol: str,
-        start_cursor: date,
-        today: date,
-    ) -> list[dict[str, Any]]:
-        return await self._historical_ops().fetch_full_daily_series_from_earliest(
-            client=client,
-            symbol=symbol,
-            start_cursor=start_cursor,
-            today=today,
-        )
-
-    async def _extend_daily_history_in_chunks(
-        self,
-        *,
-        client: httpx.AsyncClient | None,
-        symbol: str,
-        start_cursor: date,
-        today: date,
-        point_groups: list[list[dict[str, Any]]] | None = None,
-        merged_points: list[dict[str, Any]] | None = None,
-    ) -> date:
-        return await self._historical_ops().extend_daily_history_in_chunks(
-            client=client,
-            symbol=symbol,
-            start_cursor=start_cursor,
-            today=today,
-            point_groups=point_groups,
-            merged_points=merged_points,
         )
 
     async def _fetch_earliest_date(

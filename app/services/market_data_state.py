@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from ..config import AUTO_REFRESH_ON_STARTUP, LOGGER, MAX_BASIC_SYMBOLS
+from ..config import LOGGER, settings
 from ..utils import fallback_interval_seconds
 from .market_data_state_support import (
     build_empty_price_row,
@@ -57,7 +57,7 @@ class MarketDataStateMixin:
 
     async def start(self) -> None:
         await self._hydrate_prices_from_store(self.symbols)
-        if not AUTO_REFRESH_ON_STARTUP:
+        if not settings.storage.auto_refresh_on_startup:
             await self._set_mode("cached-only", False)
             return
 
@@ -100,12 +100,13 @@ class MarketDataStateMixin:
                 continue
 
     async def set_symbols(self, new_symbols: list[str]) -> None:
+        max_symbols = settings.provider.max_basic_symbols
         if not new_symbols:
             raise HTTPException(status_code=400, detail="At least one symbol is required.")
-        if len(new_symbols) > MAX_BASIC_SYMBOLS:
+        if len(new_symbols) > max_symbols:
             raise HTTPException(
                 status_code=400,
-                detail=f"Basic plan supports up to {MAX_BASIC_SYMBOLS} symbols for websocket streaming.",
+                detail=f"Basic plan supports up to {max_symbols} symbols for websocket streaming.",
             )
 
         async with self._state_lock:

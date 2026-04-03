@@ -7,12 +7,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from ..config import (
-    LMSTUDIO_API_KEY,
-    LMSTUDIO_CHAT_COMPLETIONS_URL,
-    LMSTUDIO_MODEL,
-    LMSTUDIO_TIMEOUT_SEC,
-)
+from ..config import settings
 from ..utils import utc_now_iso
 from .lmstudio_client import LmStudioClient
 from .watchlist_commentary_metrics import compute_watch_metrics, metrics_payload
@@ -28,10 +23,10 @@ from .watchlist_commentary_prompt import (
 class WatchlistCommentaryService:
     def __init__(self) -> None:
         self.client = LmStudioClient(
-            api_url=LMSTUDIO_CHAT_COMPLETIONS_URL,
-            api_key=LMSTUDIO_API_KEY,
-            model=LMSTUDIO_MODEL,
-            timeout_sec=LMSTUDIO_TIMEOUT_SEC,
+            api_url=settings.lmstudio.lmstudio_chat_completions_url,
+            api_key=settings.lmstudio.lmstudio_api_key,
+            model=settings.lmstudio.lmstudio_model,
+            timeout_sec=settings.lmstudio.lmstudio_timeout_sec,
         )
 
     async def build_payload(

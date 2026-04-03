@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from ..config import BETA_MARKET_RECHECK_SEC, FMP_QUOTE_URL, LOGGER, QUOTE_URL, SPARKLINE_POINTS
+from ..config import LOGGER, settings
 from ..utils import normalize_symbols
 from .market_data_provider_clients import owner_fmp_client, owner_twelvedata_client
 from .market_data_queries_overview_support import OverviewInputs
@@ -63,7 +63,7 @@ class MarketDataOverviewOps:
             client,
             "SPY",
             refresh=refresh,
-            min_recheck_sec=BETA_MARKET_RECHECK_SEC,
+            min_recheck_sec=settings.historical.beta_market_recheck_sec,
         )
         qqq_points: list[dict[str, Any]] = []
         if include_qqq:
@@ -71,7 +71,7 @@ class MarketDataOverviewOps:
                 client,
                 "QQQ",
                 refresh=refresh,
-                min_recheck_sec=BETA_MARKET_RECHECK_SEC,
+                min_recheck_sec=settings.historical.beta_market_recheck_sec,
             )
         return {
             "spy_points": spy_points[-90:] if len(spy_points) > 90 else spy_points,
@@ -87,7 +87,10 @@ class MarketDataOverviewOps:
 
     async def fetch_quote_twelvedata(self, client: httpx.AsyncClient, symbol: str) -> dict[str, Any]:
         try:
-            api_response = await owner_twelvedata_client(self.owner, client).get_quote(QUOTE_URL, symbol=symbol)
+            api_response = await owner_twelvedata_client(
+                self.owner,
+                client,
+            ).get_quote(settings.endpoints.quote_url, symbol=symbol)
             async with self.owner._credits_lock:
                 await self.owner._update_minute_credits_from_response(api_response.response)
                 await self.owner._consume_daily_credit_estimate(1, source=f"quote:{symbol}")
@@ -131,7 +134,10 @@ class MarketDataOverviewOps:
 
     async def fetch_quote_fmp(self, client: httpx.AsyncClient, symbol: str) -> dict[str, Any]:
         try:
-            payload = await owner_fmp_client(self.owner, client).get_quote(FMP_QUOTE_URL, symbol=symbol)
+            payload = await owner_fmp_client(self.owner, client).get_quote(
+                settings.endpoints.fmp_quote_url,
+                symbol=symbol,
+            )
         except Exception as exc:
             LOGGER.warning("FMP quote fetch failed for %s: %s", symbol, exc)
             return {}
@@ -173,7 +179,7 @@ class MarketDataOverviewOps:
             client=client,
             symbol=symbol,
             interval="1day",
-            outputsize=max(SPARKLINE_POINTS + 2, 32),
+            outputsize=max(settings.overview.sparkline_points + 2, 32),
         )
         if not points:
             return None
@@ -210,7 +216,7 @@ class MarketDataOverviewOps:
 
         latest_completed_close = completed[0][1]
         previous_completed_close = completed[1][1] if len(completed) >= 2 else None
-        recent_desc = completed[:SPARKLINE_POINTS]
+        recent_desc = completed[: settings.overview.sparkline_points]
         recent_asc = list(reversed(recent_desc))
 
         trend_values = [point[1] for point in recent_asc]

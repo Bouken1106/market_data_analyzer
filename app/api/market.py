@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from ..config import HISTORICAL_DEFAULT_YEARS, MAX_BASIC_SYMBOLS
+from ..config import settings
 from ..models import SymbolUpdateRequest
 from ..services.market_api_service import (
     build_relationship_payload,
@@ -73,7 +73,7 @@ async def symbol_catalog(
 async def historical(
     symbol: str,
     hub: HubDep,
-    years: int = HISTORICAL_DEFAULT_YEARS,
+    years: int = settings.historical.historical_default_years,
     refresh: bool = False,
 ) -> JSONResponse:
     payload = await hub.historical_payload(symbol=symbol, years=years, refresh=refresh)
@@ -130,10 +130,11 @@ async def security_overview(
 
 @router.get("/api/sparkline")
 async def sparkline(symbols: str, hub: HubDep, refresh: bool = False) -> JSONResponse:
+    max_symbols = settings.provider.max_basic_symbols
     target_symbols = require_symbols(
         symbols,
-        max_count=MAX_BASIC_SYMBOLS,
-        max_detail=f"You can request up to {MAX_BASIC_SYMBOLS} symbols at once.",
+        max_count=max_symbols,
+        max_detail=f"You can request up to {max_symbols} symbols at once.",
     )
 
     items = await hub.sparkline_payload(target_symbols, refresh=refresh)
