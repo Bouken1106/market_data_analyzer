@@ -99,6 +99,21 @@ J-Quants 無料枠の注意:
 - 履歴は直近 2 年、かつ 12 週間遅延
 - API キー認証は V2 の `x-api-key` を使用
 
+## テスト
+
+セットアップ後、利用中の仮想環境を有効化したうえで実行:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+OS ごとの仮想環境を使う場合の例:
+
+```bash
+source .venv.wsl/bin/activate
+python -m unittest discover -s tests -v
+```
+
 ## 起動
 
 ```bash

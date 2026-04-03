@@ -31,7 +31,7 @@ def build_pairwise_correlation(
     """Build a stable pairwise correlation matrix with fallback filling."""
 
     raw = returns.corr(min_periods=max(1, int(min_periods)))
-    corr = raw.reindex(index=list(symbols), columns=list(symbols)).to_numpy(dtype=np.float64)
+    corr = raw.reindex(index=list(symbols), columns=list(symbols)).to_numpy(dtype=np.float64, copy=True)
     if fallback is None:
         fallback = np.eye(len(symbols), dtype=np.float64)
     mask = ~np.isfinite(corr)
