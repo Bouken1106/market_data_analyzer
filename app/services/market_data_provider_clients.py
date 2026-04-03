@@ -97,3 +97,11 @@ class FmpClient:
 
     async def get_symbol_catalog(self, url: str) -> Any:
         return await self.get_json(url)
+
+
+def owner_twelvedata_client(owner: Any, client: httpx.AsyncClient) -> TwelveDataClient:
+    return TwelveDataClient(client, getattr(owner, "twelvedata_api_key", ""))
+
+
+def owner_fmp_client(owner: Any, client: httpx.AsyncClient) -> FmpClient:
+    return FmpClient(client, getattr(owner, "fmp_api_key", ""))

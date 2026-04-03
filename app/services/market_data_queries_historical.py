@@ -10,7 +10,6 @@ import httpx
 from ..config import (
     HISTORICAL_DEFAULT_YEARS,
     HISTORICAL_INTERVAL,
-    HISTORICAL_MAX_POINTS,
     JQUANTS_API_KEY as DEFAULT_JQUANTS_API_KEY,
     JQUANTS_MIN_REQUEST_INTERVAL_SEC as DEFAULT_JQUANTS_MIN_REQUEST_INTERVAL_SEC,
     JQUANTS_RATE_LIMIT_BACKOFF_SEC as DEFAULT_JQUANTS_RATE_LIMIT_BACKOFF_SEC,
@@ -30,7 +29,7 @@ from .market_data_queries_historical_runtime import (
 from .market_data_queries_historical_support import (
     HistoricalRequest,
     build_historical_request,
-    build_no_historical_data_detail,
+    build_historical_payload,
     is_daily_interval,
     slice_daily_points,
 )
@@ -52,21 +51,6 @@ class MarketDataHistoricalMixin:
             ops = MarketDataHistoricalOps(self)
             setattr(self, "_historical_ops_service", ops)
         return ops
-
-    @staticmethod
-    def _build_no_historical_data_detail(
-        *,
-        symbol: str,
-        source_mode: str,
-        source_detail: dict[str, Any] | None,
-        allow_api_fallback: bool,
-    ) -> str:
-        return build_no_historical_data_detail(
-            symbol=symbol,
-            source_mode=source_mode,
-            source_detail=source_detail,
-            allow_api_fallback=allow_api_fallback,
-        )
 
     async def historical_payload(
         self,
@@ -90,14 +74,6 @@ class MarketDataHistoricalMixin:
     def _is_daily_interval(interval: str) -> bool:
         return is_daily_interval(interval)
 
-    @classmethod
-    def _should_use_stooq_source(cls, request: HistoricalRequest) -> bool:
-        return (
-            request.months is None
-            and cls._is_daily_interval(HISTORICAL_INTERVAL)
-            and request.source_mode == "stooq"
-        )
-
     def _build_historical_request(
         self,
         *,
@@ -113,6 +89,9 @@ class MarketDataHistoricalMixin:
             source_preference=source_preference,
         )
 
+    def _should_use_stooq_source(self, request: HistoricalRequest) -> bool:
+        return self._historical_query_service()._should_use_stooq_source(request)
+
     async def _resolve_historical_points(
         self,
         *,
@@ -121,33 +100,11 @@ class MarketDataHistoricalMixin:
         refresh: bool,
         allow_api_fallback: bool,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        source_detail: dict[str, Any] = {
-            "provider": request.source_mode or self.provider,
-            "mode": "uninitialized",
-        }
-        if self._should_use_stooq_source(request):
-            points, source_detail = await self._fetch_stooq_daily_points_with_detail(
-                client,
-                symbol=request.symbol,
-                outputsize=request.outputsize,
-                start_date=request.start_date_iso,
-                end_date=request.end_date_iso,
-                refresh=refresh,
-            )
-            if points or not allow_api_fallback:
-                return points, source_detail
-            return await self._fetch_provider_historical_points_for_request(
-                client=client,
-                request=request,
-                refresh=refresh,
-                outputsize=max(HISTORICAL_MAX_POINTS, request.outputsize),
-            )
-
-        return await self._fetch_provider_historical_points_for_request(
+        return await self._historical_query_service()._resolve_historical_points(
             client=client,
             request=request,
             refresh=refresh,
-            outputsize=request.outputsize,
+            allow_api_fallback=allow_api_fallback,
         )
 
     async def _fetch_provider_historical_points_for_request(
@@ -158,20 +115,11 @@ class MarketDataHistoricalMixin:
         refresh: bool,
         outputsize: int,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        if request.fetch_full_history and self._is_daily_interval(HISTORICAL_INTERVAL):
-            return await self._fetch_full_history_with_detail(
-                client=client,
-                symbol=request.symbol,
-                refresh=refresh,
-            )
-
-        return await self._fetch_historical_points_with_detail(
-            client,
-            symbol=request.symbol,
-            interval=HISTORICAL_INTERVAL,
+        return await self._historical_query_service()._fetch_provider_historical_points_for_request(
+            client=client,
+            request=request,
+            refresh=refresh,
             outputsize=outputsize,
-            start_date=request.start_date_iso,
-            end_date=request.end_date_iso,
         )
 
     async def _fetch_full_history_with_detail(

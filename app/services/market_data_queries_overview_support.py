@@ -14,6 +14,9 @@ BuildMarketItem = Callable[[str, float | None, float | None], dict[str, Any]]
 BetaAndCorr = Callable[[list[dict[str, Any]], list[dict[str, Any]]], tuple[float | None, float | None]]
 LatestSessionPoints = Callable[[list[dict[str, Any]]], list[dict[str, Any]]]
 SeriesSourceDescriptor = Callable[[list[dict[str, Any]]], str]
+PickString = Callable[..., str | None]
+BestUpdatedAt = Callable[[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]], str | None]
+DelayNote = Callable[[], str]
 
 _SUPPORT_STATUS = {
     "order_book": "not_supported_on_current_data_source",
@@ -77,6 +80,99 @@ def build_overview_request(
 
 def support_status_payload() -> dict[str, str]:
     return dict(_SUPPORT_STATUS)
+
+
+def build_overview_source_detail(
+    *,
+    quote: dict[str, Any],
+    day_points: list[dict[str, Any]],
+    m1_points: list[dict[str, Any]],
+    m5_points: list[dict[str, Any]],
+    spy_points: list[dict[str, Any]],
+    qqq_points: list[dict[str, Any]],
+    price_context: dict[str, Any],
+    series_source_descriptor: SeriesSourceDescriptor,
+) -> dict[str, Any]:
+    quote_source_detail = quote.get("_source_detail") if isinstance(quote, dict) else {}
+    if not isinstance(quote_source_detail, dict):
+        quote_source_detail = {}
+    return {
+        "quote_provider": quote.get("_source_provider") if isinstance(quote, dict) else None,
+        "chart_sources": {
+            "1min": series_source_descriptor(m1_points),
+            "5min": series_source_descriptor(m5_points),
+            "1day": series_source_descriptor(day_points),
+            "SPY": series_source_descriptor(spy_points),
+            "QQQ": series_source_descriptor(qqq_points),
+        },
+        "fields": {
+            "price.current": price_context["current_price_source"] or "unknown",
+            "price.previous_close": price_context["previous_close_source"] or "unknown",
+            "price.day_open": price_context["day_open_source"] or "unknown",
+            "price.day_high": price_context["day_high_source"] or "unknown",
+            "price.day_low": price_context["day_low_source"] or "unknown",
+            "volume.today": price_context["day_volume_source"] or "unknown",
+            "spread.bid": quote_source_detail.get("bid") or "unknown",
+            "spread.ask": quote_source_detail.get("ask") or "unknown",
+        },
+    }
+
+
+def build_overview_payload(
+    *,
+    request: OverviewRequest,
+    inputs: OverviewInputs,
+    provider: str,
+    price_context: dict[str, Any],
+    technical: dict[str, float | None],
+    market_payload: dict[str, Any],
+    source_detail: dict[str, Any],
+    pick_string: PickString,
+    best_updated_at: BestUpdatedAt,
+    delay_note: DelayNote,
+) -> dict[str, Any]:
+    return {
+        "symbol": request.symbol,
+        "name": pick_string(inputs.quote, "name", "instrument_name"),
+        "exchange": pick_string(inputs.quote, "exchange"),
+        "price": {
+            "current": price_context["current_price"],
+            "previous_close": price_context["previous_close"],
+            "change_abs": price_context["change_abs"],
+            "change_pct": price_context["change_pct"],
+            "day_open": price_context["day_open"],
+            "day_high": price_context["day_high"],
+            "day_low": price_context["day_low"],
+            "gap_abs": price_context["gap_abs"],
+            "gap_pct": price_context["gap_pct"],
+            "updated_at": best_updated_at(inputs.quote, inputs.m1_points, inputs.day_points),
+            "delay_note": delay_note(),
+        },
+        "volume": {
+            "today": price_context["day_volume"],
+            "avg20": price_context["avg_volume_20"],
+            "avg_ratio": price_context["avg_volume_ratio"],
+            "turnover": price_context["turnover"],
+        },
+        "spread": {
+            "bid": price_context["bid"],
+            "ask": price_context["ask"],
+            "spread_abs": price_context["spread_abs"],
+            "spread_pct": price_context["spread_pct"],
+        },
+        "technical": technical,
+        "market": market_payload,
+        "charts": {
+            "1min": inputs.m1_points,
+            "5min": inputs.m5_points,
+            "1day": inputs.day_points,
+        },
+        "support_status": {
+            **support_status_payload(),
+        },
+        "source": f"{provider}-live",
+        "source_detail": source_detail,
+    }
 
 
 def build_price_context(

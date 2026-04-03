@@ -9,7 +9,12 @@ from fastapi import HTTPException
 
 from ..config import OVERVIEW_CACHE_TTL_SEC, SPARKLINE_CACHE_TTL_SEC, SYMBOL_PATTERN
 from ..utils import normalize_symbols
-from .market_data_queries_overview_support import OverviewInputs, OverviewRequest, support_status_payload
+from .market_data_queries_overview_support import (
+    OverviewInputs,
+    OverviewRequest,
+    build_overview_payload,
+    build_overview_source_detail,
+)
 from .ttl_cache import ttl_cache_lookup_response, ttl_cache_pop_matching, ttl_cache_store
 
 
@@ -206,7 +211,7 @@ class MarketDataOverviewQueryService:
             include_market=request.include_market,
             include_qqq=request.include_qqq,
         )
-        source_detail = self._build_overview_source_detail(
+        source_detail = build_overview_source_detail(
             quote=inputs.quote,
             day_points=inputs.day_points,
             m1_points=inputs.m1_points,
@@ -214,82 +219,17 @@ class MarketDataOverviewQueryService:
             spy_points=market["spy_points"],
             qqq_points=market["qqq_points"],
             price_context=price_context,
+            series_source_descriptor=self.owner._series_source_descriptor,
         )
-
-        return {
-            "symbol": request.symbol,
-            "name": self.owner._pick_string(inputs.quote, "name", "instrument_name"),
-            "exchange": self.owner._pick_string(inputs.quote, "exchange"),
-            "price": {
-                "current": price_context["current_price"],
-                "previous_close": price_context["previous_close"],
-                "change_abs": price_context["change_abs"],
-                "change_pct": price_context["change_pct"],
-                "day_open": price_context["day_open"],
-                "day_high": price_context["day_high"],
-                "day_low": price_context["day_low"],
-                "gap_abs": price_context["gap_abs"],
-                "gap_pct": price_context["gap_pct"],
-                "updated_at": self.owner._best_updated_at(inputs.quote, inputs.m1_points, inputs.day_points),
-                "delay_note": self.owner._delay_note(),
-            },
-            "volume": {
-                "today": price_context["day_volume"],
-                "avg20": price_context["avg_volume_20"],
-                "avg_ratio": price_context["avg_volume_ratio"],
-                "turnover": price_context["turnover"],
-            },
-            "spread": {
-                "bid": price_context["bid"],
-                "ask": price_context["ask"],
-                "spread_abs": price_context["spread_abs"],
-                "spread_pct": price_context["spread_pct"],
-            },
-            "technical": technical,
-            "market": market["payload"],
-            "charts": {
-                "1min": inputs.m1_points,
-                "5min": inputs.m5_points,
-                "1day": inputs.day_points,
-            },
-            "support_status": {
-                **support_status_payload(),
-            },
-            "source": f"{self.owner.provider}-live",
-            "source_detail": source_detail,
-        }
-
-    def _build_overview_source_detail(
-        self,
-        *,
-        quote: dict[str, Any],
-        day_points: list[dict[str, Any]],
-        m1_points: list[dict[str, Any]],
-        m5_points: list[dict[str, Any]],
-        spy_points: list[dict[str, Any]],
-        qqq_points: list[dict[str, Any]],
-        price_context: dict[str, Any],
-    ) -> dict[str, Any]:
-        quote_source_detail = quote.get("_source_detail") if isinstance(quote, dict) else {}
-        if not isinstance(quote_source_detail, dict):
-            quote_source_detail = {}
-        return {
-            "quote_provider": quote.get("_source_provider") if isinstance(quote, dict) else None,
-            "chart_sources": {
-                "1min": self.owner._series_source_descriptor(m1_points),
-                "5min": self.owner._series_source_descriptor(m5_points),
-                "1day": self.owner._series_source_descriptor(day_points),
-                "SPY": self.owner._series_source_descriptor(spy_points),
-                "QQQ": self.owner._series_source_descriptor(qqq_points),
-            },
-            "fields": {
-                "price.current": price_context["current_price_source"] or "unknown",
-                "price.previous_close": price_context["previous_close_source"] or "unknown",
-                "price.day_open": price_context["day_open_source"] or "unknown",
-                "price.day_high": price_context["day_high_source"] or "unknown",
-                "price.day_low": price_context["day_low_source"] or "unknown",
-                "volume.today": price_context["day_volume_source"] or "unknown",
-                "spread.bid": quote_source_detail.get("bid") or "unknown",
-                "spread.ask": quote_source_detail.get("ask") or "unknown",
-            },
-        }
+        return build_overview_payload(
+            request=request,
+            inputs=inputs,
+            provider=self.owner.provider,
+            price_context=price_context,
+            technical=technical,
+            market_payload=market["payload"],
+            source_detail=source_detail,
+            pick_string=self.owner._pick_string,
+            best_updated_at=self.owner._best_updated_at,
+            delay_note=self.owner._delay_note,
+        )

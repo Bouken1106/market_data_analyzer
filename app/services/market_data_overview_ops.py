@@ -10,19 +10,13 @@ import httpx
 
 from ..config import BETA_MARKET_RECHECK_SEC, FMP_QUOTE_URL, LOGGER, QUOTE_URL, SPARKLINE_POINTS
 from ..utils import normalize_symbols
-from .market_data_provider_clients import FmpClient, TwelveDataClient
+from .market_data_provider_clients import owner_fmp_client, owner_twelvedata_client
 from .market_data_queries_overview_support import OverviewInputs
 
 
 class MarketDataOverviewOps:
     def __init__(self, owner: Any) -> None:
         self.owner = owner
-
-    def _td_client(self, client: httpx.AsyncClient) -> TwelveDataClient:
-        return TwelveDataClient(client, getattr(self.owner, "twelvedata_api_key", ""))
-
-    def _fmp_client(self, client: httpx.AsyncClient) -> FmpClient:
-        return FmpClient(client, getattr(self.owner, "fmp_api_key", ""))
 
     async def fetch_overview_inputs(
         self,
@@ -93,7 +87,7 @@ class MarketDataOverviewOps:
 
     async def fetch_quote_twelvedata(self, client: httpx.AsyncClient, symbol: str) -> dict[str, Any]:
         try:
-            api_response = await self._td_client(client).get_quote(QUOTE_URL, symbol=symbol)
+            api_response = await owner_twelvedata_client(self.owner, client).get_quote(QUOTE_URL, symbol=symbol)
             async with self.owner._credits_lock:
                 await self.owner._update_minute_credits_from_response(api_response.response)
                 await self.owner._consume_daily_credit_estimate(1, source=f"quote:{symbol}")
@@ -137,7 +131,7 @@ class MarketDataOverviewOps:
 
     async def fetch_quote_fmp(self, client: httpx.AsyncClient, symbol: str) -> dict[str, Any]:
         try:
-            payload = await self._fmp_client(client).get_quote(FMP_QUOTE_URL, symbol=symbol)
+            payload = await owner_fmp_client(self.owner, client).get_quote(FMP_QUOTE_URL, symbol=symbol)
         except Exception as exc:
             LOGGER.warning("FMP quote fetch failed for %s: %s", symbol, exc)
             return {}

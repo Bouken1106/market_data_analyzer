@@ -19,7 +19,7 @@ from ..ohlcv import normalize_ohlcv_point
 from ..stooq import fetch_stooq_daily_history as default_fetch_stooq_daily_history
 from .market_data_full_history import FullDailyHistoryLoader
 from .market_data_historical_jquants import JQuantsHistoricalClient
-from .market_data_provider_clients import FmpClient, TwelveDataClient
+from .market_data_provider_clients import owner_fmp_client, owner_twelvedata_client
 from .market_data_queries_historical_runtime import (
     build_combined_historical_detail,
     build_jquants_historical_detail,
@@ -33,12 +33,6 @@ class MarketDataHistoricalOps:
         self.owner = owner
         self.jquants = JQuantsHistoricalClient(owner)
         self.full_history = FullDailyHistoryLoader(owner)
-
-    def _td_client(self, client: httpx.AsyncClient) -> TwelveDataClient:
-        return TwelveDataClient(client, getattr(self.owner, "twelvedata_api_key", ""))
-
-    def _fmp_client(self, client: httpx.AsyncClient) -> FmpClient:
-        return FmpClient(client, getattr(self.owner, "fmp_api_key", ""))
 
     async def fetch_stooq_daily_points_with_detail(
         self,
@@ -262,7 +256,7 @@ class MarketDataHistoricalOps:
         end_date: str | None = None,
     ) -> list[dict[str, Any]]:
         try:
-            api_response = await self._td_client(client).get_time_series(
+            api_response = await owner_twelvedata_client(self.owner, client).get_time_series(
                 TIME_SERIES_URL,
                 symbol=symbol,
                 interval=interval,
@@ -363,7 +357,7 @@ class MarketDataHistoricalOps:
             return []
 
         try:
-            payload = await self._fmp_client(client).get_historical_eod(
+            payload = await owner_fmp_client(self.owner, client).get_historical_eod(
                 FMP_HISTORICAL_EOD_URL,
                 symbol=symbol,
                 start_date=start_date,

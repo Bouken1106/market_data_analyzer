@@ -134,99 +134,152 @@ def _resolve_data_provider(supported_data_providers: frozenset[str]) -> str:
     return "twelvedata"
 
 
-def _load_settings() -> AppSettings:
+def _resolve_primary_api_key(data_provider: str, *, twelve_data_api_key: str, fmp_api_key: str) -> str:
+    if data_provider == "twelvedata":
+        return twelve_data_api_key
+    if data_provider == "fmp":
+        return fmp_api_key
+    return twelve_data_api_key or fmp_api_key
+
+
+def _load_provider_settings() -> dict[str, object]:
     supported_data_providers = frozenset({"twelvedata", "fmp", "both"})
     data_provider = _resolve_data_provider(supported_data_providers)
     twelve_data_api_key = os.getenv("TWELVE_DATA_API_KEY", "").strip()
     fmp_api_key = os.getenv("FMP_API_KEY", "").strip()
     jquants_api_key = os.getenv("JQUANTS_API_KEY", "").strip()
-    symbol_pattern = re.compile(r"^[A-Z0-9.\-]{1,15}$")
+    return {
+        "supported_data_providers": supported_data_providers,
+        "data_provider": data_provider,
+        "twelve_data_api_key": twelve_data_api_key,
+        "fmp_api_key": fmp_api_key,
+        "jquants_api_key": jquants_api_key,
+        "jquants_min_request_interval_sec": _float_env(
+            "JQUANTS_MIN_REQUEST_INTERVAL_SEC",
+            default=12.0,
+            minimum=0.0,
+        ),
+        "jquants_rate_limit_backoff_sec": _float_env(
+            "JQUANTS_RATE_LIMIT_BACKOFF_SEC",
+            default=30.0,
+            minimum=1.0,
+        ),
+        "api_key": _resolve_primary_api_key(
+            data_provider,
+            twelve_data_api_key=twelve_data_api_key,
+            fmp_api_key=fmp_api_key,
+        ),
+        "max_basic_symbols": 8,
+        "symbol_pattern": re.compile(r"^[A-Z0-9.\-]{1,15}$"),
+    }
 
-    if data_provider == "twelvedata":
-        api_key = twelve_data_api_key
-    elif data_provider == "fmp":
-        api_key = fmp_api_key
-    else:
-        api_key = twelve_data_api_key or fmp_api_key
 
-    app_dir = Path(__file__).resolve().parent
+def _load_provider_urls() -> dict[str, str]:
+    return {
+        "ws_url_template": "wss://ws.twelvedata.com/v1/quotes/price?apikey={api_key}",
+        "rest_price_url": "https://api.twelvedata.com/price",
+        "quote_url": "https://api.twelvedata.com/quote",
+        "api_usage_url": "https://api.twelvedata.com/api_usage",
+        "stocks_list_url": "https://api.twelvedata.com/stocks",
+        "time_series_url": "https://api.twelvedata.com/time_series",
+        "earliest_timestamp_url": "https://api.twelvedata.com/earliest_timestamp",
+        "fmp_quote_url": "https://financialmodelingprep.com/stable/quote",
+        "fmp_stock_list_url": "https://financialmodelingprep.com/stable/stock-list",
+        "fmp_stock_list_legacy_url": "https://financialmodelingprep.com/api/v3/stock/list",
+        "fmp_historical_eod_url": "https://financialmodelingprep.com/stable/historical-price-eod/full",
+        "jquants_daily_bars_url": "https://api.jquants.com/v2/equities/bars/daily",
+        "fmp_profile_url": "https://financialmodelingprep.com/stable/profile",
+        "fmp_key_metrics_ttm_url": "https://financialmodelingprep.com/stable/key-metrics-ttm",
+        "fmp_ratios_ttm_url": "https://financialmodelingprep.com/stable/ratios-ttm",
+        "fmp_income_statement_url": "https://financialmodelingprep.com/stable/income-statement",
+        "fmp_balance_sheet_url": "https://financialmodelingprep.com/stable/balance-sheet-statement",
+        "fmp_cash_flow_url": "https://financialmodelingprep.com/stable/cash-flow-statement",
+        "fmp_dividend_adjusted_price_url": "https://financialmodelingprep.com/stable/historical-price-eod/dividend-adjusted",
+        "fmp_dividends_url": "https://financialmodelingprep.com/stable/dividends",
+        "fmp_splits_url": "https://financialmodelingprep.com/stable/splits",
+    }
+
+
+def _load_budget_settings() -> dict[str, int | float]:
+    return {
+        "api_limit_per_min": _int_env("API_LIMIT_PER_MIN", default=8, minimum=1),
+        "api_limit_per_day": _int_env("API_LIMIT_PER_DAY", default=800, minimum=1),
+        "daily_budget_utilization": _float_env("DAILY_BUDGET_UTILIZATION", default=0.75, minimum=0.1),
+        "per_min_limit_utilization": _float_env("PER_MIN_LIMIT_UTILIZATION", default=0.9, minimum=0.1),
+        "rest_min_poll_interval_sec": _int_env("REST_MIN_POLL_INTERVAL_SEC", default=30, minimum=10),
+        "market_closed_sleep_sec": _int_env("MARKET_CLOSED_SLEEP_SEC", default=60, minimum=10),
+    }
+
+
+def _load_cache_settings(app_dir: Path) -> dict[str, object]:
+    return {
+        "app_dir": app_dir,
+        "symbol_catalog_country": os.getenv("SYMBOL_CATALOG_COUNTRY", "United States").strip() or "United States",
+        "symbol_catalog_ttl_sec": _int_env("SYMBOL_CATALOG_TTL_SEC", default=86400, minimum=60),
+        "symbol_catalog_max_items": _int_env("SYMBOL_CATALOG_MAX_ITEMS", default=25000, minimum=1000),
+        "symbol_catalog_cache_path": app_dir / "cache" / "us_stock_symbol_catalog.json",
+        "last_price_cache_path": app_dir / "cache" / "last_prices.json",
+        "full_daily_history_cache_dir": app_dir / "cache" / "daily_history",
+        "fmp_reference_cache_dir": app_dir / "cache" / "fmp_reference",
+        "paper_portfolio_cache_path": app_dir / "cache" / "paper_portfolio.json",
+        "ui_state_cache_path": app_dir / "cache" / "ui_state.json",
+        "paper_initial_cash": _float_env("PAPER_INITIAL_CASH", default=1_000_000, minimum=1),
+        "auto_refresh_on_startup": _bool_env("AUTO_REFRESH_ON_STARTUP", default=False),
+    }
+
+
+def _load_historical_settings() -> dict[str, int | str]:
+    return {
+        "historical_default_years": _int_env("HISTORICAL_DEFAULT_YEARS", default=5, minimum=1),
+        "historical_max_years": _int_env("HISTORICAL_MAX_YEARS", default=10, minimum=1),
+        "historical_cache_ttl_sec": _int_env("HISTORICAL_CACHE_TTL_SEC", default=43200, minimum=60),
+        "historical_interval": os.getenv("HISTORICAL_INTERVAL", "1day").strip() or "1day",
+        "historical_max_points": _int_env("HISTORICAL_MAX_POINTS", default=2000, minimum=100),
+        "time_series_max_outputsize": _int_env("TIME_SERIES_MAX_OUTPUTSIZE", default=5000, minimum=100),
+        "full_history_chunk_years": _int_env("FULL_HISTORY_CHUNK_YEARS", default=15, minimum=1),
+        "full_history_max_chunks": _int_env("FULL_HISTORY_MAX_CHUNKS", default=20, minimum=1),
+        "daily_diff_min_recheck_sec": _int_env("DAILY_DIFF_MIN_RECHECK_SEC", default=21600, minimum=60),
+        "beta_market_recheck_sec": _int_env("BETA_MARKET_RECHECK_SEC", default=86400, minimum=300),
+        "fmp_reference_cache_ttl_sec": _int_env("FMP_REFERENCE_CACHE_TTL_SEC", default=43200, minimum=300),
+        "overview_cache_ttl_sec": _int_env("OVERVIEW_CACHE_TTL_SEC", default=120, minimum=10),
+        "sparkline_cache_ttl_sec": _int_env("SPARKLINE_CACHE_TTL_SEC", default=21600, minimum=300),
+        "sparkline_points": _int_env("SPARKLINE_POINTS", default=30, minimum=10),
+    }
+
+
+def _load_lmstudio_settings() -> dict[str, object]:
     lmstudio_base_url = os.getenv("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1").strip().rstrip("/")
-    return AppSettings(
-        supported_data_providers=supported_data_providers,
-        data_provider=data_provider,
-        twelve_data_api_key=twelve_data_api_key,
-        fmp_api_key=fmp_api_key,
-        jquants_api_key=jquants_api_key,
-        jquants_min_request_interval_sec=_float_env("JQUANTS_MIN_REQUEST_INTERVAL_SEC", default=12.0, minimum=0.0),
-        jquants_rate_limit_backoff_sec=_float_env("JQUANTS_RATE_LIMIT_BACKOFF_SEC", default=30.0, minimum=1.0),
-        api_key=api_key,
-        max_basic_symbols=8,
-        symbol_pattern=symbol_pattern,
-        ws_url_template="wss://ws.twelvedata.com/v1/quotes/price?apikey={api_key}",
-        rest_price_url="https://api.twelvedata.com/price",
-        quote_url="https://api.twelvedata.com/quote",
-        api_usage_url="https://api.twelvedata.com/api_usage",
-        stocks_list_url="https://api.twelvedata.com/stocks",
-        time_series_url="https://api.twelvedata.com/time_series",
-        earliest_timestamp_url="https://api.twelvedata.com/earliest_timestamp",
-        fmp_quote_url="https://financialmodelingprep.com/stable/quote",
-        fmp_stock_list_url="https://financialmodelingprep.com/stable/stock-list",
-        fmp_stock_list_legacy_url="https://financialmodelingprep.com/api/v3/stock/list",
-        fmp_historical_eod_url="https://financialmodelingprep.com/stable/historical-price-eod/full",
-        jquants_daily_bars_url="https://api.jquants.com/v2/equities/bars/daily",
-        api_limit_per_min=_int_env("API_LIMIT_PER_MIN", default=8, minimum=1),
-        api_limit_per_day=_int_env("API_LIMIT_PER_DAY", default=800, minimum=1),
-        daily_budget_utilization=_float_env("DAILY_BUDGET_UTILIZATION", default=0.75, minimum=0.1),
-        per_min_limit_utilization=_float_env("PER_MIN_LIMIT_UTILIZATION", default=0.9, minimum=0.1),
-        rest_min_poll_interval_sec=_int_env("REST_MIN_POLL_INTERVAL_SEC", default=30, minimum=10),
-        market_closed_sleep_sec=_int_env("MARKET_CLOSED_SLEEP_SEC", default=60, minimum=10),
-        symbol_catalog_country=os.getenv("SYMBOL_CATALOG_COUNTRY", "United States").strip() or "United States",
-        symbol_catalog_ttl_sec=_int_env("SYMBOL_CATALOG_TTL_SEC", default=86400, minimum=60),
-        symbol_catalog_max_items=_int_env("SYMBOL_CATALOG_MAX_ITEMS", default=25000, minimum=1000),
-        app_dir=app_dir,
-        symbol_catalog_cache_path=app_dir / "cache" / "us_stock_symbol_catalog.json",
-        last_price_cache_path=app_dir / "cache" / "last_prices.json",
-        full_daily_history_cache_dir=app_dir / "cache" / "daily_history",
-        fmp_reference_cache_dir=app_dir / "cache" / "fmp_reference",
-        paper_portfolio_cache_path=app_dir / "cache" / "paper_portfolio.json",
-        ui_state_cache_path=app_dir / "cache" / "ui_state.json",
-        paper_initial_cash=_float_env("PAPER_INITIAL_CASH", default=1_000_000, minimum=1),
-        auto_refresh_on_startup=_bool_env("AUTO_REFRESH_ON_STARTUP", default=False),
-        historical_default_years=_int_env("HISTORICAL_DEFAULT_YEARS", default=5, minimum=1),
-        historical_max_years=_int_env("HISTORICAL_MAX_YEARS", default=10, minimum=1),
-        historical_cache_ttl_sec=_int_env("HISTORICAL_CACHE_TTL_SEC", default=43200, minimum=60),
-        historical_interval=os.getenv("HISTORICAL_INTERVAL", "1day").strip() or "1day",
-        historical_max_points=_int_env("HISTORICAL_MAX_POINTS", default=2000, minimum=100),
-        time_series_max_outputsize=_int_env("TIME_SERIES_MAX_OUTPUTSIZE", default=5000, minimum=100),
-        full_history_chunk_years=_int_env("FULL_HISTORY_CHUNK_YEARS", default=15, minimum=1),
-        full_history_max_chunks=_int_env("FULL_HISTORY_MAX_CHUNKS", default=20, minimum=1),
-        daily_diff_min_recheck_sec=_int_env("DAILY_DIFF_MIN_RECHECK_SEC", default=21600, minimum=60),
-        beta_market_recheck_sec=_int_env("BETA_MARKET_RECHECK_SEC", default=86400, minimum=300),
-        fmp_reference_cache_ttl_sec=_int_env("FMP_REFERENCE_CACHE_TTL_SEC", default=43200, minimum=300),
-        fmp_profile_url="https://financialmodelingprep.com/stable/profile",
-        fmp_key_metrics_ttm_url="https://financialmodelingprep.com/stable/key-metrics-ttm",
-        fmp_ratios_ttm_url="https://financialmodelingprep.com/stable/ratios-ttm",
-        fmp_income_statement_url="https://financialmodelingprep.com/stable/income-statement",
-        fmp_balance_sheet_url="https://financialmodelingprep.com/stable/balance-sheet-statement",
-        fmp_cash_flow_url="https://financialmodelingprep.com/stable/cash-flow-statement",
-        fmp_dividend_adjusted_price_url="https://financialmodelingprep.com/stable/historical-price-eod/dividend-adjusted",
-        fmp_dividends_url="https://financialmodelingprep.com/stable/dividends",
-        fmp_splits_url="https://financialmodelingprep.com/stable/splits",
-        overview_cache_ttl_sec=_int_env("OVERVIEW_CACHE_TTL_SEC", default=120, minimum=10),
-        sparkline_cache_ttl_sec=_int_env("SPARKLINE_CACHE_TTL_SEC", default=21600, minimum=300),
-        sparkline_points=_int_env("SPARKLINE_POINTS", default=30, minimum=10),
-        lmstudio_base_url=lmstudio_base_url,
-        lmstudio_chat_completions_url=os.getenv(
+    return {
+        "lmstudio_base_url": lmstudio_base_url,
+        "lmstudio_chat_completions_url": os.getenv(
             "LMSTUDIO_CHAT_COMPLETIONS_URL",
             f"{lmstudio_base_url}/chat/completions",
         ).strip(),
-        lmstudio_model=os.getenv("LMSTUDIO_MODEL", "ministral-3-3b").strip() or "ministral-3-3b",
-        lmstudio_api_key=os.getenv("LMSTUDIO_API_KEY", "").strip(),
-        lmstudio_timeout_sec=_float_env("LMSTUDIO_TIMEOUT_SEC", default=25.0, minimum=3.0),
-        ml_history_min_months=3,
-        ml_history_max_months=60,
-        symbol_country_map_raw=os.getenv("SYMBOL_COUNTRY_MAP", ""),
-        default_symbols_raw=os.getenv("DEFAULT_SYMBOLS", "AAPL,MSFT,GOOGL,AMZN,TSLA"),
+        "lmstudio_model": os.getenv("LMSTUDIO_MODEL", "ministral-3-3b").strip() or "ministral-3-3b",
+        "lmstudio_api_key": os.getenv("LMSTUDIO_API_KEY", "").strip(),
+        "lmstudio_timeout_sec": _float_env("LMSTUDIO_TIMEOUT_SEC", default=25.0, minimum=3.0),
+    }
+
+
+def _load_app_behavior_settings() -> dict[str, object]:
+    return {
+        "ml_history_min_months": 3,
+        "ml_history_max_months": 60,
+        "symbol_country_map_raw": os.getenv("SYMBOL_COUNTRY_MAP", ""),
+        "default_symbols_raw": os.getenv("DEFAULT_SYMBOLS", "AAPL,MSFT,GOOGL,AMZN,TSLA"),
+    }
+
+
+def _load_settings() -> AppSettings:
+    app_dir = Path(__file__).resolve().parent
+    return AppSettings(
+        **_load_provider_settings(),
+        **_load_provider_urls(),
+        **_load_budget_settings(),
+        **_load_cache_settings(app_dir),
+        **_load_historical_settings(),
+        **_load_lmstudio_settings(),
+        **_load_app_behavior_settings(),
     )
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
@@ -24,6 +25,32 @@ from ..config import (
 )
 from .market_data_provider_clients import FmpClient
 from .ttl_cache import build_cached_response, ttl_cache_lookup_response, ttl_cache_pop, ttl_cache_store
+
+
+@dataclass(frozen=True)
+class FmpReferenceRawPayloads:
+    profile: Any
+    ratios: Any
+    metrics: Any
+    income: Any
+    balance_sheet: Any
+    cash_flow: Any
+    historical: Any
+    dividends: Any
+    splits: Any
+
+
+@dataclass(frozen=True)
+class FmpReferenceData:
+    profile: dict[str, Any]
+    ratios: dict[str, Any]
+    metrics: dict[str, Any]
+    income: dict[str, Any]
+    balance_sheet: dict[str, Any]
+    cash_flow: dict[str, Any]
+    historical: list[dict[str, Any]]
+    dividends: list[dict[str, Any]]
+    splits: list[dict[str, Any]]
 
 
 class MarketDataReferenceMixin:
@@ -104,6 +131,12 @@ class MarketDataReferenceMixin:
         }
 
     async def _fetch_fmp_reference_live(self, symbol: str) -> dict[str, Any]:
+        raw_payloads = await self._fetch_fmp_reference_raw(symbol)
+        normalized = self._normalize_fmp_reference_raw(raw_payloads)
+        self._validate_fmp_reference_data(normalized)
+        return self._build_fmp_reference_payload(symbol=symbol, data=normalized)
+
+    async def _fetch_fmp_reference_raw(self, symbol: str) -> FmpReferenceRawPayloads:
         timeout = httpx.Timeout(40.0, connect=10.0)
         two_years_ago = (date.today() - timedelta(days=366 * 2)).isoformat()
         async with httpx.AsyncClient(timeout=timeout) as client:
@@ -150,21 +183,43 @@ class MarketDataReferenceMixin:
                 div_task,
                 split_task,
             )
+        return FmpReferenceRawPayloads(
+            profile=profile_raw,
+            ratios=ratios_raw,
+            metrics=metrics_raw,
+            income=income_raw,
+            balance_sheet=bs_raw,
+            cash_flow=cf_raw,
+            historical=hist_raw,
+            dividends=div_raw,
+            splits=split_raw,
+        )
 
-        profile = self._first_dict(profile_raw)
-        ratios = self._first_dict(ratios_raw)
-        metrics = self._first_dict(metrics_raw)
-        income = self._first_dict(income_raw)
-        balance_sheet = self._first_dict(bs_raw)
-        cash_flow = self._first_dict(cf_raw)
-        historical = self._extract_historical_rows(hist_raw)
-        dividends = self._extract_historical_rows(div_raw)
-        splits = self._extract_historical_rows(split_raw)
+    def _normalize_fmp_reference_raw(self, raw: FmpReferenceRawPayloads) -> FmpReferenceData:
+        return FmpReferenceData(
+            profile=self._first_dict(raw.profile),
+            ratios=self._first_dict(raw.ratios),
+            metrics=self._first_dict(raw.metrics),
+            income=self._first_dict(raw.income),
+            balance_sheet=self._first_dict(raw.balance_sheet),
+            cash_flow=self._first_dict(raw.cash_flow),
+            historical=self._extract_historical_rows(raw.historical),
+            dividends=self._extract_historical_rows(raw.dividends),
+            splits=self._extract_historical_rows(raw.splits),
+        )
 
-        if not profile and not historical and not income and not balance_sheet and not cash_flow:
+    @staticmethod
+    def _validate_fmp_reference_data(data: FmpReferenceData) -> None:
+        if not data.profile and not data.historical and not data.income and not data.balance_sheet and not data.cash_flow:
             raise HTTPException(status_code=502, detail="Failed to fetch FMP reference data.")
 
-        adjusted_summary = self._build_adjusted_price_summary(historical)
+    def _build_fmp_reference_payload(
+        self,
+        *,
+        symbol: str,
+        data: FmpReferenceData,
+    ) -> dict[str, Any]:
+        adjusted_summary = self._build_adjusted_price_summary(data.historical)
         return {
             "symbol": symbol,
             "source": "fmp-live",
@@ -173,64 +228,64 @@ class MarketDataReferenceMixin:
             "estimated_api_calls_on_refresh": 9,
             "cost_note": "This payload is cached to reduce API credit usage (Free plan: 250 calls/day).",
             "profile": {
-                "company_name": profile.get("companyName") or profile.get("company_name"),
-                "exchange": profile.get("exchangeShortName") or profile.get("exchange"),
-                "sector": profile.get("sector"),
-                "industry": profile.get("industry"),
-                "country": profile.get("country"),
-                "website": profile.get("website"),
-                "ceo": profile.get("ceo"),
-                "description": profile.get("description"),
-                "market_cap": self._try_parse_float(profile.get("mktCap") or profile.get("marketCap")),
-                "beta": self._try_parse_float(profile.get("beta")),
-                "employees": profile.get("fullTimeEmployees"),
-                "ipo_date": profile.get("ipoDate"),
+                "company_name": data.profile.get("companyName") or data.profile.get("company_name"),
+                "exchange": data.profile.get("exchangeShortName") or data.profile.get("exchange"),
+                "sector": data.profile.get("sector"),
+                "industry": data.profile.get("industry"),
+                "country": data.profile.get("country"),
+                "website": data.profile.get("website"),
+                "ceo": data.profile.get("ceo"),
+                "description": data.profile.get("description"),
+                "market_cap": self._try_parse_float(data.profile.get("mktCap") or data.profile.get("marketCap")),
+                "beta": self._try_parse_float(data.profile.get("beta")),
+                "employees": data.profile.get("fullTimeEmployees"),
+                "ipo_date": data.profile.get("ipoDate"),
             },
             "adjusted_prices": adjusted_summary,
             "corporate_actions": {
-                "dividends": self._normalize_actions(dividends, action_type="dividend"),
-                "splits": self._normalize_actions(splits, action_type="split"),
+                "dividends": self._normalize_actions(data.dividends, action_type="dividend"),
+                "splits": self._normalize_actions(data.splits, action_type="split"),
             },
             "financials": {
                 "ratios_ttm": {
-                    "pe_ratio_ttm": self._try_parse_float(ratios.get("peRatioTTM")),
-                    "pb_ratio_ttm": self._try_parse_float(ratios.get("priceToBookRatioTTM")),
-                    "ps_ratio_ttm": self._try_parse_float(ratios.get("priceToSalesRatioTTM")),
-                    "roe_ttm": self._try_parse_float(ratios.get("returnOnEquityTTM")),
-                    "net_margin_ttm": self._try_parse_float(ratios.get("netProfitMarginTTM")),
-                    "current_ratio_ttm": self._try_parse_float(ratios.get("currentRatioTTM")),
-                    "debt_to_equity_ttm": self._try_parse_float(ratios.get("debtEquityRatioTTM")),
+                    "pe_ratio_ttm": self._try_parse_float(data.ratios.get("peRatioTTM")),
+                    "pb_ratio_ttm": self._try_parse_float(data.ratios.get("priceToBookRatioTTM")),
+                    "ps_ratio_ttm": self._try_parse_float(data.ratios.get("priceToSalesRatioTTM")),
+                    "roe_ttm": self._try_parse_float(data.ratios.get("returnOnEquityTTM")),
+                    "net_margin_ttm": self._try_parse_float(data.ratios.get("netProfitMarginTTM")),
+                    "current_ratio_ttm": self._try_parse_float(data.ratios.get("currentRatioTTM")),
+                    "debt_to_equity_ttm": self._try_parse_float(data.ratios.get("debtEquityRatioTTM")),
                 },
                 "key_metrics_ttm": {
-                    "eps_ttm": self._try_parse_float(metrics.get("epsTTM")),
-                    "free_cash_flow_per_share_ttm": self._try_parse_float(metrics.get("freeCashFlowPerShareTTM")),
-                    "book_value_per_share_ttm": self._try_parse_float(metrics.get("bookValuePerShareTTM")),
-                    "dividend_yield_ttm": self._try_parse_float(metrics.get("dividendYieldTTM")),
+                    "eps_ttm": self._try_parse_float(data.metrics.get("epsTTM")),
+                    "free_cash_flow_per_share_ttm": self._try_parse_float(data.metrics.get("freeCashFlowPerShareTTM")),
+                    "book_value_per_share_ttm": self._try_parse_float(data.metrics.get("bookValuePerShareTTM")),
+                    "dividend_yield_ttm": self._try_parse_float(data.metrics.get("dividendYieldTTM")),
                 },
                 "income_statement_latest": {
-                    "date": income.get("date"),
-                    "revenue": self._try_parse_float(income.get("revenue")),
-                    "gross_profit": self._try_parse_float(income.get("grossProfit")),
-                    "operating_income": self._try_parse_float(income.get("operatingIncome")),
-                    "net_income": self._try_parse_float(income.get("netIncome")),
-                    "eps": self._try_parse_float(income.get("eps")),
+                    "date": data.income.get("date"),
+                    "revenue": self._try_parse_float(data.income.get("revenue")),
+                    "gross_profit": self._try_parse_float(data.income.get("grossProfit")),
+                    "operating_income": self._try_parse_float(data.income.get("operatingIncome")),
+                    "net_income": self._try_parse_float(data.income.get("netIncome")),
+                    "eps": self._try_parse_float(data.income.get("eps")),
                 },
                 "balance_sheet_latest": {
-                    "date": balance_sheet.get("date"),
+                    "date": data.balance_sheet.get("date"),
                     "cash_and_short_term_investments": self._try_parse_float(
-                        balance_sheet.get("cashAndShortTermInvestments")
+                        data.balance_sheet.get("cashAndShortTermInvestments")
                     ),
-                    "total_assets": self._try_parse_float(balance_sheet.get("totalAssets")),
-                    "total_debt": self._try_parse_float(balance_sheet.get("totalDebt")),
-                    "total_liabilities": self._try_parse_float(balance_sheet.get("totalLiabilities")),
-                    "total_equity": self._try_parse_float(balance_sheet.get("totalStockholdersEquity")),
+                    "total_assets": self._try_parse_float(data.balance_sheet.get("totalAssets")),
+                    "total_debt": self._try_parse_float(data.balance_sheet.get("totalDebt")),
+                    "total_liabilities": self._try_parse_float(data.balance_sheet.get("totalLiabilities")),
+                    "total_equity": self._try_parse_float(data.balance_sheet.get("totalStockholdersEquity")),
                 },
                 "cash_flow_latest": {
-                    "date": cash_flow.get("date"),
-                    "operating_cash_flow": self._try_parse_float(cash_flow.get("operatingCashFlow")),
-                    "capital_expenditure": self._try_parse_float(cash_flow.get("capitalExpenditure")),
-                    "free_cash_flow": self._try_parse_float(cash_flow.get("freeCashFlow")),
-                    "dividends_paid": self._try_parse_float(cash_flow.get("dividendsPaid")),
+                    "date": data.cash_flow.get("date"),
+                    "operating_cash_flow": self._try_parse_float(data.cash_flow.get("operatingCashFlow")),
+                    "capital_expenditure": self._try_parse_float(data.cash_flow.get("capitalExpenditure")),
+                    "free_cash_flow": self._try_parse_float(data.cash_flow.get("freeCashFlow")),
+                    "dividends_paid": self._try_parse_float(data.cash_flow.get("dividendsPaid")),
                 },
             },
         }

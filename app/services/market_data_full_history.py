@@ -17,15 +17,12 @@ from ..config import (
     TIME_SERIES_MAX_OUTPUTSIZE,
 )
 from ..ohlcv import merge_points_by_timestamp as merge_ohlcv_points
-from .market_data_provider_clients import TwelveDataClient
+from .market_data_provider_clients import owner_twelvedata_client
 
 
 class FullDailyHistoryLoader:
     def __init__(self, owner: Any) -> None:
         self.owner = owner
-
-    def _td_client(self, client: httpx.AsyncClient) -> TwelveDataClient:
-        return TwelveDataClient(client, getattr(self.owner, "twelvedata_api_key", ""))
 
     async def fetch_full_daily_series(
         self,
@@ -225,7 +222,7 @@ class FullDailyHistoryLoader:
         if not self.owner._uses_twelvedata() or client is None:
             return None
         try:
-            api_response = await self._td_client(client).get_earliest_timestamp(
+            api_response = await owner_twelvedata_client(self.owner, client).get_earliest_timestamp(
                 EARLIEST_TIMESTAMP_URL,
                 symbol=symbol,
                 interval=interval,
