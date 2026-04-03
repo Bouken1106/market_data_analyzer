@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable
 
 import httpx
 from fastapi import HTTPException
 
-from ..config import HISTORICAL_CACHE_TTL_SEC, HISTORICAL_INTERVAL, HISTORICAL_MAX_POINTS
 from .market_data_queries_historical_support import (
     HistoricalRequest,
     build_historical_payload,
@@ -17,53 +17,32 @@ from .market_data_queries_historical_support import (
 from .ttl_cache import ttl_cache_lookup_response, ttl_cache_store
 
 
-class HistoricalQueryOwner(Protocol):
+@dataclass(frozen=True)
+class HistoricalQueryContext:
     provider: str
-    _historical_cache: dict[Any, Any]
-    _historical_lock: Any
+    historical_cache: dict[Any, Any]
+    historical_lock: Any
+    historical_cache_ttl_sec: int
+    historical_interval: str
+    historical_max_points: int
 
-    def _build_historical_request(
-        self,
-        *,
-        symbol: str,
-        years: int,
-        months: int | None,
-        source_preference: str | None,
-    ) -> HistoricalRequest: ...
 
-    async def _fetch_stooq_daily_points_with_detail(
-        self,
-        client: httpx.AsyncClient,
-        *,
-        symbol: str,
-        outputsize: int,
-        start_date: str | None,
-        end_date: str | None,
-        refresh: bool = False,
-    ) -> tuple[list[dict[str, Any]], dict[str, Any]]: ...
-
-    async def _fetch_historical_points_with_detail(
-        self,
-        client: httpx.AsyncClient,
-        symbol: str,
-        interval: str,
-        outputsize: int,
-        start_date: str,
-        end_date: str,
-    ) -> tuple[list[dict[str, Any]], dict[str, Any]]: ...
-
-    async def _fetch_full_daily_series(
-        self,
-        client: httpx.AsyncClient,
-        symbol: str,
-        refresh: bool = False,
-        min_recheck_sec: int | None = None,
-    ) -> list[dict[str, Any]]: ...
+@dataclass(frozen=True)
+class HistoricalQueryDependencies:
+    build_request: Callable[..., HistoricalRequest]
+    fetch_stooq_daily_points_with_detail: Callable[..., Awaitable[tuple[list[dict[str, Any]], dict[str, Any]]]]
+    fetch_historical_points_with_detail: Callable[..., Awaitable[tuple[list[dict[str, Any]], dict[str, Any]]]]
+    fetch_full_daily_series: Callable[..., Awaitable[list[dict[str, Any]]]]
 
 
 class MarketDataHistoricalQueryService:
-    def __init__(self, owner: HistoricalQueryOwner) -> None:
-        self.owner = owner
+    def __init__(
+        self,
+        context: HistoricalQueryContext,
+        dependencies: HistoricalQueryDependencies,
+    ) -> None:
+        self.context = context
+        self.dependencies = dependencies
 
     async def historical_payload(
         self,
@@ -75,7 +54,7 @@ class MarketDataHistoricalQueryService:
         source_preference: str | None,
         allow_api_fallback: bool,
     ) -> dict[str, Any]:
-        request = self.owner._build_historical_request(
+        request = self.dependencies.build_request(
             symbol=symbol,
             years=years,
             months=months,
@@ -83,10 +62,10 @@ class MarketDataHistoricalQueryService:
         )
         if not refresh:
             cached_payload = await ttl_cache_lookup_response(
-                self.owner._historical_cache,
-                self.owner._historical_lock,
+                self.context.historical_cache,
+                self.context.historical_lock,
                 request.cache_key,
-                ttl_sec=HISTORICAL_CACHE_TTL_SEC,
+                ttl_sec=self.context.historical_cache_ttl_sec,
                 copy_fn=dict,
             )
             if cached_payload is not None:
@@ -116,12 +95,12 @@ class MarketDataHistoricalQueryService:
             request=request,
             points=points,
             source_detail=source_detail,
-            provider=self.owner.provider,
-            interval=HISTORICAL_INTERVAL,
+            provider=self.context.provider,
+            interval=self.context.historical_interval,
         )
         await ttl_cache_store(
-            self.owner._historical_cache,
-            self.owner._historical_lock,
+            self.context.historical_cache,
+            self.context.historical_lock,
             request.cache_key,
             payload,
         )
@@ -136,11 +115,11 @@ class MarketDataHistoricalQueryService:
         allow_api_fallback: bool,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         source_detail: dict[str, Any] = {
-            "provider": request.source_mode or self.owner.provider,
+            "provider": request.source_mode or self.context.provider,
             "mode": "uninitialized",
         }
         if self._should_use_stooq_source(request):
-            points, source_detail = await self.owner._fetch_stooq_daily_points_with_detail(
+            points, source_detail = await self.dependencies.fetch_stooq_daily_points_with_detail(
                 client,
                 symbol=request.symbol,
                 outputsize=request.outputsize,
@@ -154,7 +133,7 @@ class MarketDataHistoricalQueryService:
                 client=client,
                 request=request,
                 refresh=refresh,
-                outputsize=max(HISTORICAL_MAX_POINTS, request.outputsize),
+                outputsize=max(self.context.historical_max_points, request.outputsize),
             )
 
         return await self._fetch_provider_historical_points_for_request(
@@ -172,26 +151,25 @@ class MarketDataHistoricalQueryService:
         refresh: bool,
         outputsize: int,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        if request.fetch_full_history and is_daily_interval(HISTORICAL_INTERVAL):
-            points = await self.owner._fetch_full_daily_series(client, symbol=request.symbol, refresh=refresh)
+        if request.fetch_full_history and is_daily_interval(self.context.historical_interval):
+            points = await self.dependencies.fetch_full_daily_series(client, symbol=request.symbol, refresh=refresh)
             return points, {
-                "provider": self.owner.provider,
+                "provider": self.context.provider,
                 "mode": "full_daily_history",
             }
 
-        return await self.owner._fetch_historical_points_with_detail(
+        return await self.dependencies.fetch_historical_points_with_detail(
             client,
             symbol=request.symbol,
-            interval=HISTORICAL_INTERVAL,
+            interval=self.context.historical_interval,
             outputsize=outputsize,
             start_date=request.start_date_iso,
             end_date=request.end_date_iso,
         )
 
-    @staticmethod
-    def _should_use_stooq_source(request: HistoricalRequest) -> bool:
+    def _should_use_stooq_source(self, request: HistoricalRequest) -> bool:
         return (
             request.months is None
-            and is_daily_interval(HISTORICAL_INTERVAL)
+            and is_daily_interval(self.context.historical_interval)
             and request.source_mode == "stooq"
         )

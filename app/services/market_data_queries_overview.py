@@ -6,8 +6,14 @@ from typing import Any
 
 import httpx
 
+from ..config import SYMBOL_PATTERN
+from ..utils import normalize_symbols
 from .market_data_overview_ops import MarketDataOverviewOps
-from .market_data_overview_service import MarketDataOverviewQueryService
+from .market_data_overview_service import (
+    MarketDataOverviewQueryService,
+    OverviewQueryContext,
+    OverviewQueryDependencies,
+)
 from .market_data_queries_overview_support import (
     OverviewInputs,
     OverviewRequest,
@@ -29,9 +35,34 @@ class MarketDataOverviewMixin:
         if service is None:
             service = getattr(self, "_overview_query_service_instance", None)
         if service is None:
-            service = MarketDataOverviewQueryService(self)
+            service = MarketDataOverviewQueryService(
+                context=self._overview_query_context(),
+                dependencies=self._overview_query_dependencies(),
+            )
             setattr(self, "_overview_query_service_instance", service)
         return service
+
+    def _overview_query_context(self) -> OverviewQueryContext:
+        return OverviewQueryContext(
+            provider=self.provider,
+            overview_cache=self._overview_cache,
+            overview_lock=self._overview_lock,
+            sparkline_cache=self._sparkline_cache,
+            sparkline_lock=self._sparkline_lock,
+            historical_cache=self._historical_cache,
+            historical_lock=self._historical_lock,
+            full_daily_history_store=self.full_daily_history_store,
+            symbol_pattern=SYMBOL_PATTERN,
+        )
+
+    def _overview_query_dependencies(self) -> OverviewQueryDependencies:
+        return OverviewQueryDependencies(
+            build_request=self._build_overview_request,
+            fetch_inputs=self._fetch_overview_inputs,
+            build_payload=self._compose_overview_payload,
+            fetch_sparkline_item=self._fetch_sparkline_item,
+            normalize_symbols=normalize_symbols,
+        )
 
     def _overview_ops(self) -> MarketDataOverviewOps:
         ops = getattr(self, "_overview_ops_service", None)
@@ -93,6 +124,52 @@ class MarketDataOverviewMixin:
         return self._overview_query_service()._build_overview_payload(
             request=request,
             inputs=inputs,
+        )
+
+    def _compose_overview_payload(
+        self,
+        *,
+        request: OverviewRequest,
+        inputs: OverviewInputs,
+        provider: str,
+    ) -> dict[str, Any]:
+        price_context = self._build_price_context(
+            quote=inputs.quote,
+            day_points=inputs.day_points,
+            m1_points=inputs.m1_points,
+        )
+        technical = self._build_overview_technicals(
+            day_points=inputs.day_points,
+            m1_points=inputs.m1_points,
+            m5_points=inputs.m5_points,
+        )
+        market = self._build_overview_market_section(
+            day_points=inputs.day_points,
+            market_context=inputs.market_context,
+            include_market=request.include_market,
+            include_qqq=request.include_qqq,
+        )
+        source_detail = build_overview_source_detail(
+            quote=inputs.quote,
+            day_points=inputs.day_points,
+            m1_points=inputs.m1_points,
+            m5_points=inputs.m5_points,
+            spy_points=market["spy_points"],
+            qqq_points=market["qqq_points"],
+            price_context=price_context,
+            series_source_descriptor=self._series_source_descriptor,
+        )
+        return build_overview_payload(
+            request=request,
+            inputs=inputs,
+            provider=provider,
+            price_context=price_context,
+            technical=technical,
+            market_payload=market["payload"],
+            source_detail=source_detail,
+            pick_string=self._pick_string,
+            best_updated_at=self._best_updated_at,
+            delay_note=self._delay_note,
         )
 
     def _build_overview_market_section(

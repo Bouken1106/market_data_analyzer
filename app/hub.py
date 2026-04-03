@@ -91,8 +91,14 @@ class MarketDataHub(MarketDataRealtimeMixin, MarketDataQueriesMixin, MarketDataS
         assign_state_fields(self, self._cache_state)
 
     def _init_query_services(self) -> None:
-        self.historical_query_service = MarketDataHistoricalQueryService(self)
-        self.overview_query_service = MarketDataOverviewQueryService(self)
+        self.historical_query_service = MarketDataHistoricalQueryService(
+            context=self._historical_query_context(),
+            dependencies=self._historical_query_dependencies(),
+        )
+        self.overview_query_service = MarketDataOverviewQueryService(
+            context=self._overview_query_context(),
+            dependencies=self._overview_query_dependencies(),
+        )
 
     def _uses_twelvedata(self) -> bool:
         return self.provider in {"twelvedata", "both"}
