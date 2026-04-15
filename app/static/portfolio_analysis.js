@@ -14,12 +14,25 @@ const REGION_CONFIG = {
 };
 const DEFAULT_LOOKBACK_DAYS = 252;
 const DRAFT_SAVE_DEBOUNCE_MS = 500;
+const MAX_SYMBOL_DROPDOWN_ITEMS = 80;
+const REGION_CATALOG_COUNTRY = {
+  jp: "Japan",
+  us: "United States",
+};
 
 const state = {
   currentPortfolioId: "",
   portfolios: [],
   analysis: null,
   busy: false,
+  symbolCatalogs: {
+    jp: [],
+    us: [],
+  },
+  symbolCatalogStatus: {
+    jp: "idle",
+    us: "idle",
+  },
 };
 let draftSaveTimer = null;
 let draftSaveInFlight = false;
@@ -46,6 +59,10 @@ function normalizeSymbolForRegion(raw, region) {
 function normalizeLookbackDays(rawValue) {
   const parsed = Number.parseInt(String(rawValue ?? ""), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_LOOKBACK_DAYS;
+}
+
+function normalizeSearchText(raw) {
+  return String(raw || "").normalize("NFKC").trim().replace(/\s+/g, " ").toUpperCase();
 }
 
 function formatCount(value) {
@@ -152,7 +169,10 @@ function buildHoldingRow(region, holding = {}, analysisHolding = null) {
   }
   tr.innerHTML = `
     <td class="pa-symbol-cell">
-      <input type="text" name="symbol" value="${symbol}" placeholder="${escapeHtml(REGION_CONFIG[region].placeholder)}" />
+      <div class="pa-symbol-picker" data-region="${escapeHtml(region)}">
+        <input type="text" name="symbol" data-region="${escapeHtml(region)}" value="${symbol}" placeholder="${escapeHtml(REGION_CONFIG[region].placeholder)}" autocomplete="off" />
+        <div class="symbol-dropdown pa-symbol-dropdown hidden" aria-label="Symbol suggestions"></div>
+      </div>
       <span class="pa-row-meta">${escapeHtml(metaText)}</span>
     </td>
     <td class="pa-qty-cell">
@@ -353,6 +373,142 @@ function buildDraftPayload() {
   };
 }
 
+function buildCatalogOptionLabel(item) {
+  const symbol = normalizeSymbolForRegion(item?.symbol, item?.region || "us");
+  const name = String(item?.name || "").trim();
+  const exchange = String(item?.exchange || "").trim();
+  const securityType = String(item?.type || "").trim();
+  if (!symbol) return "-";
+
+  const meta = [exchange, securityType].filter((value) => value).join(" / ");
+  if (name && meta) return `${symbol} | ${name} (${meta})`;
+  if (name) return `${symbol} | ${name}`;
+  if (meta) return `${symbol} (${meta})`;
+  return symbol;
+}
+
+function rankCatalogCandidate(query, item) {
+  const needle = normalizeSearchText(query);
+  if (!needle) return 99;
+
+  const symbolText = normalizeSearchText(item?.symbol);
+  const nameText = normalizeSearchText(item?.name);
+  if (symbolText.startsWith(needle)) return 0;
+  if (nameText.startsWith(needle)) return 1;
+  if (symbolText.includes(needle)) return 2;
+  if (nameText.includes(needle)) return 3;
+  return -1;
+}
+
+function pickCatalogCandidates(region, query) {
+  const rows = Array.isArray(state.symbolCatalogs?.[region]) ? state.symbolCatalogs[region] : [];
+  if (rows.length === 0) return [];
+
+  const needle = normalizeSearchText(query);
+  if (!needle) {
+    return rows.slice(0, MAX_SYMBOL_DROPDOWN_ITEMS);
+  }
+
+  const ranked = [];
+  for (const item of rows) {
+    const rank = rankCatalogCandidate(needle, item);
+    if (rank < 0) continue;
+    ranked.push({ item, rank });
+  }
+
+  ranked.sort((left, right) => {
+    if (left.rank !== right.rank) return left.rank - right.rank;
+    return String(left.item.symbol || "").localeCompare(String(right.item.symbol || ""), "en", { sensitivity: "base" });
+  });
+  return ranked.slice(0, MAX_SYMBOL_DROPDOWN_ITEMS).map(({ item }) => item);
+}
+
+function hideAllSymbolDropdowns(exceptPicker = null) {
+  document.querySelectorAll(".pa-symbol-dropdown").forEach((dropdown) => {
+    if (!(dropdown instanceof HTMLElement)) return;
+    if (exceptPicker instanceof Element && exceptPicker.contains(dropdown)) return;
+    dropdown.classList.add("hidden");
+  });
+}
+
+function renderSymbolDropdownForInput(inputEl) {
+  if (!(inputEl instanceof HTMLInputElement)) return;
+  const pickerEl = inputEl.closest(".pa-symbol-picker");
+  const dropdownEl = pickerEl?.querySelector(".pa-symbol-dropdown");
+  const region = String(inputEl.dataset.region || pickerEl?.getAttribute("data-region") || "").trim();
+  if (!(pickerEl instanceof HTMLElement) || !(dropdownEl instanceof HTMLElement) || !region) return;
+
+  hideAllSymbolDropdowns(pickerEl);
+  dropdownEl.innerHTML = "";
+
+  const status = String(state.symbolCatalogStatus?.[region] || "idle");
+  if (status === "loading") {
+    const row = document.createElement("div");
+    row.className = "dropdown-empty";
+    row.textContent = "候補を読み込み中...";
+    dropdownEl.appendChild(row);
+    dropdownEl.classList.remove("hidden");
+    return;
+  }
+
+  const candidates = pickCatalogCandidates(region, inputEl.value);
+  if (candidates.length === 0) {
+    const row = document.createElement("div");
+    row.className = "dropdown-empty";
+    row.textContent = status === "ready"
+      ? "一致する候補がありません。コード直入力は可能です。"
+      : "候補未取得です。コード直入力は可能です。";
+    dropdownEl.appendChild(row);
+    dropdownEl.classList.remove("hidden");
+    return;
+  }
+
+  candidates.forEach((item) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "dropdown-item";
+    btn.dataset.symbol = String(item.symbol || "");
+    btn.textContent = buildCatalogOptionLabel({ ...item, region });
+    dropdownEl.appendChild(btn);
+  });
+
+  dropdownEl.classList.remove("hidden");
+}
+
+async function loadSymbolCatalog(region, { cacheOnly = false } = {}) {
+  const country = REGION_CATALOG_COUNTRY[region];
+  if (!country) return false;
+
+  state.symbolCatalogStatus[region] = "loading";
+  try {
+    const params = new URLSearchParams({ country });
+    if (cacheOnly) {
+      params.set("cache_only", "true");
+    }
+    const payload = await requestJson(`/api/symbol-catalog?${params.toString()}`);
+    const rows = Array.isArray(payload?.symbols) ? payload.symbols : [];
+    state.symbolCatalogs[region] = rows.map((item) => ({
+      symbol: normalizeSymbolForRegion(item?.symbol, region),
+      name: String(item?.name || "").trim(),
+      exchange: String(item?.exchange || "").trim(),
+      type: String(item?.type || "").trim(),
+    })).filter((item) => item.symbol);
+    state.symbolCatalogStatus[region] = "ready";
+    return state.symbolCatalogs[region].length > 0;
+  } catch (_error) {
+    state.symbolCatalogStatus[region] = "error";
+    return false;
+  }
+}
+
+async function bootstrapSymbolCatalogs() {
+  await Promise.all(["jp", "us"].map(async (region) => {
+    const loadedFromCache = await loadSymbolCatalog(region, { cacheOnly: true });
+    if (loadedFromCache) return;
+    await loadSymbolCatalog(region, { cacheOnly: false });
+  }));
+}
+
 function draftHasContent(draft) {
   if (!draft) return false;
   if (String(draft.portfolio_id || "").trim()) return true;
@@ -529,6 +685,7 @@ async function deleteCurrentPortfolio() {
 async function initialize() {
   renderRegionRows("jp", []);
   renderRegionRows("us", []);
+  void bootstrapSymbolCatalogs();
   try {
     await fetchPortfolios();
     const draft = await fetchDraft();
@@ -607,11 +764,71 @@ addRowButtons.forEach((button) => {
 });
 
 ["jp", "us"].forEach((region) => {
+  regionRowsEl(region)?.addEventListener("focusin", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement) || target.name !== "symbol") {
+      return;
+    }
+    renderSymbolDropdownForInput(target);
+  });
   regionRowsEl(region)?.addEventListener("input", () => {
     scheduleDraftSave();
   });
+  regionRowsEl(region)?.addEventListener("input", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement) || target.name !== "symbol") {
+      return;
+    }
+    renderSymbolDropdownForInput(target);
+  });
+  regionRowsEl(region)?.addEventListener("keydown", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement) || target.name !== "symbol") {
+      return;
+    }
+    const pickerEl = target.closest(".pa-symbol-picker");
+    const dropdownEl = pickerEl?.querySelector(".pa-symbol-dropdown");
+    if (!(dropdownEl instanceof HTMLElement)) return;
+
+    if (event.key === "Escape") {
+      dropdownEl.classList.add("hidden");
+      return;
+    }
+    if (event.key === "Enter") {
+      const firstCandidate = dropdownEl.querySelector(".dropdown-item");
+      if (!(firstCandidate instanceof HTMLButtonElement)) {
+        return;
+      }
+      event.preventDefault();
+      target.value = String(firstCandidate.dataset.symbol || "");
+      dropdownEl.classList.add("hidden");
+      scheduleDraftSave();
+    }
+  });
+  regionRowsEl(region)?.addEventListener("mousedown", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element) || !target.closest(".pa-symbol-dropdown")) {
+      return;
+    }
+    event.preventDefault();
+  });
   regionRowsEl(region)?.addEventListener("click", (event) => {
     const target = event.target;
+    const optionButton = target instanceof Element ? target.closest(".dropdown-item") : null;
+    if (optionButton instanceof HTMLButtonElement) {
+      const pickerEl = optionButton.closest(".pa-symbol-picker");
+      const inputEl = pickerEl?.querySelector('input[name="symbol"]');
+      const dropdownEl = pickerEl?.querySelector(".pa-symbol-dropdown");
+      if (inputEl instanceof HTMLInputElement) {
+        inputEl.value = String(optionButton.dataset.symbol || "");
+        inputEl.focus();
+      }
+      if (dropdownEl instanceof HTMLElement) {
+        dropdownEl.classList.add("hidden");
+      }
+      scheduleDraftSave();
+      return;
+    }
     if (!(target instanceof Element) || !target.closest(".pa-remove-row-btn")) {
       return;
     }
@@ -631,6 +848,14 @@ portfolioNameEl?.addEventListener("input", () => {
 
 lookbackDaysEl?.addEventListener("change", () => {
   scheduleDraftSave();
+});
+
+document.addEventListener("click", (event) => {
+  const target = event.target;
+  if (target instanceof Element && target.closest(".pa-symbol-picker")) {
+    return;
+  }
+  hideAllSymbolDropdowns();
 });
 
 window.addEventListener("DOMContentLoaded", initialize);

@@ -79,7 +79,7 @@
         <header class="pa-region-head">
           <div>
             <h2>日本株ポートフォリオ</h2>
-            <p>JPY建て。4桁コードは自動で <code>.T</code> を補い、会社名や一般的な略称も解決します。</p>
+            <p>JPY建て。4桁コードは自動で <code>.T</code> を補い、会社名や一般的な略称も解決します。ETF が候補に出ない場合でもコード直入力は可能です。</p>
           </div>
           <button type="button" class="secondary pa-add-row-btn" data-region="jp">+ Add Row</button>
         </header>
@@ -102,46 +102,76 @@
 
         <div class="pa-summary-grid">
           <div class="status-box">
-            <span class="label">Market Value</span>
+            <div class="pa-metric-head">
+              <span class="label">Market Value</span>
+              <details class="param-help"><summary>?</summary><p>現在価格ベースの保有額合計です。</p></details>
+            </div>
             <span id="pa-jp-market-value">-</span>
           </div>
           <div class="status-box">
-            <span class="label">Holdings</span>
+            <div class="pa-metric-head">
+              <span class="label">Holdings</span>
+              <details class="param-help"><summary>?</summary><p>保存銘柄数と、そのうち価格取得できた銘柄数です。</p></details>
+            </div>
             <span id="pa-jp-holdings-count">-</span>
           </div>
           <div class="status-box">
-            <span class="label">Top Weight</span>
+            <div class="pa-metric-head">
+              <span class="label">Top Weight</span>
+              <details class="param-help"><summary>?</summary><p>構成比が最も大きい銘柄です。</p></details>
+            </div>
             <span id="pa-jp-top-holding">-</span>
           </div>
           <div class="status-box">
-            <span class="label">Risk Coverage</span>
+            <div class="pa-metric-head">
+              <span class="label">Risk Coverage</span>
+              <details class="param-help"><summary>?</summary><p>リスク計算に使えた保有額の比率です。</p></details>
+            </div>
             <span id="pa-jp-coverage">-</span>
           </div>
         </div>
 
         <div class="pa-risk-grid">
           <div class="status-box">
-            <span class="label">Ann. Vol</span>
+            <div class="pa-metric-head">
+              <span class="label">Ann. Vol</span>
+              <details class="param-help"><summary>?</summary><p>日次リターンから年率換算した値動きの大きさです。</p></details>
+            </div>
             <span id="pa-jp-ann-vol">-</span>
           </div>
           <div class="status-box">
-            <span class="label">VaR 95%</span>
+            <div class="pa-metric-head">
+              <span class="label">VaR 95%</span>
+              <details class="param-help"><summary>?</summary><p>95%の確率で想定される1日損失上限です。</p></details>
+            </div>
             <span id="pa-jp-var95">-</span>
           </div>
           <div class="status-box">
-            <span class="label">Expected Shortfall</span>
+            <div class="pa-metric-head">
+              <span class="label">Expected Shortfall</span>
+              <details class="param-help"><summary>?</summary><p>VaRを超えた悪い日の平均損失です。</p></details>
+            </div>
             <span id="pa-jp-es95">-</span>
           </div>
           <div class="status-box">
-            <span class="label">Max Drawdown</span>
+            <div class="pa-metric-head">
+              <span class="label">Max Drawdown</span>
+              <details class="param-help"><summary>?</summary><p>分析期間中の最大下落率です。</p></details>
+            </div>
             <span id="pa-jp-max-dd">-</span>
           </div>
           <div class="status-box">
-            <span class="label">Effective Holdings</span>
+            <div class="pa-metric-head">
+              <span class="label">Effective Holdings</span>
+              <details class="param-help"><summary>?</summary><p>分散の効き具合を加味した実質的な銘柄数です。</p></details>
+            </div>
             <span id="pa-jp-effective">-</span>
           </div>
           <div class="status-box">
-            <span class="label">Window</span>
+            <div class="pa-metric-head">
+              <span class="label">Window</span>
+              <details class="param-help"><summary>?</summary><p>リスク計算に使った期間と観測数です。</p></details>
+            </div>
             <span id="pa-jp-window">-</span>
           </div>
         </div>
@@ -154,7 +184,7 @@
         <header class="pa-region-head">
           <div>
             <h2>米国株ポートフォリオ</h2>
-            <p>USD建て。銘柄コードは大文字で保存され、主要な会社名入力にも対応します。</p>
+            <p>USD建て。銘柄コードは大文字で保存され、主要な会社名入力にも対応します。ETF が候補に出ない場合でもコード直入力は可能です。</p>
           </div>
           <button type="button" class="secondary pa-add-row-btn" data-region="us">+ Add Row</button>
         </header>
@@ -177,46 +207,76 @@
 
         <div class="pa-summary-grid">
           <div class="status-box">
-            <span class="label">Market Value</span>
+            <div class="pa-metric-head">
+              <span class="label">Market Value</span>
+              <details class="param-help"><summary>?</summary><p>現在価格ベースの保有額合計です。</p></details>
+            </div>
             <span id="pa-us-market-value">-</span>
           </div>
           <div class="status-box">
-            <span class="label">Holdings</span>
+            <div class="pa-metric-head">
+              <span class="label">Holdings</span>
+              <details class="param-help"><summary>?</summary><p>保存銘柄数と、そのうち価格取得できた銘柄数です。</p></details>
+            </div>
             <span id="pa-us-holdings-count">-</span>
           </div>
           <div class="status-box">
-            <span class="label">Top Weight</span>
+            <div class="pa-metric-head">
+              <span class="label">Top Weight</span>
+              <details class="param-help"><summary>?</summary><p>構成比が最も大きい銘柄です。</p></details>
+            </div>
             <span id="pa-us-top-holding">-</span>
           </div>
           <div class="status-box">
-            <span class="label">Risk Coverage</span>
+            <div class="pa-metric-head">
+              <span class="label">Risk Coverage</span>
+              <details class="param-help"><summary>?</summary><p>リスク計算に使えた保有額の比率です。</p></details>
+            </div>
             <span id="pa-us-coverage">-</span>
           </div>
         </div>
 
         <div class="pa-risk-grid">
           <div class="status-box">
-            <span class="label">Ann. Vol</span>
+            <div class="pa-metric-head">
+              <span class="label">Ann. Vol</span>
+              <details class="param-help"><summary>?</summary><p>日次リターンから年率換算した値動きの大きさです。</p></details>
+            </div>
             <span id="pa-us-ann-vol">-</span>
           </div>
           <div class="status-box">
-            <span class="label">VaR 95%</span>
+            <div class="pa-metric-head">
+              <span class="label">VaR 95%</span>
+              <details class="param-help"><summary>?</summary><p>95%の確率で想定される1日損失上限です。</p></details>
+            </div>
             <span id="pa-us-var95">-</span>
           </div>
           <div class="status-box">
-            <span class="label">Expected Shortfall</span>
+            <div class="pa-metric-head">
+              <span class="label">Expected Shortfall</span>
+              <details class="param-help"><summary>?</summary><p>VaRを超えた悪い日の平均損失です。</p></details>
+            </div>
             <span id="pa-us-es95">-</span>
           </div>
           <div class="status-box">
-            <span class="label">Max Drawdown</span>
+            <div class="pa-metric-head">
+              <span class="label">Max Drawdown</span>
+              <details class="param-help"><summary>?</summary><p>分析期間中の最大下落率です。</p></details>
+            </div>
             <span id="pa-us-max-dd">-</span>
           </div>
           <div class="status-box">
-            <span class="label">Effective Holdings</span>
+            <div class="pa-metric-head">
+              <span class="label">Effective Holdings</span>
+              <details class="param-help"><summary>?</summary><p>分散の効き具合を加味した実質的な銘柄数です。</p></details>
+            </div>
             <span id="pa-us-effective">-</span>
           </div>
           <div class="status-box">
-            <span class="label">Window</span>
+            <div class="pa-metric-head">
+              <span class="label">Window</span>
+              <details class="param-help"><summary>?</summary><p>リスク計算に使った期間と観測数です。</p></details>
+            </div>
             <span id="pa-us-window">-</span>
           </div>
         </div>
@@ -228,6 +288,7 @@
   </main>
 
   <script src="/static/portfolio_analysis.js?v=20260415a" defer></script>
+  <script src="/static/help_popover.js?v=20260323a" defer></script>
   <script src="/static/page_menu.js?v=20260321a" defer></script>
 </body>
 

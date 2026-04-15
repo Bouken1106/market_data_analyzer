@@ -4617,6 +4617,23 @@ body.chart-panning {
   min-width: 220px;
 }
 
+.pa-symbol-picker {
+  position: relative;
+}
+
+.pa-symbol-dropdown {
+  top: calc(100% + 4px);
+  border-top: 1px solid var(--border-accent);
+  border-radius: var(--radius);
+  max-height: 260px;
+}
+
+.pa-table thead th:nth-child(2),
+.pa-qty-cell {
+  width: 132px;
+  min-width: 132px;
+}
+
 .pa-symbol-cell input,
 .pa-qty-cell input {
   width: 100%;
@@ -4655,6 +4672,14 @@ body.chart-panning {
 .pa-summary-grid .status-box,
 .pa-risk-grid .status-box {
   min-height: 78px;
+}
+
+.pa-metric-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .pa-risk-note {
