@@ -52,6 +52,34 @@ class PortfolioAnalysisStoreTest(unittest.TestCase):
         self.assertTrue(deleted)
         self.assertEqual(persisted["portfolios"], [])
 
+    def test_save_reload_and_clear_draft(self) -> None:
+        store = PortfolioAnalysisStore(cache_path=self._cache_path())
+
+        saved_draft = asyncio.run(
+            store.save_draft(
+                portfolio_id="draft-portfolio",
+                name=" Draft   Portfolio ",
+                lookback_days=126,
+                jp_rows=[{"symbol": "NTT", "quantity": "100"}, {"symbol": "", "quantity": ""}],
+                us_rows=[{"symbol": "Apple", "quantity": "5"}],
+            )
+        )
+
+        reloaded = PortfolioAnalysisStore(cache_path=self._cache_path())
+        loaded_draft = asyncio.run(reloaded.get_draft())
+        asyncio.run(reloaded.clear_draft())
+        cleared_draft = asyncio.run(reloaded.get_draft())
+        persisted = json.loads(self._cache_path().read_text(encoding="utf-8"))
+
+        self.assertEqual(saved_draft["name"], "Draft Portfolio")
+        self.assertEqual(saved_draft["lookback_days"], 126)
+        self.assertEqual(saved_draft["jp_rows"][0]["symbol"], "NTT")
+        self.assertEqual(saved_draft["us_rows"][0]["symbol"], "Apple")
+        self.assertEqual(loaded_draft["portfolio_id"], "draft-portfolio")
+        self.assertEqual(loaded_draft["lookback_days"], 126)
+        self.assertIsNone(cleared_draft)
+        self.assertIsNone(persisted["draft"])
+
 
 if __name__ == "__main__":
     unittest.main()

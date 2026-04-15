@@ -148,6 +148,7 @@ let chartPanState = {
 const SYMBOL_INSIGHTS_CACHE_KEY = buildCacheKey(PAGE_CONFIG.cacheNamespace, "symbol_insights.v1");
 const WATCHLIST_SYMBOLS_CACHE_KEY = buildCacheKey(PAGE_CONFIG.cacheNamespace, "watchlist_symbols.v1");
 const WATCHLIST_ROWS_CACHE_KEY = buildCacheKey(PAGE_CONFIG.cacheNamespace, "watchlist_rows.v1");
+const WATCHLIST_NAMESPACE = PAGE_CONFIG.marketPreset === "jp" ? "jp" : "us";
 
 const zoneFormatter = (timeZone) => new Intl.DateTimeFormat("en-US", {
   timeZone,
@@ -582,6 +583,46 @@ function restoreSymbolInsightsCache() {
   } catch (_error) {
     // ignore local cache errors
   }
+}
+
+function applyInitialSelectedSymbols(symbols, { primeIgnoreEmpty = false } = {}) {
+  const normalized = uniqueSymbols(symbols).slice(0, MAX_SYMBOLS);
+  if (normalized.length === 0) {
+    return false;
+  }
+  if (primeIgnoreEmpty) {
+    ignoreFirstEmptySymbolsEvent = true;
+  }
+  selectedSymbols = normalized;
+  saveWatchlistSymbolsCache(selectedSymbols);
+  refreshWatchlist();
+  void loadSavedWatchlistCommentary();
+  return true;
+}
+
+async function loadWatchlistStateFromServer() {
+  const params = new URLSearchParams({ namespace: WATCHLIST_NAMESPACE });
+  const { response, result } = await fetchJson(`/api/watchlist-state?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(result.detail || "Failed to load watchlist state.");
+  }
+  return uniqueSymbols(result?.symbols).slice(0, MAX_SYMBOLS);
+}
+
+async function persistWatchlistStateToServer(symbols = selectedSymbols) {
+  const safeSymbols = uniqueSymbols(symbols).slice(0, MAX_SYMBOLS);
+  const { response, result } = await fetchJson("/api/watchlist-state", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      namespace: WATCHLIST_NAMESPACE,
+      symbols: safeSymbols,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(result.detail || "Failed to persist watchlist state.");
+  }
+  return uniqueSymbols(result?.symbols || safeSymbols).slice(0, MAX_SYMBOLS);
 }
 
 async function refreshWatchlistCommentary(refresh = false) {
@@ -1050,6 +1091,14 @@ async function updateSymbolsOnServer() {
     setSelectionError("");
     saveWatchlistSymbolsCache(selectedSymbols);
     refreshWatchlist();
+    try {
+      const persistedSymbols = await persistWatchlistStateToServer(selectedSymbols);
+      selectedSymbols = persistedSymbols;
+      saveWatchlistSymbolsCache(selectedSymbols);
+      refreshWatchlist();
+    } catch (_error) {
+      // keep client-side watchlist even if file persistence fails
+    }
     await loadSymbolInsights(selectedSymbols, false);
     return;
   }
@@ -2577,30 +2626,51 @@ if (!PAGE_CONFIG.streamEnabled && refreshCreditsBtn) {
 restoreSymbolInsightsCache();
 restoreWatchlistRowsCache();
 const restoredWatchSymbols = restoreWatchlistSymbolsCache();
-if (restoredWatchSymbols.length > 0) {
-  ignoreFirstEmptySymbolsEvent = true;
-  selectedSymbols = restoredWatchSymbols;
-  refreshWatchlist();
-  void loadSavedWatchlistCommentary();
-  if (PAGE_CONFIG.serverSymbolSync) {
-    void loadSymbolInsights(restoredWatchSymbols, false);
-  }
-}
 
 async function hydrateInitialWatchlist() {
-  if (!PAGE_CONFIG.serverSymbolSync) {
-    saveWatchlistSymbolsCache(selectedSymbols);
-    if (selectedSymbols.length > 0) {
-      await loadSymbolInsights(selectedSymbols, true);
+  try {
+    const persistedWatchSymbols = await loadWatchlistStateFromServer();
+    if (persistedWatchSymbols.length > 0) {
+      applyInitialSelectedSymbols(persistedWatchSymbols, { primeIgnoreEmpty: PAGE_CONFIG.serverSymbolSync });
+      if (PAGE_CONFIG.serverSymbolSync) {
+        await loadSymbolInsights(persistedWatchSymbols, false);
+        await updateSymbolsOnServer();
+      } else {
+        await loadSymbolInsights(persistedWatchSymbols, true);
+      }
+      return;
     }
-    return;
+  } catch (_error) {
+    // fall through to local/browser fallback
   }
+
   if (restoredWatchSymbols.length > 0) {
+    applyInitialSelectedSymbols(restoredWatchSymbols, { primeIgnoreEmpty: PAGE_CONFIG.serverSymbolSync });
+    if (!PAGE_CONFIG.serverSymbolSync) {
+      await persistWatchlistStateToServer(restoredWatchSymbols).catch(() => {
+        // ignore startup sync errors
+      });
+      await loadSymbolInsights(restoredWatchSymbols, true);
+      return;
+    }
+    await loadSymbolInsights(restoredWatchSymbols, false);
     await updateSymbolsOnServer().catch(() => {
       // ignore startup sync errors
     });
     return;
   }
+
+  if (!PAGE_CONFIG.serverSymbolSync) {
+    saveWatchlistSymbolsCache(selectedSymbols);
+    if (selectedSymbols.length > 0) {
+      await persistWatchlistStateToServer(selectedSymbols).catch(() => {
+        // ignore startup sync errors
+      });
+      await loadSymbolInsights(selectedSymbols, true);
+    }
+    return;
+  }
+
   try {
     const { response, result } = await fetchJson("/api/snapshot");
     if (!response.ok || result?.type !== "snapshot") return;

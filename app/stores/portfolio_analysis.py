@@ -8,11 +8,14 @@ from typing import Any
 from uuid import uuid4
 
 from ..config import LOGGER
-from ..services.portfolio_analysis import normalize_region_holdings
+from ..services.portfolio_analysis import MAX_HOLDINGS_PER_REGION, normalize_region_holdings
 from ..utils import read_json_file, utc_now_iso, write_json_file
 
 _MAX_SAVED_PORTFOLIOS = 50
 _MAX_PORTFOLIO_NAME_LEN = 120
+_MAX_DRAFT_SYMBOL_LEN = 120
+_MAX_DRAFT_QUANTITY_LEN = 40
+_DEFAULT_LOOKBACK_DAYS = 252
 
 
 class PortfolioAnalysisStore:
@@ -25,12 +28,14 @@ class PortfolioAnalysisStore:
     def _empty_state() -> dict[str, Any]:
         return {
             "portfolios": [],
+            "draft": None,
             "updated_at": utc_now_iso(),
         }
 
     def _snapshot_state_no_lock(self) -> dict[str, Any]:
         return {
             "portfolios": [self._snapshot_portfolio(item) for item in self._state["portfolios"]],
+            "draft": self._snapshot_draft(self._state["draft"]) if self._state["draft"] else None,
             "updated_at": str(self._state["updated_at"]),
         }
 
@@ -57,6 +62,29 @@ class PortfolioAnalysisStore:
             "updated_at": str(item["updated_at"]),
         }
 
+    @staticmethod
+    def _snapshot_draft(item: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "portfolio_id": str(item["portfolio_id"]),
+            "name": str(item["name"]),
+            "lookback_days": int(item["lookback_days"]),
+            "jp_rows": [
+                {
+                    "symbol": str(row["symbol"]),
+                    "quantity": str(row["quantity"]),
+                }
+                for row in item["jp_rows"]
+            ],
+            "us_rows": [
+                {
+                    "symbol": str(row["symbol"]),
+                    "quantity": str(row["quantity"]),
+                }
+                for row in item["us_rows"]
+            ],
+            "updated_at": str(item["updated_at"]),
+        }
+
     def _load_from_disk(self) -> dict[str, Any]:
         payload = read_json_file(self.cache_path)
         if not isinstance(payload, dict):
@@ -72,8 +100,10 @@ class PortfolioAnalysisStore:
             if normalized is not None:
                 portfolios.append(normalized)
         portfolios.sort(key=lambda item: str(item["updated_at"]), reverse=True)
+        draft = self._normalize_draft(payload.get("draft"))
         return {
             "portfolios": portfolios[:_MAX_SAVED_PORTFOLIOS],
+            "draft": draft,
             "updated_at": str(payload.get("updated_at") or utc_now_iso()),
         }
 
@@ -111,6 +141,68 @@ class PortfolioAnalysisStore:
         name = " ".join(str(value or "").strip().split())
         return name[:_MAX_PORTFOLIO_NAME_LEN]
 
+    @staticmethod
+    def _normalize_lookback_days(value: Any) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return _DEFAULT_LOOKBACK_DAYS
+        return parsed if parsed > 0 else _DEFAULT_LOOKBACK_DAYS
+
+    @staticmethod
+    def _normalize_draft_row(raw: Any) -> dict[str, str] | None:
+        if not isinstance(raw, dict):
+            return None
+        symbol = " ".join(str(raw.get("symbol") or "").strip().split())[:_MAX_DRAFT_SYMBOL_LEN]
+        quantity = str(raw.get("quantity") or "").strip()[:_MAX_DRAFT_QUANTITY_LEN]
+        if not symbol and not quantity:
+            return None
+        return {
+            "symbol": symbol,
+            "quantity": quantity,
+        }
+
+    def _normalize_draft(self, raw: Any) -> dict[str, Any] | None:
+        if not isinstance(raw, dict):
+            return None
+
+        portfolio_id = str(raw.get("portfolio_id") or "").strip()
+        name = self._normalize_name(raw.get("name"))
+        lookback_days = self._normalize_lookback_days(raw.get("lookback_days"))
+
+        jp_rows_raw = raw.get("jp_rows")
+        if not isinstance(jp_rows_raw, list):
+            jp_rows_raw = raw.get("jp_holdings")
+        us_rows_raw = raw.get("us_rows")
+        if not isinstance(us_rows_raw, list):
+            us_rows_raw = raw.get("us_holdings")
+
+        jp_rows: list[dict[str, str]] = []
+        if isinstance(jp_rows_raw, list):
+            for item in jp_rows_raw[:MAX_HOLDINGS_PER_REGION]:
+                normalized_row = self._normalize_draft_row(item)
+                if normalized_row is not None:
+                    jp_rows.append(normalized_row)
+
+        us_rows: list[dict[str, str]] = []
+        if isinstance(us_rows_raw, list):
+            for item in us_rows_raw[:MAX_HOLDINGS_PER_REGION]:
+                normalized_row = self._normalize_draft_row(item)
+                if normalized_row is not None:
+                    us_rows.append(normalized_row)
+
+        if not portfolio_id and not name and not jp_rows and not us_rows and lookback_days == _DEFAULT_LOOKBACK_DAYS:
+            return None
+
+        return {
+            "portfolio_id": portfolio_id,
+            "name": name,
+            "lookback_days": lookback_days,
+            "jp_rows": jp_rows,
+            "us_rows": us_rows,
+            "updated_at": str(raw.get("updated_at") or utc_now_iso()),
+        }
+
     def _write_no_lock(self) -> None:
         try:
             write_json_file(self.cache_path, self._snapshot_state_no_lock())
@@ -124,6 +216,49 @@ class PortfolioAnalysisStore:
     async def list_portfolios(self) -> list[dict[str, Any]]:
         async with self._lock:
             return [self._snapshot_portfolio(item) for item in self._state["portfolios"]]
+
+    async def get_draft(self) -> dict[str, Any] | None:
+        async with self._lock:
+            draft = self._state.get("draft")
+            return self._snapshot_draft(draft) if isinstance(draft, dict) else None
+
+    async def save_draft(
+        self,
+        *,
+        portfolio_id: str | None,
+        name: str,
+        lookback_days: int | None,
+        jp_rows: list[dict[str, Any]],
+        us_rows: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        normalized_draft = self._normalize_draft(
+            {
+                "portfolio_id": portfolio_id,
+                "name": name,
+                "lookback_days": lookback_days,
+                "jp_rows": jp_rows,
+                "us_rows": us_rows,
+            }
+        )
+        timestamp = utc_now_iso()
+
+        async with self._lock:
+            self._state["draft"] = None
+            if normalized_draft is not None:
+                normalized_draft["updated_at"] = timestamp
+                self._state["draft"] = normalized_draft
+            self._state["updated_at"] = timestamp
+            self._write_no_lock()
+            draft = self._state.get("draft")
+            return self._snapshot_draft(draft) if isinstance(draft, dict) else None
+
+    async def clear_draft(self) -> None:
+        async with self._lock:
+            if self._state.get("draft") is None:
+                return
+            self._state["draft"] = None
+            self._state["updated_at"] = utc_now_iso()
+            self._write_no_lock()
 
     async def save_portfolio(
         self,
@@ -181,6 +316,9 @@ class PortfolioAnalysisStore:
             portfolios[:] = [item for item in portfolios if item["portfolio_id"] != normalized_id]
             deleted = len(portfolios) != original_count
             if deleted:
+                draft = self._state.get("draft")
+                if isinstance(draft, dict) and str(draft.get("portfolio_id") or "").strip() == normalized_id:
+                    self._state["draft"] = None
                 self._state["updated_at"] = utc_now_iso()
                 self._write_no_lock()
             return deleted

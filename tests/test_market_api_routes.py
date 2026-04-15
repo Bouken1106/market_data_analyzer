@@ -145,12 +145,24 @@ class _FakeSymbolCatalogStore:
 class _FakeUiStateStore:
     def __init__(self) -> None:
         self.payload: dict[str, object] | None = None
+        self.symbols_by_namespace: dict[str, list[str]] = {
+            "us": ["AAPL", "MSFT"],
+            "jp": ["7203.T"],
+        }
 
     def get_watchlist_commentary(self) -> dict[str, object] | None:
         return self.payload
 
     def set_watchlist_commentary(self, payload: dict[str, object]) -> None:
         self.payload = dict(payload)
+
+    def get_symbols(self, namespace: str | None = None) -> list[str]:
+        normalized_namespace = str(namespace or "us").strip().lower() or "us"
+        return list(self.symbols_by_namespace.get(normalized_namespace, []))
+
+    def set_symbols(self, symbols: list[str], namespace: str | None = None) -> None:
+        normalized_namespace = str(namespace or "us").strip().lower() or "us"
+        self.symbols_by_namespace[normalized_namespace] = list(symbols)
 
 
 class _FakePaperPortfolioStore:
@@ -187,6 +199,11 @@ class MarketApiRoutesTest(unittest.TestCase):
         with TestClient(self.app) as client:
             snapshot_response = client.get("/api/snapshot")
             symbols_response = client.post("/api/symbols", json={"symbols": " aapl, msft "})
+            watchlist_response = client.get("/api/watchlist-state?namespace=jp")
+            update_watchlist_response = client.post(
+                "/api/watchlist-state",
+                json={"namespace": "jp", "symbols": ["7203.T", "9984.T"]},
+            )
             credits_response = client.get("/api/credits")
             refreshed_credits_response = client.get("/api/credits?refresh=true")
             catalog_response = client.get("/api/symbol-catalog?refresh=true&cache_only=true&country=Japan")
@@ -199,6 +216,12 @@ class MarketApiRoutesTest(unittest.TestCase):
         self.assertEqual(symbols_response.json()["symbols"], ["AAPL", "MSFT"])
         self.assertEqual(self.hub.set_symbols_calls[-1], ["AAPL", "MSFT"])
         self.assertEqual(self.hub.current_rows_calls[-1], ["AAPL", "MSFT"])
+
+        self.assertEqual(watchlist_response.status_code, 200)
+        self.assertEqual(watchlist_response.json()["symbols"], ["7203.T"])
+        self.assertEqual(update_watchlist_response.status_code, 200)
+        self.assertEqual(update_watchlist_response.json()["symbols"], ["7203.T", "9984.T"])
+        self.assertEqual(self.ui_state_store.symbols_by_namespace["jp"], ["7203.T", "9984.T"])
 
         self.assertEqual(credits_response.status_code, 200)
         self.assertIn("api_usage", credits_response.json()["note"])

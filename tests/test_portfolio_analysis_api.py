@@ -167,6 +167,30 @@ class PortfolioAnalysisApiTest(unittest.TestCase):
         self.assertEqual(delete_response.status_code, 200)
         self.assertEqual(delete_response.json()["portfolios"], [])
 
+    def test_portfolio_draft_roundtrip(self) -> None:
+        with TestClient(self.app) as client:
+            initial_response = client.get("/api/portfolio-analysis/draft")
+            save_response = client.post(
+                "/api/portfolio-analysis/draft",
+                json={
+                    "portfolio_id": "draft-one",
+                    "name": " Draft Alpha ",
+                    "lookback_days": 126,
+                    "jp_rows": [{"symbol": "NTT", "quantity": "100"}],
+                    "us_rows": [{"symbol": "AAPL", "quantity": "5"}],
+                },
+            )
+            reload_response = client.get("/api/portfolio-analysis/draft")
+
+        self.assertEqual(initial_response.status_code, 200)
+        self.assertIsNone(initial_response.json()["draft"])
+        self.assertEqual(save_response.status_code, 200)
+        self.assertEqual(save_response.json()["draft"]["portfolio_id"], "draft-one")
+        self.assertEqual(save_response.json()["draft"]["name"], "Draft Alpha")
+        self.assertEqual(save_response.json()["draft"]["jp_rows"][0]["symbol"], "NTT")
+        self.assertEqual(reload_response.status_code, 200)
+        self.assertEqual(reload_response.json()["draft"]["lookback_days"], 126)
+
     def test_analyze_endpoint_rejects_invalid_symbol(self) -> None:
         with TestClient(self.app) as client:
             response = client.post(

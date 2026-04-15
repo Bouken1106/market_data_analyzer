@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
-from ..models import PortfolioAnalysisRequest, SavedPortfolioRequest
+from ..models import PortfolioAnalysisDraftRequest, PortfolioAnalysisRequest, SavedPortfolioRequest
 from ..services.portfolio_analysis import analyze_saved_portfolio, resolve_region_holdings
 from ..utils import ok_json_response
 from .deps import HubDep, PortfolioAnalysisStoreDep, SymbolCatalogStoreDep
@@ -16,6 +16,26 @@ router = APIRouter()
 @router.get("/api/portfolio-analysis/portfolios")
 async def list_saved_portfolios(portfolio_analysis_store: PortfolioAnalysisStoreDep) -> JSONResponse:
     return ok_json_response(portfolios=await portfolio_analysis_store.list_portfolios())
+
+
+@router.get("/api/portfolio-analysis/draft")
+async def get_portfolio_draft(portfolio_analysis_store: PortfolioAnalysisStoreDep) -> JSONResponse:
+    return ok_json_response(draft=await portfolio_analysis_store.get_draft())
+
+
+@router.post("/api/portfolio-analysis/draft")
+async def save_portfolio_draft(
+    req: PortfolioAnalysisDraftRequest,
+    portfolio_analysis_store: PortfolioAnalysisStoreDep,
+) -> JSONResponse:
+    draft = await portfolio_analysis_store.save_draft(
+        portfolio_id=req.portfolio_id,
+        name=req.name,
+        lookback_days=req.lookback_days,
+        jp_rows=[row.model_dump() for row in req.jp_rows],
+        us_rows=[row.model_dump() for row in req.us_rows],
+    )
+    return ok_json_response(draft=draft)
 
 
 @router.post("/api/portfolio-analysis/portfolios")

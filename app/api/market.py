@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..config import settings
-from ..models import SymbolUpdateRequest
+from ..models import SymbolUpdateRequest, WatchlistStateRequest
 from ..services.market_api_service import (
     build_relationship_payload,
     build_relationship_request,
@@ -22,6 +22,16 @@ from .deps import HubDep, SymbolCatalogStoreDep, UiStateStoreDep
 from .market_stream import build_market_stream_response
 
 router = APIRouter()
+_WATCHLIST_NAMESPACES = frozenset({"us", "jp"})
+
+
+def _normalize_watchlist_namespace(namespace: str | None) -> str:
+    normalized = str(namespace or "").strip().lower()
+    if not normalized:
+        return "us"
+    if normalized not in _WATCHLIST_NAMESPACES:
+        raise HTTPException(status_code=400, detail="Unsupported watchlist namespace.")
+    return normalized
 
 
 @router.get("/api/snapshot")
@@ -39,6 +49,32 @@ async def update_symbols(req: SymbolUpdateRequest, hub: HubDep) -> JSONResponse:
         symbols=symbols,
         status=await hub.status_payload(),
         rows=rows,
+    )
+
+
+@router.get("/api/watchlist-state")
+async def get_watchlist_state(
+    ui_state_store: UiStateStoreDep,
+    namespace: str | None = None,
+) -> JSONResponse:
+    normalized_namespace = _normalize_watchlist_namespace(namespace)
+    return ok_json_response(
+        namespace=normalized_namespace,
+        symbols=ui_state_store.get_symbols(namespace=normalized_namespace),
+    )
+
+
+@router.post("/api/watchlist-state")
+async def update_watchlist_state(
+    req: WatchlistStateRequest,
+    ui_state_store: UiStateStoreDep,
+) -> JSONResponse:
+    normalized_namespace = _normalize_watchlist_namespace(req.namespace)
+    symbols = normalize_symbols(req.symbols)
+    ui_state_store.set_symbols(symbols, namespace=normalized_namespace)
+    return ok_json_response(
+        namespace=normalized_namespace,
+        symbols=ui_state_store.get_symbols(namespace=normalized_namespace),
     )
 
 

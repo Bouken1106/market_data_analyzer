@@ -20,6 +20,11 @@ class SymbolUpdateRequest(BaseModel):
     symbols: str
 
 
+class WatchlistStateRequest(BaseModel):
+    namespace: str | None = None
+    symbols: list[str] = Field(default_factory=list)
+
+
 class PaperTradeRequest(BaseModel):
     symbol: str
     side: str
@@ -47,3 +52,16 @@ class PortfolioAnalysisRequest(BaseModel):
     jp_holdings: list[PortfolioHoldingRequest] = Field(default_factory=list)
     us_holdings: list[PortfolioHoldingRequest] = Field(default_factory=list)
     lookback_days: int | None = 252
+
+
+class PortfolioDraftRowRequest(BaseModel):
+    symbol: str = ""
+    quantity: str = ""
+
+
+class PortfolioAnalysisDraftRequest(BaseModel):
+    portfolio_id: str | None = None
+    name: str = ""
+    lookback_days: int | None = 252
+    jp_rows: list[PortfolioDraftRowRequest] = Field(default_factory=list)
+    us_rows: list[PortfolioDraftRowRequest] = Field(default_factory=list)

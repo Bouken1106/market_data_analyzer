@@ -12,6 +12,8 @@ const REGION_CONFIG = {
   jp: { label: "日本株", currencySymbol: "¥", digits: 0, placeholder: "7203 / 7203.T / NTT" },
   us: { label: "米国株", currencySymbol: "$", digits: 2, placeholder: "AAPL / Apple" },
 };
+const DEFAULT_LOOKBACK_DAYS = 252;
+const DRAFT_SAVE_DEBOUNCE_MS = 500;
 
 const state = {
   currentPortfolioId: "",
@@ -19,6 +21,10 @@ const state = {
   analysis: null,
   busy: false,
 };
+let draftSaveTimer = null;
+let draftSaveInFlight = false;
+let draftSaveQueued = false;
+let lastDraftSignature = "";
 
 function regionRowsEl(region) {
   return document.getElementById(`pa-${region}-rows`);
@@ -35,6 +41,11 @@ function normalizeSymbolForRegion(raw, region) {
     return `${symbol}.T`;
   }
   return symbol;
+}
+
+function normalizeLookbackDays(rawValue) {
+  const parsed = Number.parseInt(String(rawValue ?? ""), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_LOOKBACK_DAYS;
 }
 
 function formatCount(value) {
@@ -100,8 +111,9 @@ async function requestJson(url, options = {}) {
 
 function buildHoldingRow(region, holding = {}, analysisHolding = null) {
   const symbol = escapeHtml(holding.symbol || "");
-  const quantity = Number(holding.quantity);
-  const quantityValue = Number.isFinite(quantity) && quantity > 0 ? quantity : "";
+  const rawQuantity = String(holding.quantity ?? "").trim();
+  const quantity = Number(rawQuantity);
+  const quantityValue = rawQuantity || (Number.isFinite(quantity) && quantity > 0 ? quantity : "");
   const lastPrice = analysisHolding ? formatMoney(region, analysisHolding.last_price) : "-";
   const marketValue = analysisHolding ? formatMoney(region, analysisHolding.market_value) : "-";
   const weight = analysisHolding ? formatPercent(analysisHolding.weight) : "-";
@@ -312,10 +324,121 @@ function buildEditorPayload() {
   return {
     portfolio_id: state.currentPortfolioId || null,
     name: portfolioNameEl.value.trim(),
-    lookback_days: Number(lookbackDaysEl.value || 252),
+    lookback_days: normalizeLookbackDays(lookbackDaysEl.value),
     jp_holdings: collectRegionHoldings("jp"),
     us_holdings: collectRegionHoldings("us"),
   };
+}
+
+function collectRegionDraftRows(region) {
+  return Array.from(regionRowsEl(region).querySelectorAll("tr"))
+    .map((row) => {
+      const symbolInput = row.querySelector('input[name="symbol"]');
+      const quantityInput = row.querySelector('input[name="quantity"]');
+      return {
+        symbol: String(symbolInput?.value || "").trim(),
+        quantity: String(quantityInput?.value || "").trim(),
+      };
+    })
+    .filter((row) => row.symbol || row.quantity);
+}
+
+function buildDraftPayload() {
+  return {
+    portfolio_id: state.currentPortfolioId || null,
+    name: portfolioNameEl.value.trim(),
+    lookback_days: normalizeLookbackDays(lookbackDaysEl.value),
+    jp_rows: collectRegionDraftRows("jp"),
+    us_rows: collectRegionDraftRows("us"),
+  };
+}
+
+function draftHasContent(draft) {
+  if (!draft) return false;
+  if (String(draft.portfolio_id || "").trim()) return true;
+  if (String(draft.name || "").trim()) return true;
+  if (Array.isArray(draft.jp_rows) && draft.jp_rows.length > 0) return true;
+  if (Array.isArray(draft.us_rows) && draft.us_rows.length > 0) return true;
+  return normalizeLookbackDays(draft.lookback_days) !== DEFAULT_LOOKBACK_DAYS;
+}
+
+function draftHasRows(draft) {
+  return (Array.isArray(draft?.jp_rows) && draft.jp_rows.length > 0)
+    || (Array.isArray(draft?.us_rows) && draft.us_rows.length > 0);
+}
+
+function canAnalyzeEditorPayload() {
+  try {
+    const payload = buildEditorPayload();
+    return payload.jp_holdings.length > 0 || payload.us_holdings.length > 0;
+  } catch (_error) {
+    return false;
+  }
+}
+
+async function fetchDraft() {
+  const payload = await requestJson("/api/portfolio-analysis/draft");
+  return payload?.draft || null;
+}
+
+async function persistDraftNow() {
+  const currentPayload = buildDraftPayload();
+  const currentSignature = JSON.stringify(currentPayload);
+  if (currentSignature === lastDraftSignature) {
+    return;
+  }
+  if (draftSaveInFlight) {
+    draftSaveQueued = true;
+    return;
+  }
+
+  draftSaveInFlight = true;
+  try {
+    do {
+      draftSaveQueued = false;
+      const payload = buildDraftPayload();
+      const signature = JSON.stringify(payload);
+      if (signature === lastDraftSignature) {
+        continue;
+      }
+      await requestJson("/api/portfolio-analysis/draft", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      lastDraftSignature = signature;
+    } while (draftSaveQueued);
+  } catch (error) {
+    setMessage(error instanceof Error ? error.message : "編集中ドラフトの保存に失敗しました。", "error");
+  } finally {
+    draftSaveInFlight = false;
+  }
+}
+
+function scheduleDraftSave() {
+  if (draftSaveTimer) {
+    window.clearTimeout(draftSaveTimer);
+  }
+  draftSaveTimer = window.setTimeout(() => {
+    draftSaveTimer = null;
+    void persistDraftNow();
+  }, DRAFT_SAVE_DEBOUNCE_MS);
+}
+
+function loadDraft(draft) {
+  const draftPortfolioId = String(draft?.portfolio_id || "").trim();
+  state.currentPortfolioId = state.portfolios.some((item) => item.portfolio_id === draftPortfolioId)
+    ? draftPortfolioId
+    : "";
+  state.analysis = null;
+  portfolioSelectEl.value = state.currentPortfolioId;
+  portfolioNameEl.value = String(draft?.name || "").trim();
+  lookbackDaysEl.value = String(normalizeLookbackDays(draft?.lookback_days));
+  renderRegionRows("jp", Array.isArray(draft?.jp_rows) ? draft.jp_rows : []);
+  renderRegionRows("us", Array.isArray(draft?.us_rows) ? draft.us_rows : []);
+  clearRegionMetrics("jp");
+  clearRegionMetrics("us");
+  lastDraftSignature = JSON.stringify(buildDraftPayload());
+  setMessage("前回の編集中ドラフトを復元しました。", "info");
 }
 
 function applyAnalysis(payload) {
@@ -345,6 +468,7 @@ async function analyzeCurrentPortfolio() {
       }),
     });
     applyAnalysis(analysisPayload);
+    await persistDraftNow();
     setMessage("リスク分析を更新しました。", "success");
   } finally {
     setBusy(false);
@@ -375,6 +499,7 @@ async function saveCurrentPortfolio() {
     portfolioNameEl.value = savePayload.portfolio?.name || payload.name;
     renderRegionRows("jp", savePayload.portfolio?.jp_holdings || payload.jp_holdings, state.analysis?.regions?.jp || null);
     renderRegionRows("us", savePayload.portfolio?.us_holdings || payload.us_holdings, state.analysis?.regions?.us || null);
+    await persistDraftNow();
     setMessage("ポートフォリオを保存しました。", "success");
   } finally {
     setBusy(false);
@@ -394,6 +519,7 @@ async function deleteCurrentPortfolio() {
     state.portfolios = Array.isArray(payload.portfolios) ? payload.portfolios : [];
     renderPortfolioOptions();
     resetComposer();
+    await persistDraftNow();
     setMessage("保存済みポートフォリオを削除しました。", "success");
   } finally {
     setBusy(false);
@@ -405,12 +531,21 @@ async function initialize() {
   renderRegionRows("us", []);
   try {
     await fetchPortfolios();
+    const draft = await fetchDraft();
+    if (draftHasContent(draft)) {
+      loadDraft(draft);
+      if (draftHasRows(draft) && canAnalyzeEditorPayload()) {
+        await analyzeCurrentPortfolio();
+      }
+      return;
+    }
     if (state.portfolios.length > 0) {
       loadPortfolio(state.portfolios[0]);
       await analyzeCurrentPortfolio();
       return;
     }
     resetComposer();
+    lastDraftSignature = JSON.stringify(buildDraftPayload());
   } catch (error) {
     setMessage(error instanceof Error ? error.message : String(error), "error");
   }
@@ -420,10 +555,12 @@ portfolioSelectEl?.addEventListener("change", async (event) => {
   const portfolioId = String(event.target?.value || "");
   if (!portfolioId) {
     resetComposer();
+    await persistDraftNow();
     return;
   }
   const portfolio = state.portfolios.find((item) => item.portfolio_id === portfolioId);
   loadPortfolio(portfolio || null);
+  await persistDraftNow();
   try {
     await analyzeCurrentPortfolio();
   } catch (error) {
@@ -433,6 +570,7 @@ portfolioSelectEl?.addEventListener("change", async (event) => {
 
 newBtn?.addEventListener("click", () => {
   resetComposer();
+  scheduleDraftSave();
 });
 
 saveBtn?.addEventListener("click", async () => {
@@ -464,10 +602,14 @@ addRowButtons.forEach((button) => {
     const region = button.getAttribute("data-region");
     if (!region) return;
     regionRowsEl(region).appendChild(buildHoldingRow(region));
+    scheduleDraftSave();
   });
 });
 
 ["jp", "us"].forEach((region) => {
+  regionRowsEl(region)?.addEventListener("input", () => {
+    scheduleDraftSave();
+  });
   regionRowsEl(region)?.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof Element) || !target.closest(".pa-remove-row-btn")) {
@@ -479,7 +621,16 @@ addRowButtons.forEach((button) => {
     if (regionRowsEl(region).children.length === 0) {
       regionRowsEl(region).appendChild(buildHoldingRow(region));
     }
+    scheduleDraftSave();
   });
+});
+
+portfolioNameEl?.addEventListener("input", () => {
+  scheduleDraftSave();
+});
+
+lookbackDaysEl?.addEventListener("change", () => {
+  scheduleDraftSave();
 });
 
 window.addEventListener("DOMContentLoaded", initialize);

@@ -9,25 +9,51 @@ from ..config import settings
 from ..utils import normalize_symbols
 from .json_state import JsonStateStore
 
+_DEFAULT_WATCHLIST_NAMESPACE = "us"
+
 
 class UiStateStore(JsonStateStore):
     def __init__(self, cache_path: Path) -> None:
         super().__init__(cache_path, log_label="UI state cache")
         self._state: dict[str, Any] = {
             "symbols": [],
+            "watchlists": {},
             "watchlist_commentary": None,
             "updated_at": None,
         }
         self._load_from_disk()
 
-    def get_symbols(self) -> list[str]:
+    @staticmethod
+    def _normalize_namespace(namespace: str | None) -> str:
+        normalized = str(namespace or "").strip().lower()
+        return normalized or _DEFAULT_WATCHLIST_NAMESPACE
+
+    def get_symbols(self, namespace: str | None = None) -> list[str]:
+        normalized_namespace = self._normalize_namespace(namespace)
+        watchlists = self._state.get("watchlists")
+        if isinstance(watchlists, dict):
+            raw = watchlists.get(normalized_namespace)
+            if isinstance(raw, list):
+                return normalize_symbols(raw, max_items=settings.provider.max_basic_symbols)
+
+        if normalized_namespace != _DEFAULT_WATCHLIST_NAMESPACE:
+            return []
+
         raw = self._state.get("symbols")
         if not isinstance(raw, list):
             return []
         return normalize_symbols(raw, max_items=settings.provider.max_basic_symbols)
 
-    def set_symbols(self, symbols: list[str]) -> None:
-        self._state["symbols"] = normalize_symbols(symbols, max_items=settings.provider.max_basic_symbols)
+    def set_symbols(self, symbols: list[str], namespace: str | None = None) -> None:
+        normalized_symbols = normalize_symbols(symbols, max_items=settings.provider.max_basic_symbols)
+        normalized_namespace = self._normalize_namespace(namespace)
+        watchlists = self._state.get("watchlists")
+        if not isinstance(watchlists, dict):
+            watchlists = {}
+            self._state["watchlists"] = watchlists
+        watchlists[normalized_namespace] = list(normalized_symbols)
+        if normalized_namespace == _DEFAULT_WATCHLIST_NAMESPACE:
+            self._state["symbols"] = list(normalized_symbols)
         self._touch_and_write()
 
     def get_watchlist_commentary(self) -> dict[str, Any] | None:
@@ -45,9 +71,25 @@ class UiStateStore(JsonStateStore):
         if payload is None:
             return
         symbols = payload.get("symbols")
+        watchlists = payload.get("watchlists")
         commentary = payload.get("watchlist_commentary")
         if isinstance(symbols, list):
-            self._state["symbols"] = symbols
+            self._state["symbols"] = normalize_symbols(symbols, max_items=settings.provider.max_basic_symbols)
+        if isinstance(watchlists, dict):
+            normalized_watchlists: dict[str, list[str]] = {}
+            for namespace, raw_symbols in watchlists.items():
+                if not isinstance(raw_symbols, list):
+                    continue
+                normalized_watchlists[self._normalize_namespace(str(namespace))] = normalize_symbols(
+                    raw_symbols,
+                    max_items=settings.provider.max_basic_symbols,
+                )
+            self._state["watchlists"] = normalized_watchlists
+        if (
+            self._state["symbols"]
+            and _DEFAULT_WATCHLIST_NAMESPACE not in self._state["watchlists"]
+        ):
+            self._state["watchlists"][_DEFAULT_WATCHLIST_NAMESPACE] = list(self._state["symbols"])
         if isinstance(commentary, dict):
             self._state["watchlist_commentary"] = commentary
         updated_at = payload.get("updated_at")
