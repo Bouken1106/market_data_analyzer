@@ -112,6 +112,7 @@ class StorageSettings:
     full_daily_history_cache_dir: Path
     fmp_reference_cache_dir: Path
     paper_portfolio_cache_path: Path
+    portfolio_analysis_cache_path: Path
     ui_state_cache_path: Path
     paper_initial_cash: float
     auto_refresh_on_startup: bool
@@ -266,6 +267,7 @@ def _load_storage_settings(app_dir: Path) -> StorageSettings:
         full_daily_history_cache_dir=app_dir / "cache" / "daily_history",
         fmp_reference_cache_dir=app_dir / "cache" / "fmp_reference",
         paper_portfolio_cache_path=app_dir / "cache" / "paper_portfolio.json",
+        portfolio_analysis_cache_path=app_dir / "cache" / "saved_portfolios.json",
         ui_state_cache_path=app_dir / "cache" / "ui_state.json",
         paper_initial_cash=_float_env("PAPER_INITIAL_CASH", default=1_000_000, minimum=1),
         auto_refresh_on_startup=_bool_env("AUTO_REFRESH_ON_STARTUP", default=False),

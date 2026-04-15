@@ -4471,3 +4471,242 @@ body.chart-panning {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------- Portfolio Risk Desk ---------- */
+.portfolio-analysis-layout {
+  gap: 14px;
+}
+
+.pa-hero-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: hidden;
+}
+
+.pa-hero-card::after {
+  content: "";
+  position: absolute;
+  inset: auto -10% -40% 40%;
+  height: 240px;
+  background: radial-gradient(circle, rgba(240, 136, 62, 0.12) 0%, rgba(240, 136, 62, 0) 72%);
+  pointer-events: none;
+}
+
+.pa-hero-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.pa-hero-head h1 {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  color: var(--text-bright);
+  margin-bottom: 4px;
+}
+
+.pa-hero-head p {
+  color: var(--text-muted);
+  max-width: 880px;
+}
+
+.pa-toolbar-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(240px, 1.4fr) minmax(140px, 180px) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.pa-toolbar-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.pa-success {
+  color: var(--green);
+}
+
+.pa-region-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.pa-region-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+}
+
+.pa-region-jp::before {
+  background: linear-gradient(180deg, var(--amber) 0%, transparent 100%);
+  opacity: 0.5;
+}
+
+.pa-region-us::before {
+  background: linear-gradient(180deg, var(--cyan) 0%, transparent 100%);
+  opacity: 0.5;
+}
+
+.pa-region-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pa-region-head h2 {
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.pa-region-head p {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  margin-top: 4px;
+}
+
+.pa-table-wrap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: auto;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.01) 0%, rgba(255, 255, 255, 0.03) 100%);
+}
+
+.pa-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 640px;
+}
+
+.pa-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  font-size: 0.73rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  padding: 11px 12px;
+  background: rgba(11, 16, 22, 0.95);
+  border-bottom: 1px solid var(--border);
+}
+
+.pa-table tbody td {
+  padding: 10px 12px;
+  border-top: 1px solid rgba(52, 70, 90, 0.7);
+  vertical-align: top;
+}
+
+.pa-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.pa-row-muted {
+  background: rgba(240, 136, 62, 0.06);
+}
+
+.pa-symbol-cell {
+  min-width: 220px;
+}
+
+.pa-symbol-cell input,
+.pa-qty-cell input {
+  width: 100%;
+}
+
+.pa-row-meta {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+}
+
+.pa-value-cell {
+  white-space: nowrap;
+  text-align: right;
+  font-family: var(--font-mono);
+}
+
+.pa-action-cell {
+  width: 48px;
+  text-align: right;
+}
+
+.pa-summary-grid,
+.pa-risk-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.pa-risk-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.pa-summary-grid .status-box,
+.pa-risk-grid .status-box {
+  min-height: 78px;
+}
+
+.pa-risk-note {
+  min-height: 20px;
+}
+
+.pa-warning-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--amber);
+  font-size: 0.82rem;
+}
+
+.pa-warning-list:empty {
+  display: none;
+}
+
+.pa-warning-list li {
+  padding: 9px 10px;
+  border: 1px solid rgba(240, 136, 62, 0.24);
+  background: rgba(240, 136, 62, 0.07);
+  border-radius: var(--radius);
+}
+
+@media (max-width: 1160px) {
+  .pa-toolbar-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pa-toolbar-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .pa-region-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .pa-hero-head {
+    flex-direction: column;
+  }
+
+  .pa-toolbar-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pa-summary-grid,
+  .pa-risk-grid {
+    grid-template-columns: 1fr;
+  }
+}

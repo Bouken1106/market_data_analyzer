@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 @dataclass(frozen=True)
@@ -29,3 +29,21 @@ class PaperTradeRequest(BaseModel):
 
 class PaperPortfolioResetRequest(BaseModel):
     initial_cash: float | None = None
+
+
+class PortfolioHoldingRequest(BaseModel):
+    symbol: str
+    quantity: float
+
+
+class SavedPortfolioRequest(BaseModel):
+    portfolio_id: str | None = None
+    name: str
+    jp_holdings: list[PortfolioHoldingRequest] = Field(default_factory=list)
+    us_holdings: list[PortfolioHoldingRequest] = Field(default_factory=list)
+
+
+class PortfolioAnalysisRequest(BaseModel):
+    jp_holdings: list[PortfolioHoldingRequest] = Field(default_factory=list)
+    us_holdings: list[PortfolioHoldingRequest] = Field(default_factory=list)
+    lookback_days: int | None = 252

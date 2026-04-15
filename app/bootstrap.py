@@ -11,6 +11,7 @@ from .stores import (
     FullDailyHistoryStore,
     LastPriceStore,
     PaperPortfolioStore,
+    PortfolioAnalysisStore,
     SymbolCatalogStore,
     UiStateStore,
 )
@@ -23,6 +24,7 @@ class AppServices:
     symbol_catalog_store: SymbolCatalogStore
     paper_portfolio_store: PaperPortfolioStore
     ui_state_store: UiStateStore
+    portfolio_analysis_store: PortfolioAnalysisStore | None = None
 
 
 def resolve_default_symbols() -> list[str]:
@@ -70,6 +72,9 @@ def build_services() -> AppServices:
         cache_path=settings.storage.paper_portfolio_cache_path,
         default_initial_cash=settings.storage.paper_initial_cash,
     )
+    portfolio_analysis_store = PortfolioAnalysisStore(
+        cache_path=settings.storage.portfolio_analysis_cache_path,
+    )
     symbol_catalog_store = SymbolCatalogStore(
         provider=settings.provider.data_provider,
         twelvedata_api_key=settings.provider.twelve_data_api_key,
@@ -97,4 +102,5 @@ def build_services() -> AppServices:
         symbol_catalog_store=symbol_catalog_store,
         paper_portfolio_store=paper_portfolio_store,
         ui_state_store=ui_state_store,
+        portfolio_analysis_store=portfolio_analysis_store,
     )

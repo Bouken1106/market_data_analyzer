@@ -18,6 +18,7 @@ class StaticPage:
 STATIC_PAGES: tuple[StaticPage, ...] = (
     StaticPage("/", "index.html"),
     StaticPage("/jp-monitor", "jp_monitor.html"),
+    StaticPage("/portfolio-analysis", "portfolio_analysis.html"),
     StaticPage("/relationship-lab", "relationship_lab.html"),
     StaticPage("/leadlag-lab", "leadlag_lab.html"),
 )
@@ -28,6 +29,7 @@ HISTORICAL_PAGE_PATH_PREFIX = "/historical/"
 STATIC_ASSET_NO_CACHE_PATHS = frozenset(
     {
         "/static/app.terminal.js",
+        "/static/portfolio_analysis.js",
         "/static/styles.css",
         "/static/index.html",
     }
