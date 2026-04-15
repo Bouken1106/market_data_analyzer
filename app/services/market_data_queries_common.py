@@ -27,6 +27,17 @@ from .market_data_payload_utils import (
 
 
 class MarketDataQueryCommonMixin:
+    def _format_twelvedata_symbol(self, symbol: str) -> str:
+        normalized = str(symbol or "").strip().upper()
+        if not normalized or ":" in normalized:
+            return normalized
+        country_key = self._resolve_symbol_country_key(normalized)
+        if country_key == "JAPAN":
+            code = normalized[:-2] if normalized.endswith(".T") else normalized
+            if code.isdigit() and len(code) in {4, 5}:
+                return f"{code}:JPX"
+        return normalized
+
     @staticmethod
     def _pick_float(payload: dict[str, Any], *keys: str) -> float | None:
         return pick_float(payload, *keys)

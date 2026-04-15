@@ -17,8 +17,10 @@ class _FakeHub:
         self.rows_by_symbol: dict[str, dict[str, object]] = {
             "AAPL": {"symbol": "AAPL", "price": 125.0},
             "MSFT": {"symbol": "MSFT", "price": None},
+            "7203.T": {"symbol": "7203.T", "price": None},
         }
         self.current_rows_calls: list[list[str]] = []
+        self.overview_calls: list[dict[str, object]] = []
 
     async def start(self) -> None:
         return None
@@ -29,6 +31,31 @@ class _FakeHub:
     async def current_rows(self, symbols: list[str]):
         self.current_rows_calls.append(list(symbols))
         return [dict(self.rows_by_symbol[symbol]) for symbol in symbols if symbol in self.rows_by_symbol]
+
+    async def security_overview_payload(
+        self,
+        *,
+        symbol: str,
+        refresh: bool = False,
+        include_intraday: bool = True,
+        include_market: bool = True,
+        include_qqq: bool = True,
+    ) -> dict[str, object]:
+        self.overview_calls.append(
+            {
+                "symbol": symbol,
+                "refresh": refresh,
+                "include_intraday": include_intraday,
+                "include_market": include_market,
+                "include_qqq": include_qqq,
+            }
+        )
+        if symbol == "7203.T":
+            return {
+                "symbol": symbol,
+                "price": {"current": 500.0},
+            }
+        return {"symbol": symbol, "price": {"current": None}}
 
 
 class _FakePaperPortfolioStore:
@@ -130,6 +157,34 @@ class PaperPortfolioApiTest(unittest.TestCase):
 
         self.assertEqual(exc.exception.status_code, 400)
         self.assertEqual(exc.exception.detail, "Current market price is unavailable. Set price manually.")
+
+    def test_trade_endpoint_falls_back_to_daily_overview_price(self) -> None:
+        hub, store = self._build_dependencies()
+
+        response = asyncio.run(
+            paper_trade(
+                PaperTradeRequest(symbol="7203.T", side="buy", quantity=1),
+                hub=hub,
+                paper_portfolio_store=store,
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["trade"]["symbol"], "7203.T")
+        self.assertEqual(payload["trade"]["execution_source"], "daily")
+        self.assertEqual(payload["cash"], 500.0)
+        self.assertEqual(hub.current_rows_calls[0], ["7203.T"])
+        self.assertEqual(
+            hub.overview_calls[-1],
+            {
+                "symbol": "7203.T",
+                "refresh": False,
+                "include_intraday": False,
+                "include_market": False,
+                "include_qqq": False,
+            },
+        )
 
     def test_reset_endpoint_clears_positions_and_uses_explicit_initial_cash(self) -> None:
         hub, store = self._build_dependencies()

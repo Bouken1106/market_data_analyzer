@@ -147,13 +147,43 @@ async def resolve_trade_price(hub: Any, symbol: str, explicit_price: float | Non
             raise HTTPException(status_code=400, detail="price must be greater than 0.")
         return parsed, "manual"
 
+    async def _overview_fallback() -> tuple[float | None, str | None]:
+        fallback_loader = getattr(hub, "security_overview_payload", None)
+        if not callable(fallback_loader):
+            return None, None
+        try:
+            overview = await fallback_loader(
+                symbol=symbol,
+                refresh=False,
+                include_intraday=False,
+                include_market=False,
+                include_qqq=False,
+            )
+        except Exception:
+            return None, None
+        overview_price = (
+            overview.get("price", {}).get("current")
+            if isinstance(overview, dict) and isinstance(overview.get("price"), dict)
+            else None
+        )
+        parsed_price = to_valid_price(overview_price)
+        if parsed_price is None:
+            return None, None
+        return parsed_price, "daily"
+
     rows = await hub.current_rows([symbol])
     if not rows:
+        parsed, source = await _overview_fallback()
+        if parsed is not None and source is not None:
+            return parsed, source
         raise HTTPException(status_code=400, detail=_PRICE_UNAVAILABLE_DETAIL)
 
     latest = rows[0] if isinstance(rows[0], dict) else {}
     parsed = to_valid_price(latest.get("price"))
     if parsed is None:
+        parsed, source = await _overview_fallback()
+        if parsed is not None and source is not None:
+            return parsed, source
         raise HTTPException(status_code=400, detail=_PRICE_UNAVAILABLE_DETAIL)
     return parsed, "market"
 

@@ -160,6 +160,17 @@ class JQuantsHistoricalClient:
     ) -> JQuantsErrorResolution:
         self._update_coverage_window(message)
 
+        if self.owner._is_jquants_invalid_api_key_message(message):
+            setattr(self.owner, "_jquants_api_key_invalid", True)
+            LOGGER.warning("Disabling J-Quants daily bars requests because the API key is invalid or expired.")
+            return JQuantsErrorResolution(
+                retry=False,
+                request_start=request_start,
+                request_end=request_end,
+                adjusted_to_coverage=adjusted_to_coverage,
+                rate_limit_attempts=rate_limit_attempts,
+            )
+
         if not adjusted_to_coverage:
             clamped_dates = clamp_jquants_request_dates(
                 start_date=request_start,
@@ -204,7 +215,7 @@ class JQuantsHistoricalClient:
     def _extract_daily_quote_values(payload: Any) -> list[dict[str, Any]] | None:
         if not isinstance(payload, dict):
             return None
-        for key in ("daily_quotes", "quotes", "bars", "dailyBars"):
+        for key in ("daily_quotes", "quotes", "bars", "dailyBars", "data"):
             candidate = payload.get(key)
             if isinstance(candidate, list):
                 return candidate
@@ -217,11 +228,11 @@ class JQuantsHistoricalClient:
             point = normalize_ohlcv_point(
                 item,
                 timestamp_keys=("Date", "date"),
-                open_keys=("Open", "open", "AdjustmentOpen", "adjustment_open"),
-                high_keys=("High", "high", "AdjustmentHigh", "adjustment_high"),
-                low_keys=("Low", "low", "AdjustmentLow", "adjustment_low"),
-                close_keys=("Close", "close", "AdjustmentClose", "adjustment_close"),
-                volume_keys=("Volume", "volume", "AdjustmentVolume", "adjustment_volume"),
+                open_keys=("AdjO", "AdjustmentOpen", "adjustment_open", "O", "Open", "open"),
+                high_keys=("AdjH", "AdjustmentHigh", "adjustment_high", "H", "High", "high"),
+                low_keys=("AdjL", "AdjustmentLow", "adjustment_low", "L", "Low", "low"),
+                close_keys=("AdjC", "AdjustmentClose", "adjustment_close", "C", "Close", "close"),
+                volume_keys=("AdjVo", "AdjustmentVolume", "adjustment_volume", "Vo", "Volume", "volume"),
                 source="jquants",
             )
             if point is not None:

@@ -64,8 +64,13 @@ async def symbol_catalog(
     symbol_catalog_store: SymbolCatalogStoreDep,
     refresh: bool = False,
     cache_only: bool = False,
+    country: str | None = None,
 ) -> JSONResponse:
-    payload = await symbol_catalog_store.get_catalog(refresh=refresh, cache_only=cache_only)
+    payload = await symbol_catalog_store.get_catalog(
+        refresh=refresh,
+        cache_only=cache_only,
+        country=country,
+    )
     return ok_json_response(**payload)
 
 

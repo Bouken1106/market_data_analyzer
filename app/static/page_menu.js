@@ -40,7 +40,7 @@
     ? activeTabLabelNode.textContent.replace(/\s+/g, " ").trim()
     : "";
   if (path === "/") {
-    menuTitle.textContent = "Live Monitor";
+    menuTitle.textContent = "US Monitor";
   } else {
     menuTitle.textContent = activeLabel || document.title || "Market Data Analyzer";
   }

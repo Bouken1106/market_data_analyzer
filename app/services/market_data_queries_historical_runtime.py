@@ -101,6 +101,11 @@ def is_jquants_rate_limit_message(message: Any) -> bool:
     return "rate limit exceeded" in str(message or "").strip().lower()
 
 
+def is_jquants_invalid_api_key_message(message: Any) -> bool:
+    normalized = str(message or "").strip().lower()
+    return "api key is invalid or expired" in normalized
+
+
 def build_stooq_historical_detail(
     *,
     mode: str,

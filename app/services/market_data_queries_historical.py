@@ -24,6 +24,7 @@ from .market_data_queries_historical_runtime import (
     build_standard_historical_detail,
     clamp_jquants_request_dates,
     extract_jquants_coverage_window,
+    is_jquants_invalid_api_key_message,
     is_jquants_rate_limit_message,
     normalize_jquants_code,
     runtime_value,
@@ -307,6 +308,8 @@ class MarketDataHistoricalMixin:
         )
 
     def _should_use_jquants_for_symbol(self, symbol: str, interval: str) -> bool:
+        if bool(getattr(self, "_jquants_api_key_invalid", False)):
+            return False
         api_key = str(runtime_value("JQUANTS_API_KEY", DEFAULT_JQUANTS_API_KEY) or "").strip()
         return should_use_jquants_for_symbol(symbol, interval, api_key=api_key)
 
@@ -350,6 +353,10 @@ class MarketDataHistoricalMixin:
     @staticmethod
     def _is_jquants_rate_limit_message(message: Any) -> bool:
         return is_jquants_rate_limit_message(message)
+
+    @staticmethod
+    def _is_jquants_invalid_api_key_message(message: Any) -> bool:
+        return is_jquants_invalid_api_key_message(message)
 
     async def _await_jquants_request_slot(self) -> None:
         await self._historical_ops().await_jquants_request_slot()

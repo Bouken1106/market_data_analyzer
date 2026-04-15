@@ -221,10 +221,11 @@ class FullDailyHistoryLoader:
     ) -> date | None:
         if not self.owner._uses_twelvedata() or client is None:
             return None
+        provider_symbol = self.owner._format_twelvedata_symbol(symbol)
         try:
             api_response = await owner_twelvedata_client(self.owner, client).get_earliest_timestamp(
                 EARLIEST_TIMESTAMP_URL,
-                symbol=symbol,
+                symbol=provider_symbol,
                 interval=interval,
             )
             async with self.owner._credits_lock:
@@ -232,11 +233,11 @@ class FullDailyHistoryLoader:
                 await self.owner._consume_daily_credit_estimate(1, source=f"earliest:{symbol}:{interval}")
             payload = api_response.payload
         except Exception as exc:
-            LOGGER.warning("Earliest timestamp fetch failed for %s %s: %s", symbol, interval, exc)
+            LOGGER.warning("Earliest timestamp fetch failed for %s (%s) %s: %s", symbol, provider_symbol, interval, exc)
             return None
 
         if isinstance(payload, dict) and payload.get("status") == "error":
-            LOGGER.warning("Earliest timestamp API error for %s %s: %s", symbol, interval, payload.get("message"))
+            LOGGER.warning("Earliest timestamp API error for %s (%s) %s: %s", symbol, provider_symbol, interval, payload.get("message"))
             return None
 
         raw_value = None

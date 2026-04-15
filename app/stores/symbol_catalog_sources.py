@@ -20,9 +20,39 @@ from ..utils import is_valid_symbol, normalize_symbol
 CatalogRow = dict[str, str]
 
 
+def _pick_catalog_text(*values: Any) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _normalize_country_key(value: Any) -> str:
+    return " ".join(str(value or "").strip().upper().split())
+
+
 class SymbolCatalogRowNormalizer:
-    def __init__(self, *, max_items: int) -> None:
+    def __init__(self, *, max_items: int, country: str = "") -> None:
         self.max_items = max_items
+        self.country = _normalize_country_key(country)
+
+    def _normalize_catalog_symbol(self, symbol: Any, exchange: Any = "") -> str:
+        normalized_symbol = normalize_symbol(symbol)
+        if (
+            self.country == "JAPAN"
+            and normalized_symbol.isdigit()
+            and len(normalized_symbol) in {4, 5}
+        ):
+            return f"{normalized_symbol}.T"
+        normalized_exchange = str(exchange or "").strip().upper()
+        if (
+            normalized_exchange in {"JPX", "TSE", "TYO"}
+            and normalized_symbol.isdigit()
+            and len(normalized_symbol) in {4, 5}
+        ):
+            return f"{normalized_symbol}.T"
+        return normalized_symbol
 
     def build_row(
         self,
@@ -32,7 +62,7 @@ class SymbolCatalogRowNormalizer:
         exchange: Any = "",
         security_type: Any = "",
     ) -> CatalogRow | None:
-        normalized_symbol = normalize_symbol(symbol)
+        normalized_symbol = self._normalize_catalog_symbol(symbol, exchange=exchange)
         if not is_valid_symbol(normalized_symbol):
             return None
         return {
@@ -45,18 +75,15 @@ class SymbolCatalogRowNormalizer:
     def dedupe_sorted(self, rows: Iterable[CatalogRow]) -> list[CatalogRow]:
         deduped: dict[str, CatalogRow] = {}
         for row in rows:
-            symbol = normalize_symbol(row.get("symbol"))
-            if not symbol:
-                continue
             normalized = self.build_row(
-                symbol=symbol,
+                symbol=row.get("symbol"),
                 name=row.get("name"),
                 exchange=row.get("exchange"),
                 security_type=row.get("type"),
             )
             if normalized is None:
                 continue
-            deduped[symbol] = normalized
+            deduped[normalized["symbol"]] = normalized
         return [deduped[key] for key in sorted(deduped.keys())][: self.max_items]
 
     def merge(self, primary_rows: list[CatalogRow], secondary_rows: list[CatalogRow]) -> list[CatalogRow]:
@@ -65,15 +92,21 @@ class SymbolCatalogRowNormalizer:
             merged[row["symbol"]] = row
 
         for row in primary_rows:
-            symbol = normalize_symbol(row.get("symbol"))
-            if not symbol:
+            normalized_row = self.build_row(
+                symbol=row.get("symbol"),
+                name=row.get("name"),
+                exchange=row.get("exchange"),
+                security_type=row.get("type"),
+            )
+            if normalized_row is None:
                 continue
+            symbol = normalized_row["symbol"]
             base = merged.get(symbol, {})
             normalized = self.build_row(
                 symbol=symbol,
-                name=row.get("name") or base.get("name"),
-                exchange=row.get("exchange") or base.get("exchange"),
-                security_type=row.get("type") or base.get("type"),
+                name=normalized_row.get("name") or base.get("name"),
+                exchange=normalized_row.get("exchange") or base.get("exchange"),
+                security_type=normalized_row.get("type") or base.get("type"),
             )
             if normalized is None:
                 continue
@@ -118,7 +151,13 @@ class TwelveDataSymbolCatalogFetcher:
                 continue
             row = self.normalizer.build_row(
                 symbol=item.get("symbol"),
-                name=item.get("name"),
+                name=_pick_catalog_text(
+                    item.get("name"),
+                    item.get("instrument_name"),
+                    item.get("company_name"),
+                    item.get("companyName"),
+                    item.get("description"),
+                ),
                 exchange=item.get("exchange"),
                 security_type=item.get("type"),
             )
@@ -155,7 +194,12 @@ class FmpSymbolCatalogFetcher:
                 continue
             row = self.normalizer.build_row(
                 symbol=item.get("symbol"),
-                name=item.get("name"),
+                name=_pick_catalog_text(
+                    item.get("name"),
+                    item.get("companyName"),
+                    item.get("company_name"),
+                    item.get("description"),
+                ),
                 exchange=item.get("exchangeShortName") or item.get("exchange"),
                 security_type=item.get("type"),
             )
@@ -230,7 +274,7 @@ def build_symbol_catalog_fetcher(
     country: str,
     max_items: int,
 ) -> TwelveDataSymbolCatalogFetcher | FmpSymbolCatalogFetcher | CombinedSymbolCatalogFetcher:
-    normalizer = SymbolCatalogRowNormalizer(max_items=max_items)
+    normalizer = SymbolCatalogRowNormalizer(max_items=max_items, country=country)
     td_fetcher = TwelveDataSymbolCatalogFetcher(
         api_key=twelvedata_api_key,
         country=country,
@@ -241,6 +285,10 @@ def build_symbol_catalog_fetcher(
         normalizer=normalizer,
     )
     resolved_provider = str(provider or "twelvedata").strip().lower()
+    normalized_country = " ".join(str(country or "").strip().lower().split())
+    is_us_catalog = normalized_country in {"united states", "united states of america", "us", "usa"}
+    if not is_us_catalog:
+        return td_fetcher
     if resolved_provider == "both":
         return CombinedSymbolCatalogFetcher(
             primary_name="TD",

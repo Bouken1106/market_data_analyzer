@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,7 +39,7 @@ class SymbolCatalogStore:
         self.ttl_sec = ttl_sec
         self.country = str(country or "").strip()
         self.max_items = max(1, int(max_items))
-        self._row_normalizer = SymbolCatalogRowNormalizer(max_items=self.max_items)
+        self._row_normalizer = SymbolCatalogRowNormalizer(max_items=self.max_items, country=self.country)
         self._fetcher = build_symbol_catalog_fetcher(
             provider=self.provider,
             twelvedata_api_key=self.twelvedata_api_key,
@@ -51,8 +52,34 @@ class SymbolCatalogStore:
         self._loaded_from = "none"
         self._loaded_epoch = 0.0
         self._lock = asyncio.Lock()
+        self._country_stores: dict[str, SymbolCatalogStore] = {}
 
-    async def get_catalog(self, refresh: bool = False, cache_only: bool = False) -> dict[str, Any]:
+    async def get_catalog(
+        self,
+        refresh: bool = False,
+        cache_only: bool = False,
+        *,
+        country: str | None = None,
+    ) -> dict[str, Any]:
+        resolved_country = str(country or self.country or "").strip() or self.country
+        if resolved_country != self.country:
+            delegated_store = self._country_stores.get(resolved_country)
+            if delegated_store is None:
+                delegated_store = SymbolCatalogStore(
+                    provider=self.provider,
+                    twelvedata_api_key=self.twelvedata_api_key,
+                    fmp_api_key=self.fmp_api_key,
+                    cache_path=self._cache_path_for_country(resolved_country),
+                    ttl_sec=self.ttl_sec,
+                    country=resolved_country,
+                    max_items=self.max_items,
+                )
+                self._country_stores[resolved_country] = delegated_store
+            return await delegated_store.get_catalog(refresh=refresh, cache_only=cache_only)
+
+        return await self._get_catalog_for_bound_country(refresh=refresh, cache_only=cache_only)
+
+    async def _get_catalog_for_bound_country(self, refresh: bool = False, cache_only: bool = False) -> dict[str, Any]:
         async with self._lock:
             if cache_only:
                 if self._try_use_cache_only_payload():
@@ -80,6 +107,13 @@ class SymbolCatalogStore:
                     raise HTTPException(status_code=502, detail="Failed to load symbol catalog.")
 
             return self._payload()
+
+    def _cache_path_for_country(self, country: str) -> Path:
+        normalized_country = re.sub(r"[^a-z0-9]+", "_", str(country or "").strip().lower()).strip("_") or "default"
+        default_country = re.sub(r"[^a-z0-9]+", "_", str(self.country or "").strip().lower()).strip("_") or "default"
+        if normalized_country == default_country:
+            return self.cache_path
+        return self.cache_path.with_name(f"{self.cache_path.stem}_{normalized_country}{self.cache_path.suffix}")
 
     def _is_memory_fresh(self) -> bool:
         return ttl_cache_is_fresh(self._loaded_epoch, self.ttl_sec)

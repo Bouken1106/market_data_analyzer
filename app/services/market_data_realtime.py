@@ -184,21 +184,22 @@ class MarketDataRealtimeMixin:
         if not self._uses_twelvedata():
             return False
 
+        provider_symbol = self._format_twelvedata_symbol(symbol)
         try:
             api_response = await TwelveDataClient(client, self.twelvedata_api_key).get_price(
                 REST_PRICE_URL,
-                symbol=symbol,
+                symbol=provider_symbol,
             )
             async with self._credits_lock:
                 await self._update_minute_credits_from_response(api_response.response)
                 await self._consume_daily_credit_estimate(1, source=f"rest:{symbol}")
             payload = api_response.payload
         except Exception as exc:
-            LOGGER.warning("REST fallback failed for %s: %s", symbol, exc)
+            LOGGER.warning("REST fallback failed for %s (%s): %s", symbol, provider_symbol, exc)
             return False
 
         if isinstance(payload, dict) and payload.get("status") == "error":
-            LOGGER.warning("REST API error for %s: %s", symbol, payload.get("message"))
+            LOGGER.warning("REST API error for %s (%s): %s", symbol, provider_symbol, payload.get("message"))
             return False
 
         price = payload.get("price") if isinstance(payload, dict) else None

@@ -17,6 +17,7 @@ const marketOpenStateEl = document.getElementById("market-open-state");
 
 const watchlistEl = document.getElementById("watchlist");
 const watchlistHeadEl = document.getElementById("watchlist-head");
+const watchLlmPanelEl = document.getElementById("watch-llm-panel");
 const watchLlmTextEl = document.getElementById("watch-llm-text");
 const watchLlmMetaEl = document.getElementById("watch-llm-meta");
 const watchLlmRefreshBtn = document.getElementById("watch-llm-refresh");
@@ -49,12 +50,55 @@ const pfMessageEl = document.getElementById("pf-message");
 const pfPositionsBody = document.getElementById("pf-positions-body");
 const pfTradesBody = document.getElementById("pf-trades-body");
 
+const pageDataset = document.body?.dataset || {};
+const parseDatasetBool = (rawValue, fallback) => {
+  if (rawValue === undefined) return fallback;
+  return String(rawValue).trim().toLowerCase() !== "false";
+};
+const parseDatasetInt = (rawValue, fallback) => {
+  const parsed = Number.parseInt(String(rawValue ?? ""), 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+const normalizeCacheNamespace = (rawValue) => String(rawValue || "").trim().toLowerCase();
+const buildCacheKey = (namespace, suffix) => {
+  const normalized = normalizeCacheNamespace(namespace);
+  return normalized ? `mda.${normalized}.${suffix}` : `mda.${suffix}`;
+};
+
+const PAGE_CONFIG = {
+  marketPreset: String(pageDataset.marketPreset || "us").trim().toLowerCase(),
+  streamEnabled: parseDatasetBool(pageDataset.streamEnabled, true),
+  serverSymbolSync: parseDatasetBool(pageDataset.serverSymbolSync, parseDatasetBool(pageDataset.streamEnabled, true)),
+  watchlistCommentaryEnabled: parseDatasetBool(pageDataset.watchlistCommentary, true),
+  catalogCountry: String(pageDataset.catalogCountry || "").trim(),
+  currencySymbol: String(pageDataset.currencySymbol || "$").trim() || "$",
+  currencyDigits: Math.max(0, parseDatasetInt(pageDataset.currencyDigits, 2)),
+  priceMinDigits: Math.max(0, parseDatasetInt(pageDataset.priceMinDigits, 2)),
+  priceMaxDigits: Math.max(0, parseDatasetInt(pageDataset.priceMaxDigits, 4)),
+  primaryClockLabel: String(pageDataset.primaryClockLabel || "JST").trim() || "JST",
+  primaryTimeZone: String(pageDataset.primaryTimeZone || "Asia/Tokyo").trim() || "Asia/Tokyo",
+  secondaryClockLabel: String(pageDataset.secondaryClockLabel || "ET").trim() || "ET",
+  secondaryTimeZone: String(pageDataset.secondaryTimeZone || "America/New_York").trim() || "America/New_York",
+  sessionTimeZone: String(pageDataset.sessionTimeZone || pageDataset.secondaryTimeZone || "America/New_York").trim() || "America/New_York",
+  marketOpenMinute: parseDatasetInt(pageDataset.marketOpenMinute, (9 * 60) + 30),
+  marketCloseMinute: parseDatasetInt(pageDataset.marketCloseMinute, 16 * 60),
+  marketHoursLabel: String(pageDataset.marketHoursLabel || "09:30-16:00 ET").trim() || "09:30-16:00 ET",
+  cacheNamespace: String(pageDataset.cacheNamespace || "").trim(),
+  overviewIncludeIntraday: parseDatasetBool(pageDataset.overviewIncludeIntraday, true),
+  overviewIncludeMarket: parseDatasetBool(pageDataset.overviewIncludeMarket, true),
+  overviewIncludeQqq: parseDatasetBool(pageDataset.overviewIncludeQqq, true),
+  staticMode: String(pageDataset.staticMode || "daily-manual").trim() || "daily-manual",
+  staticProvider: String(pageDataset.staticProvider || "manual").trim() || "manual",
+  staticFallbackLabel: String(pageDataset.staticFallback || "manual").trim() || "manual",
+};
+
 const MAX_SYMBOLS = 8;
 const MAX_DROPDOWN_ITEMS = 120;
-const JST_TIME_ZONE = "Asia/Tokyo";
-const ET_TIME_ZONE = "America/New_York";
-const US_MARKET_OPEN_MINUTE = (9 * 60) + 30;
-const US_MARKET_CLOSE_MINUTE = 16 * 60;
+const PRIMARY_TIME_ZONE = PAGE_CONFIG.primaryTimeZone;
+const SECONDARY_TIME_ZONE = PAGE_CONFIG.secondaryTimeZone;
+const SESSION_TIME_ZONE = PAGE_CONFIG.sessionTimeZone;
+const MARKET_OPEN_MINUTE = PAGE_CONFIG.marketOpenMinute;
+const MARKET_CLOSE_MINUTE = PAGE_CONFIG.marketCloseMinute;
 const CHART_WIDTH = 900;
 const CHART_HEIGHT = 320;
 const CHART_PAD_X = 64;
@@ -72,6 +116,7 @@ const WATCHLIST_MODEL_UNKNOWN = "-";
 const watchItemsBySymbol = new Map();
 const latestRowsBySymbol = new Map();
 const symbolInsightsBySymbol = new Map();
+const symbolMetaBySymbol = new Map();
 const sparklineFetchInFlight = new Set();
 const tabStateBySymbol = new Map();
 const chartViewportBySymbol = new Map();
@@ -100,9 +145,9 @@ let chartPanState = {
   points: [],
   lastClientX: 0,
 };
-const SYMBOL_INSIGHTS_CACHE_KEY = "mda.symbol_insights.v1";
-const WATCHLIST_SYMBOLS_CACHE_KEY = "mda.watchlist_symbols.v1";
-const WATCHLIST_ROWS_CACHE_KEY = "mda.watchlist_rows.v1";
+const SYMBOL_INSIGHTS_CACHE_KEY = buildCacheKey(PAGE_CONFIG.cacheNamespace, "symbol_insights.v1");
+const WATCHLIST_SYMBOLS_CACHE_KEY = buildCacheKey(PAGE_CONFIG.cacheNamespace, "watchlist_symbols.v1");
+const WATCHLIST_ROWS_CACHE_KEY = buildCacheKey(PAGE_CONFIG.cacheNamespace, "watchlist_rows.v1");
 
 const zoneFormatter = (timeZone) => new Intl.DateTimeFormat("en-US", {
   timeZone,
@@ -116,11 +161,21 @@ const zoneFormatter = (timeZone) => new Intl.DateTimeFormat("en-US", {
   second: "2-digit",
 });
 
-const jstFormatter = zoneFormatter(JST_TIME_ZONE);
-const etFormatter = zoneFormatter(ET_TIME_ZONE);
+const primaryFormatter = zoneFormatter(PRIMARY_TIME_ZONE);
+const secondaryFormatter = zoneFormatter(SECONDARY_TIME_ZONE);
+const sessionFormatter = zoneFormatter(SESSION_TIME_ZONE);
 
 function normalizeSymbol(raw) {
-  return String(raw || "").trim().toUpperCase();
+  const normalized = String(raw || "").trim().toUpperCase();
+  if (!normalized) return "";
+  if (PAGE_CONFIG.marketPreset === "jp" && /^\d{4,5}$/.test(normalized)) {
+    return `${normalized}.T`;
+  }
+  return normalized;
+}
+
+function normalizeSearchText(raw) {
+  return String(raw || "").normalize("NFKC").trim().replace(/\s+/g, " ").toUpperCase();
 }
 
 function uniqueSymbols(values) {
@@ -161,13 +216,33 @@ function upsertLatestRow(symbol, row, preserveOnInvalid = true) {
 function formatPrice(value) {
   const num = Number(value);
   if (!Number.isFinite(num)) return "-";
-  return num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+  const maximumFractionDigits = Math.max(PAGE_CONFIG.priceMinDigits, PAGE_CONFIG.priceMaxDigits);
+  return num.toLocaleString("en-US", {
+    minimumFractionDigits: PAGE_CONFIG.priceMinDigits,
+    maximumFractionDigits,
+  });
 }
 
 function formatMoney(value) {
   const num = Number(value);
   if (!Number.isFinite(num)) return "-";
-  return num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return num.toLocaleString("en-US", {
+    minimumFractionDigits: PAGE_CONFIG.currencyDigits,
+    maximumFractionDigits: PAGE_CONFIG.currencyDigits,
+  });
+}
+
+function formatCurrency(value) {
+  const formatted = formatMoney(value);
+  if (formatted === "-") return "-";
+  return `${PAGE_CONFIG.currencySymbol}${formatted}`;
+}
+
+function formatSignedCurrency(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  const sign = num > 0 ? "+" : (num < 0 ? "-" : "");
+  return `${sign}${PAGE_CONFIG.currencySymbol}${formatMoney(Math.abs(num))}`;
 }
 
 function formatCompact(value) {
@@ -196,6 +271,37 @@ function formatDateTime(value) {
     second: "2-digit",
     hour12: false,
   });
+}
+
+function upsertSymbolMeta(symbol, payload = {}) {
+  const normalizedSymbol = normalizeSymbol(symbol);
+  if (!normalizedSymbol) return;
+  const existing = symbolMetaBySymbol.get(normalizedSymbol) || {};
+  const nextName = String(payload?.name || "").trim();
+  const nextExchange = String(payload?.exchange || "").trim();
+  symbolMetaBySymbol.set(normalizedSymbol, {
+    symbol: normalizedSymbol,
+    name: nextName || existing.name || "",
+    exchange: nextExchange || existing.exchange || "",
+  });
+}
+
+function buildSymbolDisplayLabel(symbol) {
+  const normalizedSymbol = normalizeSymbol(symbol);
+  if (!normalizedSymbol) return "-";
+  const name = findCatalogName(normalizedSymbol);
+  return name ? `${normalizedSymbol} | ${name}` : normalizedSymbol;
+}
+
+function buildSymbolOptionLabel(item) {
+  const symbol = normalizeSymbol(item?.symbol);
+  const name = String(item?.name || "").trim();
+  const exchange = String(item?.exchange || "").trim();
+  if (!symbol) return "-";
+  if (name && exchange) return `${symbol} | ${name} (${exchange})`;
+  if (name) return `${symbol} | ${name}`;
+  if (exchange) return `${symbol} (${exchange})`;
+  return symbol;
 }
 
 function formatSigned(value, digits = 2) {
@@ -304,23 +410,27 @@ function formatZoneClockText(parts) {
   return `${y}-${m}-${d} ${h}:${mm}:${s}`;
 }
 
-function isUsRegularSessionOpen(etParts) {
-  const weekday = String(etParts.weekday || "");
+function isConfiguredRegularSessionOpen(sessionParts) {
+  const weekday = String(sessionParts.weekday || "");
   const isWeekday = ["Mon", "Tue", "Wed", "Thu", "Fri"].includes(weekday);
-  if (!isWeekday || !Number.isFinite(etParts.hour) || !Number.isFinite(etParts.minute)) return false;
-  const minuteOfDay = (etParts.hour * 60) + etParts.minute;
-  return minuteOfDay >= US_MARKET_OPEN_MINUTE && minuteOfDay < US_MARKET_CLOSE_MINUTE;
+  if (!isWeekday || !Number.isFinite(sessionParts.hour) || !Number.isFinite(sessionParts.minute)) return false;
+  const minuteOfDay = (sessionParts.hour * 60) + sessionParts.minute;
+  if (MARKET_OPEN_MINUTE <= MARKET_CLOSE_MINUTE) {
+    return minuteOfDay >= MARKET_OPEN_MINUTE && minuteOfDay < MARKET_CLOSE_MINUTE;
+  }
+  return minuteOfDay >= MARKET_OPEN_MINUTE || minuteOfDay < MARKET_CLOSE_MINUTE;
 }
 
 function renderMarketClock() {
   if (!clockJstEl || !clockEtEl || !marketOpenStateEl || !marketHoursEtEl) return;
   const now = new Date();
-  const jst = readZoneClockParts(now, jstFormatter);
-  const et = readZoneClockParts(now, etFormatter);
-  clockJstEl.textContent = `JST ${formatZoneClockText(jst)}`;
-  clockEtEl.textContent = `ET ${formatZoneClockText(et)}`;
-  marketHoursEtEl.textContent = "09:30-16:00 ET";
-  const marketIsOpen = isUsRegularSessionOpen(et);
+  const primary = readZoneClockParts(now, primaryFormatter);
+  const secondary = readZoneClockParts(now, secondaryFormatter);
+  const session = readZoneClockParts(now, sessionFormatter);
+  clockJstEl.textContent = `${PAGE_CONFIG.primaryClockLabel} ${formatZoneClockText(primary)}`;
+  clockEtEl.textContent = `${PAGE_CONFIG.secondaryClockLabel} ${formatZoneClockText(secondary)}`;
+  marketHoursEtEl.textContent = PAGE_CONFIG.marketHoursLabel;
+  const marketIsOpen = isConfiguredRegularSessionOpen(session);
   marketOpenStateEl.textContent = marketIsOpen ? "OPEN" : "CLOSED";
   marketOpenStateEl.classList.toggle("open", marketIsOpen);
   marketOpenStateEl.classList.toggle("closed", !marketIsOpen);
@@ -475,6 +585,7 @@ function restoreSymbolInsightsCache() {
 }
 
 async function refreshWatchlistCommentary(refresh = false) {
+  if (!PAGE_CONFIG.watchlistCommentaryEnabled) return;
   if (!watchLlmTextEl || !watchLlmMetaEl) return;
   const symbols = uniqueSymbols(selectedSymbols).slice(0, MAX_SYMBOLS);
   if (symbols.length < 2) {
@@ -531,6 +642,7 @@ async function refreshWatchlistCommentary(refresh = false) {
 }
 
 async function loadSavedWatchlistCommentary() {
+  if (!PAGE_CONFIG.watchlistCommentaryEnabled) return;
   if (!watchLlmTextEl || !watchLlmMetaEl) return;
   try {
     const { response, result } = await fetchJson("/api/watchlist-commentary/latest");
@@ -581,11 +693,15 @@ function enableContextualScrollbar(target) {
 }
 
 function setStatus(status) {
+  if (!modeEl || !wsStateEl || !fallbackEl || !creditsLeftEl || !creditsUpdatedEl) return;
   modeEl.textContent = status?.mode ?? "-";
   const provider = String(status?.provider || "").toLowerCase();
-  const wsAvailable = provider !== "fmp";
+  const wsAvailable = PAGE_CONFIG.streamEnabled && provider !== "fmp";
   wsStateEl.textContent = wsAvailable ? (status?.ws_connected ? "connected" : "disconnected") : "n/a";
-  fallbackEl.textContent = `${status?.fallback_poll_interval_sec ?? "-"} sec`;
+  const fallbackValue = status?.fallback_poll_interval_sec;
+  fallbackEl.textContent = Number.isFinite(Number(fallbackValue))
+    ? `${fallbackValue} sec`
+    : (fallbackValue ?? "-");
   const openSymbols = Array.isArray(status?.open_symbols)
     ? status.open_symbols.map((item) => normalizeSymbol(item)).filter((item) => item)
     : [];
@@ -603,13 +719,52 @@ function setStatus(status) {
   }
   creditsUpdatedEl.textContent = formatTime(status?.daily_credits_updated_at);
 
-  refreshCreditsBtn.disabled = provider === "fmp";
+  if (refreshCreditsBtn) {
+    refreshCreditsBtn.disabled = !PAGE_CONFIG.streamEnabled || provider === "fmp";
+  }
   refreshWatchlist();
 }
 
 function findCatalogName(symbol) {
-  const entry = symbolCatalog.find((item) => item.symbol === symbol);
-  return entry?.name || "";
+  const normalizedSymbol = normalizeSymbol(symbol);
+  if (!normalizedSymbol) return "";
+  const metaName = String(symbolMetaBySymbol.get(normalizedSymbol)?.name || "").trim();
+  if (metaName) return metaName;
+  const entry = symbolCatalog.find((item) => item.symbol === normalizedSymbol);
+  if (entry?.name) {
+    upsertSymbolMeta(normalizedSymbol, entry);
+    return entry.name;
+  }
+  const overviewName = String(tabStateBySymbol.get(normalizedSymbol)?.overview?.name || "").trim();
+  if (overviewName) {
+    upsertSymbolMeta(normalizedSymbol, {
+      name: overviewName,
+      exchange: tabStateBySymbol.get(normalizedSymbol)?.overview?.exchange,
+    });
+    return overviewName;
+  }
+  return "";
+}
+
+function findCatalogExchange(symbol) {
+  const normalizedSymbol = normalizeSymbol(symbol);
+  if (!normalizedSymbol) return "";
+  const metaExchange = String(symbolMetaBySymbol.get(normalizedSymbol)?.exchange || "").trim();
+  if (metaExchange) return metaExchange;
+  const entry = symbolCatalog.find((item) => item.symbol === normalizedSymbol);
+  if (entry?.exchange) {
+    upsertSymbolMeta(normalizedSymbol, entry);
+    return entry.exchange;
+  }
+  const overviewExchange = String(tabStateBySymbol.get(normalizedSymbol)?.overview?.exchange || "").trim();
+  if (overviewExchange) {
+    upsertSymbolMeta(normalizedSymbol, {
+      name: tabStateBySymbol.get(normalizedSymbol)?.overview?.name,
+      exchange: overviewExchange,
+    });
+    return overviewExchange;
+  }
+  return "";
 }
 
 function computeChangePct(symbol, currentPrice, insight = symbolInsightsBySymbol.get(symbol)) {
@@ -751,6 +906,7 @@ function refreshWatchlist() {
     const nameEl = item.querySelector(".watch-name");
     const priceEl = item.querySelector('[data-col="price"]');
     const changePctEl = item.querySelector('[data-col="change-pct"]');
+    item.title = buildSymbolDisplayLabel(symbol);
 
     if (nameEl) {
       nameEl.textContent = findCatalogName(symbol) || "名称未取得";
@@ -761,7 +917,7 @@ function refreshWatchlist() {
       priceEl.classList.remove("up", "down");
       changePctEl.classList.remove("up", "down");
       if (Number.isFinite(metrics.price)) {
-        priceEl.textContent = `$${formatPrice(metrics.price)}`;
+        priceEl.textContent = `${PAGE_CONFIG.currencySymbol}${formatPrice(metrics.price)}`;
       } else {
         priceEl.textContent = "-";
       }
@@ -819,18 +975,39 @@ function hideDropdown() {
 }
 
 function pickCandidates(query) {
-  const needle = query.trim().toUpperCase();
-  const candidates = [];
-  if (symbolCatalog.length === 0) return candidates;
+  const needle = normalizeSearchText(query);
+  if (symbolCatalog.length === 0) return [];
 
+  if (!needle) {
+    return symbolCatalog
+      .filter((item) => !selectedSymbols.includes(item.symbol))
+      .slice(0, MAX_DROPDOWN_ITEMS);
+  }
+
+  const ranked = [];
   for (const item of symbolCatalog) {
     if (selectedSymbols.includes(item.symbol)) continue;
-    if (!needle || item.symbol.startsWith(needle)) {
-      candidates.push(item);
+    const symbolText = normalizeSearchText(item.symbol);
+    const nameText = normalizeSearchText(item.name);
+    let rank = -1;
+    if (symbolText.startsWith(needle)) {
+      rank = 0;
+    } else if (nameText.startsWith(needle)) {
+      rank = 1;
+    } else if (symbolText.includes(needle)) {
+      rank = 2;
+    } else if (nameText.includes(needle)) {
+      rank = 3;
     }
-    if (candidates.length >= MAX_DROPDOWN_ITEMS) break;
+    if (rank < 0) continue;
+    ranked.push({ item, rank });
   }
-  return candidates;
+
+  ranked.sort((left, right) => {
+    if (left.rank !== right.rank) return left.rank - right.rank;
+    return left.item.symbol.localeCompare(right.item.symbol, "en", { sensitivity: "base" });
+  });
+  return ranked.slice(0, MAX_DROPDOWN_ITEMS).map(({ item }) => item);
 }
 
 function renderDropdown() {
@@ -860,7 +1037,8 @@ function renderDropdown() {
     btn.type = "button";
     btn.className = "dropdown-item";
     btn.dataset.symbol = item.symbol;
-    btn.textContent = `${item.symbol} | ${item.name} (${item.exchange})`;
+    btn.textContent = buildSymbolOptionLabel(item);
+    btn.title = buildSymbolOptionLabel(item);
     symbolDropdown.appendChild(btn);
   });
 
@@ -868,6 +1046,14 @@ function renderDropdown() {
 }
 
 async function updateSymbolsOnServer() {
+  if (!PAGE_CONFIG.serverSymbolSync) {
+    setSelectionError("");
+    saveWatchlistSymbolsCache(selectedSymbols);
+    refreshWatchlist();
+    await loadSymbolInsights(selectedSymbols, false);
+    return;
+  }
+
   if (selectedSymbols.length === 0) {
     setSelectionError("At least one symbol is required.");
     return;
@@ -936,7 +1122,7 @@ async function addSymbol(symbol) {
 
 async function removeSymbol(symbol) {
   if (!selectedSymbols.includes(symbol)) return;
-  if (selectedSymbols.length <= 1) {
+  if (PAGE_CONFIG.serverSymbolSync && selectedSymbols.length <= 1) {
     setSelectionError("At least one symbol is required.");
     return;
   }
@@ -948,6 +1134,14 @@ async function removeSymbol(symbol) {
 }
 
 async function loadSymbolCatalog(refresh = false, cacheOnly = false) {
+  if (!refreshCatalogBtn) {
+    return {
+      loaded: false,
+      count: 0,
+      source: "unavailable",
+      cacheOnly,
+    };
+  }
   refreshCatalogBtn.disabled = true;
   if (cacheOnly) {
     setCatalogMeta("Loading saved symbol catalog...");
@@ -956,16 +1150,25 @@ async function loadSymbolCatalog(refresh = false, cacheOnly = false) {
   }
 
   try {
-    let url = "/api/symbol-catalog";
+    const params = new URLSearchParams();
     if (refresh) {
-      url = "/api/symbol-catalog?refresh=true";
+      params.set("refresh", "true");
     } else if (cacheOnly) {
-      url = "/api/symbol-catalog?cache_only=true";
+      params.set("cache_only", "true");
     }
+    if (PAGE_CONFIG.catalogCountry) {
+      params.set("country", PAGE_CONFIG.catalogCountry);
+    }
+    const url = params.size > 0 ? `/api/symbol-catalog?${params.toString()}` : "/api/symbol-catalog";
     const { response, result } = await fetchJson(url);
     if (!response.ok) {
       setCatalogMeta(result.detail || "Failed to load symbol catalog");
-      return;
+      return {
+        loaded: false,
+        count: 0,
+        source: "error",
+        cacheOnly,
+      };
     }
 
     const rawSymbols = Array.isArray(result.symbols) ? result.symbols : [];
@@ -974,16 +1177,40 @@ async function loadSymbolCatalog(refresh = false, cacheOnly = false) {
       name: String(item.name || "").trim(),
       exchange: String(item.exchange || "").trim(),
     }));
+    symbolCatalog.forEach((item) => {
+      upsertSymbolMeta(item.symbol, item);
+    });
 
+    const source = String(result.source || "unknown");
+    const count = symbolCatalog.length;
     const updatedText = result.updated_at ? `updated ${formatTime(result.updated_at)}` : "updated -";
-    setCatalogMeta(`${symbolCatalog.length.toLocaleString()} symbols loaded (${result.source || "unknown"}, ${updatedText})`);
+    setCatalogMeta(`${count.toLocaleString()} symbols loaded (${source}, ${updatedText})`);
     refreshWatchlist();
 
     if (document.activeElement === symbolSearchInput) {
       renderDropdown();
     }
+
+    return {
+      loaded: count > 0,
+      count,
+      source,
+      cacheOnly,
+    };
   } finally {
     refreshCatalogBtn.disabled = false;
+  }
+}
+
+async function bootstrapSymbolCatalog() {
+  try {
+    const cachedResult = await loadSymbolCatalog(false, true);
+    if (cachedResult?.loaded) return;
+    const liveResult = await loadSymbolCatalog(false, false);
+    if (liveResult?.loaded) return;
+    setCatalogMeta("Symbol list is not loaded. Click Refresh Symbols when needed.");
+  } catch (_error) {
+    setCatalogMeta("Symbol list is not loaded. Click Refresh Symbols when needed.");
   }
 }
 
@@ -1031,7 +1258,13 @@ async function loadSymbolInsights(symbols, refresh = false) {
       const existingRow = latestRowsBySymbol.get(symbol);
       const hasValidPrice = Number(existingRow?.price) > 0;
       const fallbackPrice = (Number.isFinite(currentPrice) && currentPrice > 0) ? currentPrice : latestClose;
-      if (!hasValidPrice && Number.isFinite(fallbackPrice) && fallbackPrice > 0) {
+      const shouldReplaceCachedPrice = (
+        !hasValidPrice
+        || refresh
+        || !PAGE_CONFIG.streamEnabled
+        || (Number.isFinite(currentPrice) && currentPrice > 0)
+      );
+      if (shouldReplaceCachedPrice && Number.isFinite(fallbackPrice) && fallbackPrice > 0) {
         latestRowsBySymbol.set(symbol, {
           ...(existingRow ?? {}),
           symbol,
@@ -1061,6 +1294,7 @@ function renderTabs() {
     tabBtn.dataset.symbol = symbol;
     tabBtn.draggable = true;
     tabBtn.classList.toggle("active", symbol === activeTabSymbol);
+    tabBtn.title = buildSymbolDisplayLabel(symbol);
     tabBtn.innerHTML = `<span>${symbol}</span><span class="tab-close" data-close-symbol="${symbol}" aria-label="close">×</span>`;
     symbolTabsEl.appendChild(tabBtn);
   });
@@ -1532,7 +1766,7 @@ function renderLineChart(symbol, points) {
       const volumeText = Number.isFinite(point.v) ? formatCompact(point.v) : "-";
       tooltipEl.innerHTML = [
         `<div>${point.t || "-"}</div>`,
-        `<div>Price: $${formatPrice(point.c)}</div>`,
+        `<div>Price: ${PAGE_CONFIG.currencySymbol}${formatPrice(point.c)}</div>`,
         `<div>Vol: ${volumeText}</div>`,
       ].join("");
       tooltipEl.classList.remove("hidden");
@@ -1581,7 +1815,7 @@ function renderActiveTab() {
   const state = tabStateBySymbol.get(activeTabSymbol);
   if (!state) return;
 
-  panelSymbolEl.textContent = activeTabSymbol;
+  panelSymbolEl.textContent = buildSymbolDisplayLabel(activeTabSymbol);
 
   if (state.loading) {
     panelUpdatedEl.textContent = "Loading...";
@@ -1614,18 +1848,20 @@ function renderActiveTab() {
   const atr14 = Number(overview?.technical?.atr_14) || computeAtr(historical?.points || []);
 
   panelUpdatedEl.textContent = `updated ${formatTime(overview?.price?.updated_at)} / source ${overview?.source || "-"}`;
-  kpiPriceEl.textContent = Number.isFinite(price) ? `$${formatPrice(price)}` : "-";
+  kpiPriceEl.textContent = Number.isFinite(price) ? `${PAGE_CONFIG.currencySymbol}${formatPrice(price)}` : "-";
   kpiChangeEl.textContent = Number.isFinite(changePct)
-    ? `${formatSigned(changeAbs, 2)} (${formatSignedPercent(changePct)})`
+    ? `${formatSignedCurrency(changeAbs)} (${formatSignedPercent(changePct)})`
     : "-";
   kpiChangeEl.classList.toggle("up", Number.isFinite(changePct) && changePct > 0);
   kpiChangeEl.classList.toggle("down", Number.isFinite(changePct) && changePct < 0);
   kpiRangeEl.textContent = (Number.isFinite(dayHigh) && Number.isFinite(dayLow))
-    ? `${formatPrice(dayHigh)} / ${formatPrice(dayLow)}`
+    ? `${PAGE_CONFIG.currencySymbol}${formatPrice(dayHigh)} / ${PAGE_CONFIG.currencySymbol}${formatPrice(dayLow)}`
     : "-";
   kpiVolumeEl.textContent = Number.isFinite(volume) ? formatCompact(volume) : "-";
-  kpiMaEl.textContent = (Number.isFinite(ma20) && Number.isFinite(ma50)) ? `${formatPrice(ma20)} / ${formatPrice(ma50)}` : "-";
-  kpiAtrEl.textContent = Number.isFinite(atr14) ? formatPrice(atr14) : "-";
+  kpiMaEl.textContent = (Number.isFinite(ma20) && Number.isFinite(ma50))
+    ? `${PAGE_CONFIG.currencySymbol}${formatPrice(ma20)} / ${PAGE_CONFIG.currencySymbol}${formatPrice(ma50)}`
+    : "-";
+  kpiAtrEl.textContent = Number.isFinite(atr14) ? `${PAGE_CONFIG.currencySymbol}${formatPrice(atr14)}` : "-";
 
   renderLineChart(activeTabSymbol, historical?.points || []);
 }
@@ -1643,8 +1879,13 @@ async function loadTabData(symbol, forceRefresh = false) {
   renderActiveTab();
 
   try {
-    const overviewUrl = forceRefresh
-      ? `/api/security-overview/${encodeURIComponent(normalized)}?refresh=true`
+    const overviewParams = new URLSearchParams();
+    if (forceRefresh) overviewParams.set("refresh", "true");
+    if (!PAGE_CONFIG.overviewIncludeIntraday) overviewParams.set("include_intraday", "false");
+    if (!PAGE_CONFIG.overviewIncludeMarket) overviewParams.set("include_market", "false");
+    if (!PAGE_CONFIG.overviewIncludeQqq) overviewParams.set("include_qqq", "false");
+    const overviewUrl = overviewParams.size > 0
+      ? `/api/security-overview/${encodeURIComponent(normalized)}?${overviewParams.toString()}`
       : `/api/security-overview/${encodeURIComponent(normalized)}`;
     const historicalUrl = forceRefresh
       ? `/api/historical/${encodeURIComponent(normalized)}?years=${HISTORICAL_LOAD_YEARS}&refresh=true`
@@ -1668,6 +1909,10 @@ async function loadTabData(symbol, forceRefresh = false) {
       overview: overviewResp.result,
       historical: historicalResp.result,
       loadedAt: Date.now(),
+    });
+    upsertSymbolMeta(normalized, {
+      name: overviewResp.result?.name,
+      exchange: overviewResp.result?.exchange,
     });
     const overviewPrice = Number(overviewResp.result?.price?.current);
     if (Number.isFinite(overviewPrice) && overviewPrice > 0) {
@@ -1694,6 +1939,8 @@ async function loadTabData(symbol, forceRefresh = false) {
     if (loadedPoints.length >= 2) {
       applyChartRangePreset(normalized, loadedPoints, "1y");
     }
+    refreshWatchlist();
+    renderTabs();
   } catch (error) {
     tabStateBySymbol.set(normalized, {
       ...prev,
@@ -1814,6 +2061,9 @@ function handleEvent(event) {
 }
 
 function connectEventStream() {
+  if (!PAGE_CONFIG.streamEnabled) {
+    return;
+  }
   if (eventSource) eventSource.close();
   eventSource = new EventSource("/api/stream");
   eventSource.onmessage = handleEvent;
@@ -1908,9 +2158,9 @@ function renderPortfolio() {
   const view = buildPortfolioView(portfolioBaseState);
   if (!view) return;
 
-  pfCashEl.textContent = `$ ${formatMoney(view.cash)}`;
-  pfEquityEl.textContent = `$ ${formatMoney(view.equity)}`;
-  pfUnrealizedPnlEl.textContent = formatSigned(view.unrealized_pnl, 2);
+  pfCashEl.textContent = formatCurrency(view.cash);
+  pfEquityEl.textContent = formatCurrency(view.equity);
+  pfUnrealizedPnlEl.textContent = formatSignedCurrency(view.unrealized_pnl);
   pfUnrealizedPnlEl.classList.toggle("pf-positive", Number(view.unrealized_pnl) > 0);
   pfUnrealizedPnlEl.classList.toggle("pf-negative", Number(view.unrealized_pnl) < 0);
   pfReturnEl.textContent = formatSignedPercent(view.total_return_pct);
@@ -1937,7 +2187,7 @@ function renderPortfolio() {
       }
       let unrealizedText = "-";
       if (Number.isFinite(pnl)) {
-        unrealizedText = formatSigned(pnl, 2);
+        unrealizedText = formatSignedCurrency(pnl);
         if (Number.isFinite(pnlPct)) {
           unrealizedText += ` (${formatSignedPercent(pnlPct)})`;
         }
@@ -1945,8 +2195,8 @@ function renderPortfolio() {
       const cells = [
         item.symbol,
         Number(item.quantity).toFixed(4).replace(/\.?0+$/, ""),
-        Number.isFinite(item.avg_cost) ? `$ ${formatMoney(item.avg_cost)}` : "-",
-        Number.isFinite(item.last_price) ? `$ ${formatMoney(item.last_price)}` : "-",
+        Number.isFinite(item.avg_cost) ? formatCurrency(item.avg_cost) : "-",
+        Number.isFinite(item.last_price) ? formatCurrency(item.last_price) : "-",
         unrealizedText,
       ];
       cells.forEach((text, idx) => {
@@ -1980,7 +2230,7 @@ function renderPortfolio() {
         formatDateTime(item?.timestamp),
         normalizeSymbol(item?.symbol),
         side || "-",
-        Number.isFinite(Number(item?.price)) ? `$ ${formatMoney(Number(item.price))}` : "-",
+        Number.isFinite(Number(item?.price)) ? formatCurrency(Number(item.price)) : "-",
       ];
       cells.forEach((text, idx) => {
         const td = document.createElement("td");
@@ -2318,6 +2568,12 @@ if (pfResetBtn) {
 }
 
 setCatalogMeta("Loading saved symbol catalog...");
+if (!PAGE_CONFIG.watchlistCommentaryEnabled && watchLlmPanelEl) {
+  watchLlmPanelEl.hidden = true;
+}
+if (!PAGE_CONFIG.streamEnabled && refreshCreditsBtn) {
+  refreshCreditsBtn.hidden = true;
+}
 restoreSymbolInsightsCache();
 restoreWatchlistRowsCache();
 const restoredWatchSymbols = restoreWatchlistSymbolsCache();
@@ -2326,10 +2582,19 @@ if (restoredWatchSymbols.length > 0) {
   selectedSymbols = restoredWatchSymbols;
   refreshWatchlist();
   void loadSavedWatchlistCommentary();
-  void loadSymbolInsights(restoredWatchSymbols, false);
+  if (PAGE_CONFIG.serverSymbolSync) {
+    void loadSymbolInsights(restoredWatchSymbols, false);
+  }
 }
 
 async function hydrateInitialWatchlist() {
+  if (!PAGE_CONFIG.serverSymbolSync) {
+    saveWatchlistSymbolsCache(selectedSymbols);
+    if (selectedSymbols.length > 0) {
+      await loadSymbolInsights(selectedSymbols, true);
+    }
+    return;
+  }
   if (restoredWatchSymbols.length > 0) {
     await updateSymbolsOnServer().catch(() => {
       // ignore startup sync errors
@@ -2360,15 +2625,28 @@ async function hydrateInitialWatchlist() {
     // ignore startup sync errors
   }
 }
-loadSymbolCatalog(false, true).catch(() => {
-  setCatalogMeta("Symbol list is not loaded. Click Refresh Symbols when needed.");
-});
+void bootstrapSymbolCatalog();
+if (!PAGE_CONFIG.streamEnabled) {
+  setStatus({
+    mode: PAGE_CONFIG.staticMode,
+    provider: PAGE_CONFIG.staticProvider,
+    ws_connected: false,
+    fallback_poll_interval_sec: PAGE_CONFIG.staticFallbackLabel,
+    open_symbols: [],
+    daily_credits_left: null,
+    daily_credits_limit: null,
+    daily_credits_updated_at: null,
+    daily_credits_is_estimated: false,
+  });
+}
 void hydrateInitialWatchlist().finally(() => {
   connectEventStream();
-  window.setTimeout(() => {
-    if (selectedSymbols.length > 0) return;
-    void hydrateInitialWatchlist();
-  }, 1500);
+  if (PAGE_CONFIG.serverSymbolSync) {
+    window.setTimeout(() => {
+      if (selectedSymbols.length > 0) return;
+      void hydrateInitialWatchlist();
+    }, 1500);
+  }
 });
 startMarketClock();
 loadPortfolio();
@@ -2419,7 +2697,12 @@ async function refreshWatchlistData() {
         const existingRow = latestRowsBySymbol.get(symbol);
         const hasValidPrice = existingRow && Number(existingRow.price) > 0;
         const fallbackPrice = (Number.isFinite(currentPrice) && currentPrice > 0) ? currentPrice : latestClose;
-        if (!hasValidPrice && Number.isFinite(fallbackPrice) && fallbackPrice > 0) {
+        const shouldReplaceCachedPrice = (
+          !hasValidPrice
+          || !PAGE_CONFIG.streamEnabled
+          || (Number.isFinite(currentPrice) && currentPrice > 0)
+        );
+        if (shouldReplaceCachedPrice && Number.isFinite(fallbackPrice) && fallbackPrice > 0) {
           latestRowsBySymbol.set(symbol, {
             ...(existingRow ?? {}),
             symbol,

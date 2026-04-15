@@ -87,24 +87,26 @@ class MarketDataOverviewOps:
         return await self.fetch_quote_twelvedata(client, symbol)
 
     async def fetch_quote_twelvedata(self, client: httpx.AsyncClient, symbol: str) -> dict[str, Any]:
+        provider_symbol = self.owner._format_twelvedata_symbol(symbol)
         try:
             api_response = await owner_twelvedata_client(
                 self.owner,
                 client,
-            ).get_quote(settings.endpoints.quote_url, symbol=symbol)
+            ).get_quote(settings.endpoints.quote_url, symbol=provider_symbol)
             async with self.owner._credits_lock:
                 await self.owner._update_minute_credits_from_response(api_response.response)
                 await self.owner._consume_daily_credit_estimate(1, source=f"quote:{symbol}")
             payload = api_response.payload
         except Exception as exc:
-            LOGGER.warning("Quote fetch failed for %s: %s", symbol, exc)
+            LOGGER.warning("Quote fetch failed for %s (%s): %s", symbol, provider_symbol, exc)
             return {}
         if isinstance(payload, dict) and payload.get("status") == "error":
-            LOGGER.warning("Quote API error for %s: %s", symbol, payload.get("message"))
+            LOGGER.warning("Quote API error for %s (%s): %s", symbol, provider_symbol, payload.get("message"))
             return {}
         if not isinstance(payload, dict):
             return {}
         normalized = dict(payload)
+        normalized["symbol"] = symbol
         normalized["_source_provider"] = "twelvedata"
         normalized["_source_detail"] = self.owner._quote_source_detail("twelvedata")
         return normalized

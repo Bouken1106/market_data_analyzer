@@ -127,10 +127,16 @@ class _FakeSymbolCatalogStore:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
-    async def get_catalog(self, *, refresh: bool = False, cache_only: bool = False) -> dict[str, object]:
-        self.calls.append({"refresh": refresh, "cache_only": cache_only})
+    async def get_catalog(
+        self,
+        *,
+        refresh: bool = False,
+        cache_only: bool = False,
+        country: str | None = None,
+    ) -> dict[str, object]:
+        self.calls.append({"refresh": refresh, "cache_only": cache_only, "country": country})
         return {
-            "items": [{"symbol": "AAPL", "name": "Apple Inc."}],
+            "symbols": [{"symbol": "AAPL", "name": "Apple Inc.", "exchange": "NASDAQ"}],
             "count": 1,
             "source": "cache",
         }
@@ -183,7 +189,7 @@ class MarketApiRoutesTest(unittest.TestCase):
             symbols_response = client.post("/api/symbols", json={"symbols": " aapl, msft "})
             credits_response = client.get("/api/credits")
             refreshed_credits_response = client.get("/api/credits?refresh=true")
-            catalog_response = client.get("/api/symbol-catalog?refresh=true&cache_only=true")
+            catalog_response = client.get("/api/symbol-catalog?refresh=true&cache_only=true&country=Japan")
 
         self.assertEqual(snapshot_response.status_code, 200)
         self.assertEqual(len(snapshot_response.json()["rows"]), 2)
@@ -204,7 +210,7 @@ class MarketApiRoutesTest(unittest.TestCase):
         self.assertEqual(catalog_response.json()["count"], 1)
         self.assertEqual(
             self.symbol_catalog_store.calls[-1],
-            {"refresh": True, "cache_only": True},
+            {"refresh": True, "cache_only": True, "country": "Japan"},
         )
 
     def test_historical_overview_sparkline_watchlist_and_stream_routes(self) -> None:

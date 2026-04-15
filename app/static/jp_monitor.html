@@ -4,18 +4,42 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>US Monitor</title>
+  <title>JP Monitor</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="/static/styles.css?v=20260219a" />
 </head>
 
-<body class="monitor-page terminal-page">
+<body class="monitor-page terminal-page"
+  data-market-preset="jp"
+  data-stream-enabled="false"
+  data-server-symbol-sync="false"
+  data-watchlist-commentary="false"
+  data-catalog-country="Japan"
+  data-currency-symbol="¥"
+  data-currency-digits="0"
+  data-price-min-digits="0"
+  data-price-max-digits="2"
+  data-primary-clock-label="JST"
+  data-primary-time-zone="Asia/Tokyo"
+  data-secondary-clock-label="ET"
+  data-secondary-time-zone="America/New_York"
+  data-session-time-zone="Asia/Tokyo"
+  data-market-open-minute="540"
+  data-market-close-minute="900"
+  data-market-hours-label="09:00-15:00 JST"
+  data-cache-namespace="jp-monitor"
+  data-overview-include-intraday="false"
+  data-overview-include-market="false"
+  data-overview-include-qqq="false"
+  data-static-mode="daily-manual"
+  data-static-provider="daily-history"
+  data-static-fallback="manual">
   <nav class="nav-tabs" aria-label="Main navigation">
-    <a href="/" class="nav-tab active" data-path="/">
+    <a href="/" class="nav-tab" data-path="/">
       <span class="nav-tab-icon">📊</span> US Monitor
     </a>
-    <a href="/jp-monitor" class="nav-tab" data-path="/jp-monitor">
+    <a href="/jp-monitor" class="nav-tab active" data-path="/jp-monitor">
       <span class="nav-tab-icon">🇯🇵</span> JP Monitor
     </a>
     <a href="/relationship-lab" class="nav-tab" data-path="/relationship-lab">
@@ -27,32 +51,21 @@
   </nav>
 
   <main class="terminal-layout">
-    <section class="terminal-pane watch-pane" aria-label="ウォッチリスト">
+    <section class="terminal-pane watch-pane" aria-label="日本株ウォッチリスト">
       <header class="pane-head">
-        <h1>ウォッチリスト</h1>
-        <span class="pane-sub">最大8銘柄</span>
+        <h1>日本株ウォッチリスト</h1>
+        <span class="pane-sub">最大8銘柄 / 日次ベース</span>
         <button id="watchlist-refresh" type="button" class="minor-action watchlist-refresh-btn"
-          title="株価と前日比を最新データで更新">↻ 更新</button>
+          title="終値と前日比を最新の日次データで更新">↻ 更新</button>
       </header>
 
       <div id="symbol-search-area" class="terminal-search">
         <input id="symbol-search" name="symbol-search" type="text" autocomplete="off"
-          placeholder="銘柄/会社名検索 (AAPL, Apple, Microsoft...)" />
+          placeholder="銘柄/会社名検索 (7203.T, Toyota, NTT...)" />
         <div id="symbol-dropdown" class="symbol-dropdown hidden"></div>
       </div>
       <p id="catalog-meta" class="hint">Loading symbol catalog...</p>
       <p id="selection-error" class="hint error"></p>
-
-      <details id="watch-llm-panel" class="watch-llm-panel" aria-label="ウォッチリスト短評">
-        <summary class="watch-llm-summary">
-          <span class="watch-llm-title">Watchlist Comment</span>
-        </summary>
-        <div class="watch-llm-head">
-          <button id="watch-llm-refresh" type="button" class="minor-action watch-llm-refresh" title="コメントを再生成">↻ 再生成</button>
-        </div>
-        <p id="watch-llm-text" class="watch-llm-text">2銘柄以上でコメントを表示します。</p>
-        <p id="watch-llm-meta" class="watch-llm-meta">モデル: -</p>
-      </details>
 
       <div id="watchlist-head" class="watchlist-head" aria-label="ウォッチリスト列ヘッダー">
         <button type="button" class="watch-sort-btn watch-sort-symbol" data-sort-key="symbol">銘柄</button>
@@ -64,7 +77,7 @@
       <div id="watchlist" class="watchlist" role="list"></div>
 
       <details class="technical-panel">
-        <summary class="minor-action technical-toggle">接続状態</summary>
+        <summary class="minor-action technical-toggle">データ状態</summary>
         <div class="status-row terminal-status-row">
           <div><span class="label">Mode</span> <span id="mode">-</span></div>
           <div><span class="label">WS</span> <span id="ws-state">-</span></div>
@@ -79,22 +92,22 @@
       </details>
     </section>
 
-    <section class="terminal-pane center-pane" aria-label="銘柄データ">
+    <section class="terminal-pane center-pane" aria-label="日本株データ">
       <header class="pane-head center-head">
-        <h2>銘柄データ</h2>
+        <h2>日本株データ</h2>
         <div class="market-time-inline">
           <span id="clock-jst">-</span>
           <span> / </span>
           <span id="clock-et">-</span>
           <span id="market-open-state" class="market-state">-</span>
-          <span id="market-hours-et" class="market-hours-inline">09:30-16:00 ET</span>
+          <span id="market-hours-et" class="market-hours-inline">09:00-15:00 JST</span>
         </div>
       </header>
 
       <div id="symbol-tabs" class="symbol-tabs" role="tablist" aria-label="Opened symbols"></div>
 
       <article id="tab-empty" class="tab-empty">
-        左のウォッチリストから銘柄をクリックすると、ここにタブでチャートとデータを表示します。
+        左のウォッチリストから銘柄をクリックすると、ここにタブでチャートと日次データを表示します。
       </article>
 
       <article id="symbol-panel" class="symbol-panel hidden">
@@ -165,7 +178,7 @@
 
         <form id="pf-trade-form" class="portfolio-trade-form terminal-trade-form">
           <label for="pf-symbol">Symbol</label>
-          <input id="pf-symbol" name="symbol" type="text" placeholder="AAPL" maxlength="15" required />
+          <input id="pf-symbol" name="symbol" type="text" placeholder="7203.T" maxlength="15" required />
           <label for="pf-side">Side</label>
           <select id="pf-side" name="side">
             <option value="buy">Buy</option>
@@ -174,9 +187,9 @@
             <option value="cover">Cover</option>
           </select>
           <label for="pf-quantity">Quantity</label>
-          <input id="pf-quantity" name="quantity" type="number" min="0.0001" step="0.0001" placeholder="10" required />
+          <input id="pf-quantity" name="quantity" type="number" min="0.0001" step="0.0001" placeholder="100" required />
           <label for="pf-price">Price (optional)</label>
-          <input id="pf-price" name="price" type="number" min="0.0001" step="0.0001" placeholder="blank = market" />
+          <input id="pf-price" name="price" type="number" min="0.0001" step="0.0001" placeholder="blank = latest daily" />
           <button id="pf-submit" type="submit">Submit</button>
           <button id="pf-reset" type="button" class="danger-action">Reset</button>
         </form>

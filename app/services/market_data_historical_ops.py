@@ -255,10 +255,11 @@ class MarketDataHistoricalOps:
         start_date: str | None = None,
         end_date: str | None = None,
     ) -> list[dict[str, Any]]:
+        provider_symbol = self.owner._format_twelvedata_symbol(symbol)
         try:
             api_response = await owner_twelvedata_client(self.owner, client).get_time_series(
                 TIME_SERIES_URL,
-                symbol=symbol,
+                symbol=provider_symbol,
                 interval=interval,
                 outputsize=min(max(1, int(outputsize)), TIME_SERIES_MAX_OUTPUTSIZE),
                 start_date=start_date,
@@ -269,11 +270,11 @@ class MarketDataHistoricalOps:
                 await self.owner._consume_daily_credit_estimate(1, source=f"series:{symbol}:{interval}")
             payload = api_response.payload
         except Exception as exc:
-            LOGGER.warning("Time series fetch failed for %s %s: %s", symbol, interval, exc)
+            LOGGER.warning("Time series fetch failed for %s (%s) %s: %s", symbol, provider_symbol, interval, exc)
             return []
 
         if isinstance(payload, dict) and payload.get("status") == "error":
-            LOGGER.warning("Time series API error for %s %s: %s", symbol, interval, payload.get("message"))
+            LOGGER.warning("Time series API error for %s (%s) %s: %s", symbol, provider_symbol, interval, payload.get("message"))
             return []
 
         values = payload.get("values") if isinstance(payload, dict) else None

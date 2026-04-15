@@ -30,6 +30,7 @@ class ApplicationRoutesTest(unittest.TestCase):
         route_paths = {route.path for route in app.router.routes}
         expected_paths = {
             "/",
+            "/jp-monitor",
             "/relationship-lab",
             "/leadlag-lab",
             "/historical/{symbol}",
@@ -38,15 +39,21 @@ class ApplicationRoutesTest(unittest.TestCase):
         self.assertTrue(expected_paths.issubset(route_paths))
 
         with TestClient(app) as client:
+            jp_monitor_response = client.get("/jp-monitor")
             relationship_response = client.get("/relationship-lab")
             leadlag_response = client.get("/leadlag-lab")
             historical_response = client.get("/historical/AAPL")
             static_js_response = client.get("/static/app.terminal.js")
 
+        self.assertEqual(jp_monitor_response.status_code, 200)
         self.assertEqual(relationship_response.status_code, 200)
         self.assertEqual(leadlag_response.status_code, 200)
         self.assertEqual(historical_response.status_code, 200)
         self.assertEqual(static_js_response.status_code, 200)
+        self.assertEqual(
+            jp_monitor_response.headers.get("Cache-Control"),
+            "no-store, no-cache, must-revalidate, max-age=0",
+        )
         self.assertEqual(
             relationship_response.headers.get("Cache-Control"),
             "no-store, no-cache, must-revalidate, max-age=0",

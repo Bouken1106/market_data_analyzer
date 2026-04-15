@@ -126,7 +126,8 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 右上の `Pages` ボタンから各ページに遷移できます。
 
-- `/`: US Stock Live Monitor（リアルタイム監視）
+- `/`: US Monitor（米国株リアルタイム監視）
+- `/jp-monitor`: JP Stock Monitor（日本株の日次モニター。手動更新ベース）
 - `/leadlag-lab`: Lead-Lag Lab（日米業種 ETF の部分空間正則化付き PCA 検証）
 - `/relationship-lab`: Relationship Lab（複数銘柄の相関・共分散・ローリング相関・高相関ペア乖離を可視化）
 - `/` には Paper Portfolio（仮想資産）パネルを搭載し、実注文なしで売買シミュレーション可能
@@ -168,6 +169,11 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
    - `US Symbols` / `JP Symbols` / `Cyclical Labels` / `Defensive Labels` は、候補 universe を一覧表示し、クリックで選択
    - 部分空間正則化付き PCA から `latest_signal`, `factors`, `C0`, `D0`, `B_t` を表示
    - 任意で上位/下位分位の等ウェイト long-short 評価を実行
+11. `/jp-monitor` では、日本株を US Monitor に近い UI で表示
+   - 銘柄検索は `country=Japan` のシンボルカタログを使用
+   - ウォッチリスト価格・前日比は `/api/sparkline` の日次データで表示
+   - リアルタイムの WebSocket 購読は行わず、手動更新と詳細パネル更新で運用
+   - 詳細パネルは日足中心で、`/api/security-overview/{symbol}` を `include_intraday=false` で取得
 
 補足:
 - 起動時に `/api_usage` を1回呼び、日次残量を初期化します（1クレジット消費）。

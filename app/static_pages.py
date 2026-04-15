@@ -17,6 +17,7 @@ class StaticPage:
 
 STATIC_PAGES: tuple[StaticPage, ...] = (
     StaticPage("/", "index.html"),
+    StaticPage("/jp-monitor", "jp_monitor.html"),
     StaticPage("/relationship-lab", "relationship_lab.html"),
     StaticPage("/leadlag-lab", "leadlag_lab.html"),
 )
