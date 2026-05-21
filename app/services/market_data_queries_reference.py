@@ -65,7 +65,11 @@ FMP_RATIO_FIELDS = (
 )
 
 FMP_KEY_METRIC_FIELDS = (
+    ("market_cap_ttm", "marketCapTTM"),
+    ("enterprise_value_ttm", "enterpriseValueTTM"),
     ("eps_ttm", "epsTTM"),
+    ("net_income_per_share_ttm", "netIncomePerShareTTM"),
+    ("revenue_per_share_ttm", "revenuePerShareTTM"),
     ("free_cash_flow_per_share_ttm", "freeCashFlowPerShareTTM"),
     ("book_value_per_share_ttm", "bookValuePerShareTTM"),
     ("dividend_yield_ttm", "dividendYieldTTM"),
@@ -75,14 +79,27 @@ FMP_INCOME_FIELDS = (
     ("revenue", "revenue"),
     ("gross_profit", "grossProfit"),
     ("operating_income", "operatingIncome"),
+    ("ebit", "ebit"),
+    ("ebitda", "ebitda"),
     ("net_income", "netIncome"),
+    ("income_before_tax", "incomeBeforeTax"),
+    ("income_tax_expense", "incomeTaxExpense"),
+    ("interest_expense", "interestExpense"),
     ("eps", "eps"),
+    ("eps_diluted", "epsdiluted"),
+    ("weighted_average_shares", "weightedAverageShsOut"),
+    ("weighted_average_shares_diluted", "weightedAverageShsOutDil"),
 )
 
 FMP_BALANCE_SHEET_FIELDS = (
+    ("cash_and_cash_equivalents", "cashAndCashEquivalents"),
+    ("short_term_investments", "shortTermInvestments"),
     ("cash_and_short_term_investments", "cashAndShortTermInvestments"),
+    ("long_term_investments", "longTermInvestments"),
+    ("total_investments", "totalInvestments"),
     ("total_assets", "totalAssets"),
     ("total_debt", "totalDebt"),
+    ("net_debt", "netDebt"),
     ("total_liabilities", "totalLiabilities"),
     ("total_equity", "totalStockholdersEquity"),
 )
@@ -133,12 +150,13 @@ class MarketDataReferenceMixin:
                         ttl_sec=FMP_REFERENCE_CACHE_TTL_SEC,
                         stale=not is_fresh,
                     )
-                    await ttl_cache_store(
-                        self._fmp_reference_cache,
-                        self._fmp_reference_lock,
-                        normalized,
-                        payload,
-                    )
+                    if is_fresh:
+                        await ttl_cache_store(
+                            self._fmp_reference_cache,
+                            self._fmp_reference_lock,
+                            normalized,
+                            payload,
+                        )
                     return payload
 
         if cache_only:
@@ -284,7 +302,11 @@ class MarketDataReferenceMixin:
             "website": profile.get("website"),
             "ceo": profile.get("ceo"),
             "description": profile.get("description"),
+            "price": self._try_parse_float(profile.get("price")),
             "market_cap": self._try_parse_float(profile.get("mktCap") or profile.get("marketCap")),
+            "shares_outstanding": self._try_parse_float(
+                profile.get("sharesOutstanding") or profile.get("shares_outstanding")
+            ),
             "beta": self._try_parse_float(profile.get("beta")),
             "employees": profile.get("fullTimeEmployees"),
             "ipo_date": profile.get("ipoDate"),

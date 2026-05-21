@@ -76,6 +76,34 @@ class _FakeValuationHub:
         }
 
 
+class _FakeStore:
+    async def get(self, symbol: str):
+        return {
+            "symbol": symbol,
+            "source": "stale-store",
+            "profile": {"company_name": "Stale Inc.", "market_cap": 1_000.0},
+            "financials": {
+                "ratios_ttm": {},
+                "key_metrics_ttm": {},
+                "income_statement_latest": {"net_income": 10.0, "eps": 1.0},
+                "balance_sheet_latest": {},
+                "cash_flow_latest": {},
+            },
+        }
+
+
+class _FakeRefreshAwareHub(_FakeValuationHub):
+    def __init__(self) -> None:
+        self.fmp_reference_store = _FakeStore()
+        self.calls: list[dict[str, object]] = []
+
+    async def fmp_reference_payload(self, symbol: str, *, refresh: bool = False, cache_only: bool = False):
+        self.calls.append({"symbol": symbol, "refresh": refresh, "cache_only": cache_only})
+        payload = await super().fmp_reference_payload(symbol, refresh=refresh, cache_only=cache_only)
+        payload["profile"]["company_name"] = "Fresh Inc."
+        return payload
+
+
 class ValuationServiceTest(unittest.TestCase):
     def test_calculates_supported_operating_company_methods(self) -> None:
         metrics = FinancialMetrics(
@@ -307,6 +335,14 @@ class ValuationServiceTest(unittest.TestCase):
         self.assertEqual(by_method["PBR法"]["theoretical_price"], 60.0)
         self.assertIn("upside_pct", by_method["実績PER法"])
         self.assertGreater(payload["summary"]["calculated_count"], 0)
+
+    def test_build_valuation_payload_uses_reference_service_when_refresh_allowed(self) -> None:
+        hub = _FakeRefreshAwareHub()
+
+        payload = asyncio.run(build_valuation_payload(hub, "aapl", cache_only=False))
+
+        self.assertEqual(payload["company_name"], "Fresh Inc.")
+        self.assertEqual(hub.calls[0], {"symbol": "AAPL", "refresh": False, "cache_only": False})
 
 
 if __name__ == "__main__":

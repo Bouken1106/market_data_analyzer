@@ -453,6 +453,38 @@ class RefactorHelperTest(unittest.TestCase):
         self.assertEqual(metrics.dividend_per_share, 1.0)
         self.assertEqual(metrics.beta, 1.1)
 
+    def test_valuation_metrics_align_market_cap_to_current_price_and_reference_shares(self) -> None:
+        metrics = financial_metrics_from_payloads(
+            "AAPL",
+            market="US",
+            overview_payload={"source": "overview", "price": {"current": 303.0}},
+            fmp_payload={
+                "source": "fmp",
+                "profile": {"company_name": "Apple Inc.", "market_cap": 4_067.0},
+                "adjusted_prices": {"latest_adj_close": 276.0},
+                "financials": {
+                    "ratios_ttm": {},
+                    "key_metrics_ttm": {},
+                    "income_statement_latest": {"net_income": 112.0, "eps": 7.49},
+                    "balance_sheet_latest": {
+                        "cash_and_cash_equivalents": 50.0,
+                        "short_term_investments": 20.0,
+                        "long_term_investments": 30.0,
+                        "total_debt": 80.0,
+                    },
+                    "cash_flow_latest": {},
+                },
+            },
+            risk_free_rate=resolve_risk_free_rate("US", None),
+        )
+
+        expected_shares = 4_067.0 / 276.0
+        self.assertAlmostEqual(metrics.shares_outstanding or 0, expected_shares)
+        self.assertAlmostEqual(metrics.market_cap or 0, 303.0 * expected_shares)
+        self.assertEqual(metrics.cash_and_equivalents, 50.0)
+        self.assertEqual(metrics.short_term_investments, 20.0)
+        self.assertEqual(metrics.long_term_investments, 30.0)
+
         valuations = valuations_with_upside(
             [{"method_name": "A", "theoretical_price": 120.0}, {"method_name": "B", "theoretical_price": None}],
             current_price=100.0,
@@ -513,13 +545,28 @@ class RefactorHelperTest(unittest.TestCase):
                 "companyName": "Example Inc.",
                 "exchangeShortName": "NASDAQ",
                 "sector": "Technology",
+                "price": "101.5",
                 "mktCap": "123456",
+                "sharesOutstanding": "1216.32",
                 "beta": "1.25",
             },
             ratios={"peRatioTTM": "20.5", "returnOnEquityTTM": "0.31"},
-            metrics={"epsTTM": "5.25", "dividendYieldTTM": "0.01"},
-            income={"date": "2025-12-31", "revenue": "1000", "netIncome": "200"},
-            balance_sheet={"date": "2025-12-31", "totalAssets": "5000", "totalDebt": "700"},
+            metrics={"marketCapTTM": "123456", "epsTTM": "5.25", "dividendYieldTTM": "0.01"},
+            income={
+                "date": "2025-12-31",
+                "revenue": "1000",
+                "ebitda": "260",
+                "netIncome": "200",
+                "weightedAverageShsOutDil": "38.1",
+            },
+            balance_sheet={
+                "date": "2025-12-31",
+                "cashAndCashEquivalents": "100",
+                "shortTermInvestments": "50",
+                "longTermInvestments": "75",
+                "totalAssets": "5000",
+                "totalDebt": "700",
+            },
             cash_flow={"date": "2025-12-31", "operatingCashFlow": "300", "freeCashFlow": "250"},
             historical=[
                 {"date": "2025-01-02", "close": "100", "adjClose": "99", "volume": "1000"},
@@ -533,10 +580,18 @@ class RefactorHelperTest(unittest.TestCase):
 
         self.assertEqual(payload["symbol"], "EXM")
         self.assertEqual(payload["profile"]["company_name"], "Example Inc.")
+        self.assertEqual(payload["profile"]["price"], 101.5)
         self.assertEqual(payload["profile"]["market_cap"], 123456.0)
+        self.assertEqual(payload["profile"]["shares_outstanding"], 1216.32)
         self.assertEqual(payload["financials"]["ratios_ttm"]["pe_ratio_ttm"], 20.5)
+        self.assertEqual(payload["financials"]["key_metrics_ttm"]["market_cap_ttm"], 123456.0)
         self.assertEqual(payload["financials"]["key_metrics_ttm"]["eps_ttm"], 5.25)
         self.assertEqual(payload["financials"]["income_statement_latest"]["net_income"], 200.0)
+        self.assertEqual(payload["financials"]["income_statement_latest"]["ebitda"], 260.0)
+        self.assertEqual(payload["financials"]["income_statement_latest"]["weighted_average_shares_diluted"], 38.1)
+        self.assertEqual(payload["financials"]["balance_sheet_latest"]["cash_and_cash_equivalents"], 100.0)
+        self.assertEqual(payload["financials"]["balance_sheet_latest"]["short_term_investments"], 50.0)
+        self.assertEqual(payload["financials"]["balance_sheet_latest"]["long_term_investments"], 75.0)
         self.assertEqual(payload["adjusted_prices"]["latest_adjustment_factor"], 108.9 / 110.0)
         self.assertEqual(payload["corporate_actions"]["dividends"][0]["dividend"], 0.25)
         self.assertEqual(payload["corporate_actions"]["splits"][0]["numerator"], 2.0)

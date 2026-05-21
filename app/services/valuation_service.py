@@ -137,25 +137,28 @@ async def _safe_fmp_reference_payload(
     refresh: bool,
     cache_only: bool,
 ) -> tuple[dict[str, Any] | None, str | None]:
+    fetcher = getattr(hub, "fmp_reference_payload", None)
+    if fetcher is not None:
+        if not refresh:
+            payload, cache_error = await _safe_dict_payload(fetcher, symbol, refresh=False, cache_only=cache_only)
+            if payload is not None:
+                return payload, None
+            if cache_only:
+                return None, cache_error or "No cached FMP reference data found for this symbol."
+        if cache_only:
+            return None, "No cached FMP reference data found for this symbol."
+        return await _safe_dict_payload(fetcher, symbol, refresh=refresh, cache_only=False)
+
     if not refresh:
         store_payload = await _fmp_store_payload(hub, symbol)
         if store_payload is not None:
-            return store_payload, None
-
-    fetcher = getattr(hub, "fmp_reference_payload", None)
-    if fetcher is None:
-        if cache_only:
-            return None, "No cached FMP reference data found for this symbol."
-        return None, "FMP reference service is unavailable"
-    if not refresh:
-        payload, cache_error = await _safe_dict_payload(fetcher, symbol, refresh=False, cache_only=True)
-        if payload is not None:
+            payload = dict(store_payload)
+            payload["source"] = "cache-store-stale"
+            payload["cache_stale"] = True
             return payload, None
-        if cache_only:
-            return None, cache_error or "No cached FMP reference data found for this symbol."
     if cache_only:
         return None, "No cached FMP reference data found for this symbol."
-    return await _safe_dict_payload(fetcher, symbol, refresh=refresh, cache_only=False)
+    return None, "FMP reference service is unavailable"
 
 
 async def _safe_dict_payload(fetcher: Any, *args: Any, **kwargs: Any) -> tuple[dict[str, Any] | None, str | None]:

@@ -194,12 +194,17 @@ async function loadValuation(refresh = false, cacheOnly = true) {
 
   valuationSymbolInput.value = symbol;
   setLoading(true);
-  setValuationMeta(refresh ? "理論株価を再取得しています..." : "キャッシュ済みの理論株価を読み込んでいます...");
+  setValuationMeta(refresh ? "理論株価を再取得しています..." : "理論株価を読み込んでいます...");
 
   try {
-    const params = valuationParams(refresh, cacheOnly);
-    const response = await fetch(`/api/valuation/${encodeURIComponent(symbol)}?${params.toString()}`);
-    const result = await response.json().catch(() => ({}));
+    let { response, result } = await requestValuation(symbol, refresh, cacheOnly);
+    let staleFallbackDetail = "";
+    if (!response.ok || !result.ok) {
+      if (!refresh && !cacheOnly) {
+        staleFallbackDetail = result.detail || "fresh valuation failed";
+        ({ response, result } = await requestValuation(symbol, false, true));
+      }
+    }
     if (!response.ok || !result.ok) {
       setValuationPlaceholder("理論株価を取得できませんでした。");
       setValuationMeta(result.detail || "Failed to load valuation", true);
@@ -211,7 +216,8 @@ async function loadValuation(refresh = false, cacheOnly = true) {
     const count = result.summary?.calculated_count ?? 0;
     const total = result.summary?.method_count ?? 0;
     const fundamentals = inputStatus.fundamentals_source || inputStatus.fundamentals_error || "no fundamentals";
-    setValuationMeta(`Loaded valuation (${count}/${total} methods, fundamentals: ${fundamentals}).`);
+    const fallbackNote = staleFallbackDetail ? ` Fresh fetch failed: ${staleFallbackDetail}` : "";
+    setValuationMeta(`Loaded valuation (${count}/${total} methods, fundamentals: ${fundamentals}).${fallbackNote}`, Boolean(staleFallbackDetail));
     history.replaceState(null, "", `/valuation?symbol=${encodeURIComponent(symbol)}`);
   } catch (error) {
     setValuationPlaceholder("理論株価を取得できませんでした。");
@@ -219,6 +225,13 @@ async function loadValuation(refresh = false, cacheOnly = true) {
   } finally {
     setLoading(false);
   }
+}
+
+async function requestValuation(symbol, refresh, cacheOnly) {
+  const params = valuationParams(refresh, cacheOnly);
+  const response = await fetch(`/api/valuation/${encodeURIComponent(symbol)}?${params.toString()}`);
+  const result = await response.json().catch(() => ({}));
+  return { response, result };
 }
 
 function symbolOptionLabel(item) {
@@ -280,7 +293,7 @@ async function loadSymbolCatalog() {
 valuationForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   hideDropdown();
-  await loadValuation(false, true);
+  await loadValuation(false, false);
 });
 
 valuationRefreshBtn?.addEventListener("click", async () => {
@@ -302,7 +315,7 @@ valuationSymbolDropdown?.addEventListener("click", async (event) => {
   if (!symbol) return;
   valuationSymbolInput.value = symbol;
   hideDropdown();
-  await loadValuation(false, true);
+  await loadValuation(false, false);
 });
 
 document.addEventListener("click", (event) => {
@@ -317,7 +330,7 @@ async function init() {
   const symbol = normalizeSymbol(params.get("symbol"));
   if (symbol) {
     valuationSymbolInput.value = symbol;
-    await loadValuation(false, true);
+    await loadValuation(false, false);
   }
 }
 

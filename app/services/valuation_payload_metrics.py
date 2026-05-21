@@ -37,14 +37,34 @@ def financial_metrics_from_payloads(
     cash_flow = _dict_at(financials, "cash_flow_latest")
     adjusted_prices = _dict_at(fmp_payload, "adjusted_prices")
 
-    price = first_positive(
-        _path_float(overview_payload, "price", "current"),
-        _float(profile.get("price")),
+    overview_price = _path_float(overview_payload, "price", "current")
+    profile_price = _float(profile.get("price"))
+    fmp_reference_price = first_positive(
+        profile_price,
         _float(adjusted_prices.get("latest_close")),
         _float(adjusted_prices.get("latest_adj_close")),
     )
-    market_cap = positive_float(profile.get("market_cap"))
-    shares = _positive_div(market_cap, price)
+    price = first_positive(
+        overview_price,
+        fmp_reference_price,
+        _float(profile.get("market_price")),
+    )
+    profile_market_cap = positive_float(profile.get("market_cap"))
+    income_eps = positive_float(income.get("eps"))
+    eps = first_positive(positive_float(key_metrics.get("eps_ttm")), income_eps)
+    shares = first_positive(
+        profile.get("shares_outstanding"),
+        _positive_div(profile_market_cap, fmp_reference_price),
+        income.get("weighted_average_shares_diluted"),
+        income.get("weighted_average_shares"),
+        _positive_div(income.get("net_income"), income_eps),
+        _positive_div(profile_market_cap, price),
+    )
+    market_cap = first_positive(
+        _positive_mul(price, shares),
+        key_metrics.get("market_cap_ttm"),
+        profile_market_cap,
+    )
     dividend_yield = positive_float(key_metrics.get("dividend_yield_ttm"))
     dividend_per_share = first_positive(
         _positive_mul(price, dividend_yield),
@@ -55,7 +75,7 @@ def financial_metrics_from_payloads(
         positive_float(profile.get("beta")),
     )
     capex = _positive_abs(cash_flow.get("capital_expenditure"))
-    cash_like = positive_float(balance_sheet.get("cash_and_short_term_investments"))
+    cash_and_equivalents, short_term_investments, long_term_investments = _cash_and_investments(balance_sheet)
     data_sources = tuple(
         item
         for item in (
@@ -77,12 +97,16 @@ def financial_metrics_from_payloads(
         market_cap=market_cap,
         revenue=_float(income.get("revenue")),
         operating_income=_float(income.get("operating_income")),
+        ebit=_float(income.get("ebit")) or _float(income.get("operating_income")),
+        ebitda=_float(income.get("ebitda")),
         net_income=_float(income.get("net_income")),
-        eps=first_positive(_float(income.get("eps")), positive_float(key_metrics.get("eps_ttm"))),
+        eps=eps,
         operating_cash_flow=_float(cash_flow.get("operating_cash_flow")),
         capital_expenditure=capex,
         free_cash_flow=_float(cash_flow.get("free_cash_flow")),
-        cash_and_equivalents=cash_like,
+        cash_and_equivalents=cash_and_equivalents,
+        short_term_investments=short_term_investments,
+        long_term_investments=long_term_investments,
         interest_bearing_debt=non_negative_float(balance_sheet.get("total_debt")),
         total_liabilities=_float(balance_sheet.get("total_liabilities")),
         total_assets=_float(balance_sheet.get("total_assets")),
@@ -94,6 +118,10 @@ def financial_metrics_from_payloads(
         per=positive_float(ratios.get("pe_ratio_ttm")),
         pbr=positive_float(ratios.get("pb_ratio_ttm")),
         psr=positive_float(ratios.get("ps_ratio_ttm")),
+        ev=positive_float(key_metrics.get("enterprise_value_ttm")),
+        interest_expense=_float(income.get("interest_expense")),
+        income_tax_expense=_float(income.get("income_tax_expense")),
+        income_before_tax=_float(income.get("income_before_tax")),
         beta=beta,
         risk_free_rate=risk_free_rate,
         data_sources=data_sources,
@@ -116,3 +144,24 @@ def _dividend_per_share_from_actions(fmp_payload: dict[str, Any] | None) -> floa
         total += amount
         count += 1
     return total if count else None
+
+
+def _cash_and_investments(balance_sheet: dict[str, Any]) -> tuple[float | None, float | None, float | None]:
+    cash = non_negative_float(balance_sheet.get("cash_and_cash_equivalents"))
+    cash_and_short = non_negative_float(balance_sheet.get("cash_and_short_term_investments"))
+    short_term = non_negative_float(balance_sheet.get("short_term_investments"))
+    long_term = non_negative_float(balance_sheet.get("long_term_investments"))
+    total_investments = non_negative_float(balance_sheet.get("total_investments"))
+
+    if cash is not None:
+        if short_term is None and long_term is None and total_investments is not None:
+            return cash, total_investments, None
+        return cash, short_term, long_term
+
+    if cash_and_short is not None:
+        return cash_and_short, None, long_term
+
+    if total_investments is not None:
+        return total_investments, None, None
+
+    return None, None, None

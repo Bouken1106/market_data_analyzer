@@ -163,7 +163,7 @@ def text_or_none(value: Any) -> str | None:
 def payload_source(payload: dict[str, Any] | None) -> str | None:
     if not isinstance(payload, dict):
         return None
-    return str(payload.get("source") or payload.get("_cache_source") or "payload").strip() or "payload"
+    return str(payload.get("_cache_source") or payload.get("source") or "payload").strip() or "payload"
 
 
 def clean_finite_dict(payload: dict[str, Any]) -> dict[str, Any]:

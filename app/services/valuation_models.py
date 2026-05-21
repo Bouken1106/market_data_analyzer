@@ -113,6 +113,7 @@ class FinancialMetrics:
 
     cash_and_equivalents: float | None = None
     short_term_investments: float | None = None
+    long_term_investments: float | None = None
     interest_bearing_debt: float | None = None
     total_liabilities: float | None = None
     current_assets: float | None = None
@@ -256,9 +257,10 @@ class DerivedValuationMetrics:
     def cash_like(self) -> float | None:
         cash = _non_negative(self.metrics.cash_and_equivalents)
         short_term = _non_negative(self.metrics.short_term_investments) or 0.0
+        long_term = _non_negative(self.metrics.long_term_investments) or 0.0
         if cash is None:
             return None
-        return cash + short_term
+        return cash + short_term + long_term
 
     @property
     def debt(self) -> float | None:
@@ -458,6 +460,7 @@ class DerivedValuationMetrics:
             "free_cash_flow": fcf,
             "cash_and_equivalents": _finite(self.metrics.cash_and_equivalents),
             "short_term_investments": _finite(self.metrics.short_term_investments),
+            "long_term_investments": _finite(self.metrics.long_term_investments),
             "interest_bearing_debt": self.debt,
             "net_assets": _finite(self.metrics.equity),
             "shareholders_equity": self.equity,
