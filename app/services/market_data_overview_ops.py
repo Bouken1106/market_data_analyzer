@@ -9,10 +9,14 @@ from typing import Any
 import httpx
 
 from ..config import LOGGER, settings
+from .market_data_sparkline import (
+    SparklineValue,
+    build_daily_sparkline_payload,
+    completed_daily_values,
+    daily_close_values,
+)
 from .market_data_provider_clients import owner_fmp_client, owner_twelvedata_client
 from .market_data_queries_overview_support import OverviewInputs
-
-SparklineValue = tuple[str, float]
 
 
 class MarketDataOverviewOps:
@@ -178,23 +182,11 @@ class MarketDataOverviewOps:
         }
 
     def _daily_close_values(self, points: list[dict[str, Any]]) -> list[SparklineValue]:
-        values: list[SparklineValue] = []
-        for item in points:
-            dt = str(item.get("t", "")).strip()
-            close_value = self.owner._try_parse_float(item.get("c"))
-            if not dt or close_value is None:
-                continue
-            values.append((dt, close_value))
-        values.sort(key=lambda item: item[0], reverse=True)
-        return values
+        return daily_close_values(points, parse_close=self.owner._try_parse_float)
 
     @staticmethod
     def _completed_daily_values(values: list[SparklineValue], *, today_iso: str) -> list[SparklineValue]:
-        if len(values) < 2:
-            return []
-        start_index = 1 if values[0][0].startswith(today_iso) and len(values) >= 2 else 0
-        completed = values[start_index:]
-        return completed if len(completed) >= 2 else []
+        return completed_daily_values(values, today_iso=today_iso)
 
     def _build_sparkline_snapshot(
         self,
@@ -210,33 +202,17 @@ class MarketDataOverviewOps:
         if reference_close is None and len(completed) >= 2:
             reference_close = completed[1][1]
 
-        change_abs = None
-        change_pct = None
-        if current_price is not None and reference_close is not None and reference_close > 0:
-            change_abs = current_price - reference_close
-            change_pct = (change_abs / reference_close) * 100
-
-        recent_desc = completed[: settings.overview.sparkline_points]
-        recent_asc = list(reversed(recent_desc))
-        trend_values = [point[1] for point in recent_asc]
         trend_source = self.owner._series_source_descriptor(points)
-        return {
-            "symbol": symbol,
-            "latest_close": completed[0][1],
-            "latest_close_date": completed[0][0],
-            "previous_close": completed[1][1] if len(completed) >= 2 else None,
-            "previous_close_date": completed[1][0] if len(completed) >= 2 else None,
-            "current_price": current_price,
-            "reference_close": reference_close,
-            "change_abs": change_abs,
-            "change_pct": change_pct,
-            "updated_at": updated_at,
-            "trend_30d": trend_values,
-            "trend_from": recent_asc[0][0],
-            "trend_to": recent_asc[-1][0],
-            "points": len(trend_values),
-            "source": trend_source,
-        }
+        payload = build_daily_sparkline_payload(
+            symbol=symbol,
+            completed=completed,
+            max_points=settings.overview.sparkline_points,
+            current_price=current_price,
+            reference_close=reference_close,
+            updated_at=updated_at,
+            source=trend_source,
+        )
+        return payload or {}
 
     async def fetch_sparkline_item(self, client: httpx.AsyncClient, symbol: str) -> dict[str, Any] | None:
         points = await self.owner._fetch_series(

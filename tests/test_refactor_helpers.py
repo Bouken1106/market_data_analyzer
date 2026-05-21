@@ -5,6 +5,12 @@ import unittest
 from app.services.market_data_historical_jquants import JQuantsHistoricalClient
 from app.services.market_data_math import atr, beta_and_corr, moving_average
 from app.services.market_data_overview_ops import MarketDataOverviewOps
+from app.services.market_data_sparkline import (
+    build_daily_sparkline_payload,
+    completed_daily_values,
+    daily_close_values,
+    provider_from_points,
+)
 from app.services.market_data_queries import MarketDataQueriesMixin
 from app.services.market_data_queries_overview_support import (
     OverviewInputs,
@@ -15,6 +21,22 @@ from app.services.market_data_queries_overview_support import (
 from app.services.market_data_queries_reference import FmpReferenceData
 from app.services.paper_portfolio import _apply_position_weights, _build_position_rows, _portfolio_summary
 from app.services.portfolio_common import apply_market_value_weights, positive_price_or_none, price_map_from_rows
+from app.services.valuation_payload_inputs import (
+    ValuationPayloadOptions,
+    build_comparable_multiples,
+    build_valuation_assumptions,
+    resolve_risk_free_rate,
+)
+from app.services.valuation_payload_metrics import financial_metrics_from_payloads
+from app.services.valuation_payload_summary import valuation_summary, valuations_with_upside
+from app.services.valuation_numeric import (
+    first_dict,
+    first_present,
+    parse_float,
+    positive_div,
+    positive_float,
+    sum_optional,
+)
 from app.services.watchlist_commentary_parser import commentary_from_json, fallback_commentary
 from app.services.watchlist_commentary_prompt import build_watchlist_prompt
 
@@ -253,6 +275,84 @@ class RefactorHelperTest(unittest.TestCase):
         self.assertEqual(snapshot["change_abs"], 5.0)
         self.assertEqual(snapshot["trend_30d"], [106.0, 108.0])
         self.assertEqual(snapshot["source"], "fmp")
+
+    def test_sparkline_helpers_normalize_completed_daily_values_and_provider(self) -> None:
+        points = [
+            {"t": "2026-04-03 15:00:00", "c": 110.0, "_src": "fmp"},
+            {"t": "2026-04-02", "c": "108.5", "_src": "fmp"},
+            {"t": "2026-04-01", "c": "bad", "_src": "fmp"},
+            {"t": "2026-03-31", "c": 106.0, "_src": "fmp"},
+        ]
+
+        values = daily_close_values(points, date_only=True)
+        completed = completed_daily_values(values, today_iso="2026-04-03")
+        payload = build_daily_sparkline_payload(
+            symbol="AAPL",
+            completed=completed,
+            max_points=30,
+            current_price=109.0,
+            reference_close=None,
+            updated_at="2026-04-03T00:00:00Z",
+            source="fmp",
+            extra_fields={"price_mode": "quote"},
+        )
+
+        self.assertEqual(values[0], ("2026-04-03", 110.0))
+        self.assertEqual(completed, [("2026-04-02", 108.5), ("2026-03-31", 106.0)])
+        self.assertEqual(payload["reference_close"], 106.0)
+        self.assertEqual(payload["change_abs"], 3.0)
+        self.assertEqual(payload["trend_30d"], [106.0, 108.5])
+        self.assertEqual(payload["price_mode"], "quote")
+        self.assertEqual(provider_from_points(points, default_provider="cache"), "fmp")
+
+    def test_valuation_payload_helpers_build_inputs_and_metrics(self) -> None:
+        options = ValuationPayloadOptions(fair_per=12.0, fair_pbr=-1.0, equity_risk_premium=0.08, forecast_years=99)
+        multiples = build_comparable_multiples(options)
+        assumptions = build_valuation_assumptions(options)
+        metrics = financial_metrics_from_payloads(
+            "AAPL",
+            market="US",
+            overview_payload={"source": "overview", "price": {"current": 100.0}, "market": {"beta_60d_vs_spy": 1.1}},
+            fmp_payload={
+                "source": "fmp",
+                "profile": {"company_name": "Example Inc.", "market_cap": 10_000.0},
+                "financials": {
+                    "ratios_ttm": {"pe_ratio_ttm": 20.0},
+                    "key_metrics_ttm": {"eps_ttm": 5.0, "dividend_yield_ttm": 0.01},
+                    "income_statement_latest": {"revenue": 1_000.0, "net_income": 500.0},
+                    "balance_sheet_latest": {"cash_and_short_term_investments": 1_000.0, "total_debt": 500.0},
+                    "cash_flow_latest": {"capital_expenditure": -200.0, "free_cash_flow": 600.0},
+                },
+            },
+            risk_free_rate=resolve_risk_free_rate("US", None),
+        )
+
+        self.assertEqual(multiples.fair_per, 12.0)
+        self.assertEqual(multiples.fair_pbr, 2.0)
+        self.assertEqual(assumptions.forecast_years, 20)
+        self.assertEqual(metrics.shares_outstanding, 100.0)
+        self.assertEqual(metrics.dividend_per_share, 1.0)
+        self.assertEqual(metrics.beta, 1.1)
+
+        valuations = valuations_with_upside(
+            [{"method_name": "A", "theoretical_price": 120.0}, {"method_name": "B", "theoretical_price": None}],
+            current_price=100.0,
+        )
+        summary = valuation_summary(valuations, current_price=100.0)
+
+        self.assertAlmostEqual(valuations[0]["upside_pct"], 20.0)
+        self.assertIsNone(valuations[1]["upside_pct"])
+        self.assertEqual(summary["calculated_count"], 1)
+        self.assertEqual(summary["median_price"], 120.0)
+
+    def test_valuation_numeric_helpers_parse_financial_payload_values(self) -> None:
+        self.assertEqual(parse_float("1,234.5"), 1234.5)
+        self.assertIsNone(parse_float("NaN"))
+        self.assertIsNone(positive_float("0"))
+        self.assertEqual(positive_div("10", "2"), 5.0)
+        self.assertEqual(sum_optional("1", None, "2.5"), 3.5)
+        self.assertEqual(first_present(None, "", {}, 0, "fallback"), 0)
+        self.assertEqual(first_dict({"data": [{"value": 1}]}), {"value": 1})
 
     def test_fmp_reference_payload_builders_shape_sections(self) -> None:
         queries = MarketDataQueriesMixin()

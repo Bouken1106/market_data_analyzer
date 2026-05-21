@@ -53,6 +53,47 @@ class FmpReferenceData:
     splits: list[dict[str, Any]]
 
 
+FMP_RATIO_FIELDS = (
+    ("pe_ratio_ttm", "peRatioTTM"),
+    ("pb_ratio_ttm", "priceToBookRatioTTM"),
+    ("ps_ratio_ttm", "priceToSalesRatioTTM"),
+    ("roe_ttm", "returnOnEquityTTM"),
+    ("net_margin_ttm", "netProfitMarginTTM"),
+    ("current_ratio_ttm", "currentRatioTTM"),
+    ("debt_to_equity_ttm", "debtEquityRatioTTM"),
+)
+
+FMP_KEY_METRIC_FIELDS = (
+    ("eps_ttm", "epsTTM"),
+    ("free_cash_flow_per_share_ttm", "freeCashFlowPerShareTTM"),
+    ("book_value_per_share_ttm", "bookValuePerShareTTM"),
+    ("dividend_yield_ttm", "dividendYieldTTM"),
+)
+
+FMP_INCOME_FIELDS = (
+    ("revenue", "revenue"),
+    ("gross_profit", "grossProfit"),
+    ("operating_income", "operatingIncome"),
+    ("net_income", "netIncome"),
+    ("eps", "eps"),
+)
+
+FMP_BALANCE_SHEET_FIELDS = (
+    ("cash_and_short_term_investments", "cashAndShortTermInvestments"),
+    ("total_assets", "totalAssets"),
+    ("total_debt", "totalDebt"),
+    ("total_liabilities", "totalLiabilities"),
+    ("total_equity", "totalStockholdersEquity"),
+)
+
+FMP_CASH_FLOW_FIELDS = (
+    ("operating_cash_flow", "operatingCashFlow"),
+    ("capital_expenditure", "capitalExpenditure"),
+    ("free_cash_flow", "freeCashFlow"),
+    ("dividends_paid", "dividendsPaid"),
+)
+
+
 class MarketDataReferenceMixin:
     async def fmp_reference_payload(
         self,
@@ -264,53 +305,37 @@ class MarketDataReferenceMixin:
         }
 
     def _build_ratios_payload(self, ratios: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "pe_ratio_ttm": self._try_parse_float(ratios.get("peRatioTTM")),
-            "pb_ratio_ttm": self._try_parse_float(ratios.get("priceToBookRatioTTM")),
-            "ps_ratio_ttm": self._try_parse_float(ratios.get("priceToSalesRatioTTM")),
-            "roe_ttm": self._try_parse_float(ratios.get("returnOnEquityTTM")),
-            "net_margin_ttm": self._try_parse_float(ratios.get("netProfitMarginTTM")),
-            "current_ratio_ttm": self._try_parse_float(ratios.get("currentRatioTTM")),
-            "debt_to_equity_ttm": self._try_parse_float(ratios.get("debtEquityRatioTTM")),
-        }
+        return self._build_numeric_payload(ratios, FMP_RATIO_FIELDS)
 
     def _build_key_metrics_payload(self, metrics: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "eps_ttm": self._try_parse_float(metrics.get("epsTTM")),
-            "free_cash_flow_per_share_ttm": self._try_parse_float(metrics.get("freeCashFlowPerShareTTM")),
-            "book_value_per_share_ttm": self._try_parse_float(metrics.get("bookValuePerShareTTM")),
-            "dividend_yield_ttm": self._try_parse_float(metrics.get("dividendYieldTTM")),
-        }
+        return self._build_numeric_payload(metrics, FMP_KEY_METRIC_FIELDS)
 
     def _build_income_statement_payload(self, income: dict[str, Any]) -> dict[str, Any]:
         return {
             "date": income.get("date"),
-            "revenue": self._try_parse_float(income.get("revenue")),
-            "gross_profit": self._try_parse_float(income.get("grossProfit")),
-            "operating_income": self._try_parse_float(income.get("operatingIncome")),
-            "net_income": self._try_parse_float(income.get("netIncome")),
-            "eps": self._try_parse_float(income.get("eps")),
+            **self._build_numeric_payload(income, FMP_INCOME_FIELDS),
         }
 
     def _build_balance_sheet_payload(self, balance_sheet: dict[str, Any]) -> dict[str, Any]:
         return {
             "date": balance_sheet.get("date"),
-            "cash_and_short_term_investments": self._try_parse_float(
-                balance_sheet.get("cashAndShortTermInvestments")
-            ),
-            "total_assets": self._try_parse_float(balance_sheet.get("totalAssets")),
-            "total_debt": self._try_parse_float(balance_sheet.get("totalDebt")),
-            "total_liabilities": self._try_parse_float(balance_sheet.get("totalLiabilities")),
-            "total_equity": self._try_parse_float(balance_sheet.get("totalStockholdersEquity")),
+            **self._build_numeric_payload(balance_sheet, FMP_BALANCE_SHEET_FIELDS),
         }
 
     def _build_cash_flow_payload(self, cash_flow: dict[str, Any]) -> dict[str, Any]:
         return {
             "date": cash_flow.get("date"),
-            "operating_cash_flow": self._try_parse_float(cash_flow.get("operatingCashFlow")),
-            "capital_expenditure": self._try_parse_float(cash_flow.get("capitalExpenditure")),
-            "free_cash_flow": self._try_parse_float(cash_flow.get("freeCashFlow")),
-            "dividends_paid": self._try_parse_float(cash_flow.get("dividendsPaid")),
+            **self._build_numeric_payload(cash_flow, FMP_CASH_FLOW_FIELDS),
+        }
+
+    def _build_numeric_payload(
+        self,
+        source: dict[str, Any],
+        fields: tuple[tuple[str, str], ...],
+    ) -> dict[str, float | None]:
+        return {
+            output_key: self._try_parse_float(source.get(input_key))
+            for output_key, input_key in fields
         }
 
     async def _fmp_get_json(

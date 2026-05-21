@@ -28,6 +28,18 @@ from .valuation_models import (
     SECURITY_REIT,
     FinancialMetrics,
 )
+from .valuation_numeric import (
+    abs_or_none as _abs_or_none,
+    div_optional as _div_optional,
+    first_dict,
+    first_present,
+    first_present_text as _first_present_text,
+    first_report as _first_report,
+    has_value as _has_value,
+    parse_float as _parse_float,
+    sub_optional as _sub_optional,
+    sum_optional as _sum_optional,
+)
 
 
 SEC_COMPANY_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
@@ -921,35 +933,6 @@ def merge_financial_metrics(primary: FinancialMetrics, supplement: FinancialMetr
     return FinancialMetrics(**values)
 
 
-def first_dict(payload: Any) -> dict[str, Any]:
-    if isinstance(payload, list):
-        for item in payload:
-            if isinstance(item, dict):
-                return dict(item)
-        return {}
-    if isinstance(payload, dict):
-        rows = payload.get("data")
-        if isinstance(rows, list):
-            return first_dict(rows)
-        return dict(payload)
-    return {}
-
-
-def first_present(*values: Any) -> Any:
-    for value in values:
-        if _has_value(value):
-            return value
-    return None
-
-
-def _first_report(payload: Any, key: str) -> dict[str, Any]:
-    if isinstance(payload, dict):
-        rows = payload.get(key)
-        if isinstance(rows, list) and rows and isinstance(rows[0], dict):
-            return dict(rows[0])
-    return {}
-
-
 def _env_default(value: str | None, *names: str) -> str:
     if value:
         return str(value).strip()
@@ -958,71 +941,3 @@ def _env_default(value: str | None, *names: str) -> str:
         if raw:
             return raw
     return ""
-
-
-def _parse_float(value: Any) -> float | None:
-    if value is None:
-        return None
-    text = str(value).strip().replace(",", "")
-    if not text or text in {"-", ".", "None", "null", "NaN"}:
-        return None
-    try:
-        parsed = float(text)
-    except (TypeError, ValueError):
-        return None
-    if not math_isfinite(parsed):
-        return None
-    return parsed
-
-
-def _abs_or_none(value: Any) -> float | None:
-    parsed = _parse_float(value)
-    return abs(parsed) if parsed is not None else None
-
-
-def _sum_optional(*values: Any) -> float | None:
-    parsed = [_parse_float(value) for value in values]
-    cleaned = [value for value in parsed if value is not None]
-    if not cleaned:
-        return None
-    return sum(cleaned)
-
-
-def _sub_optional(left: Any, right: Any) -> float | None:
-    left_value = _parse_float(left)
-    right_value = _parse_float(right)
-    if left_value is None or right_value is None:
-        return None
-    return left_value - right_value
-
-
-def _div_optional(left: Any, right: Any) -> float | None:
-    left_value = _parse_float(left)
-    right_value = _parse_float(right)
-    if left_value is None or right_value in (None, 0):
-        return None
-    return left_value / right_value
-
-
-def _first_present_text(row: dict[str, Any], *keys: str) -> str:
-    for key in keys:
-        text = str(row.get(key) or "").strip()
-        if text:
-            return text
-    return ""
-
-
-def _has_value(value: Any) -> bool:
-    if value is None:
-        return False
-    if isinstance(value, str):
-        return bool(value)
-    if isinstance(value, tuple):
-        return bool(value)
-    if isinstance(value, dict):
-        return bool(value)
-    return True
-
-
-def math_isfinite(value: float) -> bool:
-    return value == value and value not in {float("inf"), float("-inf")}
