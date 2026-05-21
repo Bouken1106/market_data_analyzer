@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from ..utils import is_valid_symbol, normalize_symbol, utc_now_iso
+from ..utils import exception_detail_text, is_valid_symbol, normalize_symbol, utc_now_iso
 from .valuation_models import calculate_valuation_report
 from .valuation_payload_inputs import (
     DEFAULT_EQUITY_RISK_PREMIUM,
@@ -120,17 +120,14 @@ async def _safe_overview_payload(hub: Any, symbol: str, *, refresh: bool) -> tup
     fetcher = getattr(hub, "security_overview_payload", None)
     if fetcher is None:
         return None, "security overview service is unavailable"
-    try:
-        payload = await fetcher(
-            symbol=symbol,
-            refresh=refresh,
-            include_intraday=False,
-            include_market=True,
-            include_qqq=False,
-        )
-    except Exception as exc:  # pragma: no cover - defensive around provider failures
-        return None, str(exc)
-    return payload if isinstance(payload, dict) else None, None
+    return await _safe_dict_payload(
+        fetcher,
+        symbol=symbol,
+        refresh=refresh,
+        include_intraday=False,
+        include_market=True,
+        include_qqq=False,
+    )
 
 
 async def _safe_fmp_reference_payload(
@@ -151,28 +148,23 @@ async def _safe_fmp_reference_payload(
             return None, "No cached FMP reference data found for this symbol."
         return None, "FMP reference service is unavailable"
     if not refresh:
-        try:
-            payload = await fetcher(symbol, refresh=False, cache_only=True)
-        except HTTPException as exc:
-            payload = None
-            cache_error = str(exc.detail)
-        except Exception as exc:  # pragma: no cover - defensive around provider failures
-            payload = None
-            cache_error = str(exc)
-        else:
-            cache_error = None
-        if isinstance(payload, dict):
+        payload, cache_error = await _safe_dict_payload(fetcher, symbol, refresh=False, cache_only=True)
+        if payload is not None:
             return payload, None
         if cache_only:
             return None, cache_error or "No cached FMP reference data found for this symbol."
     if cache_only:
         return None, "No cached FMP reference data found for this symbol."
+    return await _safe_dict_payload(fetcher, symbol, refresh=refresh, cache_only=False)
+
+
+async def _safe_dict_payload(fetcher: Any, *args: Any, **kwargs: Any) -> tuple[dict[str, Any] | None, str | None]:
     try:
-        payload = await fetcher(symbol, refresh=refresh, cache_only=False)
+        payload = await fetcher(*args, **kwargs)
     except HTTPException as exc:
-        return None, str(exc.detail)
+        return None, exception_detail_text(exc)
     except Exception as exc:  # pragma: no cover - defensive around provider failures
-        return None, str(exc)
+        return None, exception_detail_text(exc)
     return payload if isinstance(payload, dict) else None, None
 
 

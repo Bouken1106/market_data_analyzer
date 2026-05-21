@@ -788,14 +788,14 @@ class ValuationCalculator:
         if residual_income <= 0:
             return self._unavailable(method, "residual income is non-positive", {"residual_income": residual_income})
 
-        pv = 0.0
-        future_residual = residual_income
         years = self._forecast_years()
-        for year in range(1, years + 1):
-            future_residual *= 1.0 + growth
-            pv += future_residual / ((1.0 + cost_of_equity) ** year)
-        terminal = future_residual * (1.0 + growth) / (cost_of_equity - growth)
-        pv += terminal / ((1.0 + cost_of_equity) ** years)
+        pv = self._present_value_with_terminal(
+            base_value=residual_income,
+            discount_rate=cost_of_equity,
+            growth_rate=growth,
+            terminal_growth=growth,
+            years=years,
+        )
         return self._priced(
             method,
             (equity + pv) / shares,
@@ -956,13 +956,29 @@ class ValuationCalculator:
         cash_flow_growth: float,
         terminal_growth: float,
     ) -> float:
-        years = self._forecast_years()
+        return self._present_value_with_terminal(
+            base_value=base_cash_flow,
+            discount_rate=discount_rate,
+            growth_rate=cash_flow_growth,
+            terminal_growth=terminal_growth,
+            years=self._forecast_years(),
+        )
+
+    @staticmethod
+    def _present_value_with_terminal(
+        *,
+        base_value: float,
+        discount_rate: float,
+        growth_rate: float,
+        terminal_growth: float,
+        years: int,
+    ) -> float:
         pv = 0.0
-        future_cash_flow = base_cash_flow
+        future_value = base_value
         for year in range(1, years + 1):
-            future_cash_flow *= 1.0 + cash_flow_growth
-            pv += future_cash_flow / ((1.0 + discount_rate) ** year)
-        terminal_value = future_cash_flow * (1.0 + terminal_growth) / (discount_rate - terminal_growth)
+            future_value *= 1.0 + growth_rate
+            pv += future_value / ((1.0 + discount_rate) ** year)
+        terminal_value = future_value * (1.0 + terminal_growth) / (discount_rate - terminal_growth)
         return pv + terminal_value / ((1.0 + discount_rate) ** years)
 
     def _forecast_years(self) -> int:

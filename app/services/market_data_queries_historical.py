@@ -13,6 +13,7 @@ from ..config import (
     JQUANTS_RATE_LIMIT_BACKOFF_SEC as DEFAULT_JQUANTS_RATE_LIMIT_BACKOFF_SEC,
     settings,
 )
+from ..utils import cached_attr
 from .market_data_historical_ops import MarketDataHistoricalOps
 from .market_data_historical_service import (
     HistoricalQueryContext,
@@ -42,15 +43,16 @@ from .market_data_queries_historical_support import (
 class MarketDataHistoricalMixin:
     def _historical_query_service(self) -> MarketDataHistoricalQueryService:
         service = getattr(self, "historical_query_service", None)
-        if service is None:
-            service = getattr(self, "_historical_query_service_instance", None)
-        if service is None:
-            service = MarketDataHistoricalQueryService(
+        if service is not None:
+            return service
+        return cached_attr(
+            self,
+            "_historical_query_service_instance",
+            lambda: MarketDataHistoricalQueryService(
                 context=self._historical_query_context(),
                 dependencies=self._historical_query_dependencies(),
-            )
-            setattr(self, "_historical_query_service_instance", service)
-        return service
+            ),
+        )
 
     def _historical_query_context(self) -> HistoricalQueryContext:
         return HistoricalQueryContext(
@@ -71,11 +73,7 @@ class MarketDataHistoricalMixin:
         )
 
     def _historical_ops(self) -> MarketDataHistoricalOps:
-        ops = getattr(self, "_historical_ops_service", None)
-        if ops is None:
-            ops = MarketDataHistoricalOps(self)
-            setattr(self, "_historical_ops_service", ops)
-        return ops
+        return cached_attr(self, "_historical_ops_service", lambda: MarketDataHistoricalOps(self))
 
     async def historical_payload(
         self,

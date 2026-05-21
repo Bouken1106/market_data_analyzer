@@ -12,6 +12,24 @@ def record_list(payload: Any) -> list[dict[str, Any]]:
     return [dict(item) for item in payload if isinstance(item, dict)]
 
 
+def payload_row_list(payload: Any, *row_keys: str) -> list[dict[str, Any]] | None:
+    """Return rows when the payload shape explicitly contains a row list.
+
+    Unlike ``payload_rows``, this preserves the difference between an empty
+    provider row list and an unrecognized provider payload.
+    """
+
+    if isinstance(payload, list):
+        return record_list(payload)
+    if not isinstance(payload, dict):
+        return None
+    for key in row_keys:
+        rows = payload.get(key)
+        if isinstance(rows, list):
+            return record_list(rows)
+    return None
+
+
 def first_record(
     payload: Any,
     *,

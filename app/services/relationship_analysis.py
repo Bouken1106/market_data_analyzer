@@ -72,6 +72,10 @@ def _safe_scalar(value: float | np.floating[Any]) -> float | None:
     return finite_float_or_none(value)
 
 
+def _sort_scalar(value: Any, *, missing: float) -> float:
+    return float(value) if isinstance(value, (int, float)) else missing
+
+
 def _window_corr(x: np.ndarray, y: np.ndarray, window: int) -> float | None:
     size = min(int(window), int(x.shape[0]), int(y.shape[0]))
     if size < 3:
@@ -185,7 +189,7 @@ def _build_pair_candidates(dataset: RelationshipDataset, *, window_days: int) ->
 
     pair_candidates.sort(
         key=lambda item: (
-            -float(item["abs_correlation"]) if isinstance(item.get("abs_correlation"), (int, float)) else math.inf,
+            -_sort_scalar(item.get("abs_correlation"), missing=-math.inf),
             str(item.get("left") or ""),
             str(item.get("right") or ""),
         )
@@ -230,12 +234,12 @@ def _summarize_symbol_correlation(dataset: RelationshipDataset) -> tuple[list[di
 
     strongest = max(
         avg_abs_corr_by_symbol,
-        key=lambda item: float(item["mean_abs_correlation"]) if isinstance(item.get("mean_abs_correlation"), (int, float)) else -1.0,
+        key=lambda item: _sort_scalar(item.get("mean_abs_correlation"), missing=-1.0),
         default=None,
     )
     weakest = min(
         avg_abs_corr_by_symbol,
-        key=lambda item: float(item["mean_abs_correlation"]) if isinstance(item.get("mean_abs_correlation"), (int, float)) else math.inf,
+        key=lambda item: _sort_scalar(item.get("mean_abs_correlation"), missing=math.inf),
         default=None,
     )
     return avg_abs_corr_by_symbol, strongest, weakest

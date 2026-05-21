@@ -15,6 +15,7 @@ from ..config import (
     STOCKS_LIST_URL,
 )
 from ..services.market_data_provider_clients import FmpClient, TwelveDataClient
+from ..services.payload_records import payload_row_list
 from ..utils import is_valid_symbol, normalize_symbol
 
 CatalogRow = dict[str, str]
@@ -141,14 +142,12 @@ class TwelveDataSymbolCatalogFetcher:
             message = payload.get("message", "Failed to fetch symbol catalog.")
             raise HTTPException(status_code=400, detail=message)
 
-        rows = payload.get("data") if isinstance(payload, dict) else None
-        if not isinstance(rows, list):
+        rows = payload_row_list(payload, "data")
+        if rows is None:
             raise HTTPException(status_code=502, detail="Unexpected symbol catalog format from Twelve Data.")
 
         normalized_rows: list[CatalogRow] = []
         for item in rows:
-            if not isinstance(item, dict):
-                continue
             row = self.normalizer.build_row(
                 symbol=item.get("symbol"),
                 name=_pick_catalog_text(
@@ -184,14 +183,12 @@ class FmpSymbolCatalogFetcher:
             if self._is_fmp_error_payload(payload):
                 payload = await fmp_client.get_symbol_catalog(FMP_STOCK_LIST_LEGACY_URL)
 
-        rows = payload if isinstance(payload, list) else payload.get("data") if isinstance(payload, dict) else None
-        if not isinstance(rows, list):
+        rows = payload_row_list(payload, "data")
+        if rows is None:
             raise HTTPException(status_code=502, detail="Unexpected symbol catalog format from FMP.")
 
         normalized_rows: list[CatalogRow] = []
         for item in rows:
-            if not isinstance(item, dict):
-                continue
             row = self.normalizer.build_row(
                 symbol=item.get("symbol"),
                 name=_pick_catalog_text(

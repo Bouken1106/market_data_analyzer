@@ -6,6 +6,25 @@ from typing import Any
 
 from ..utils import first_finite_float, utc_datetime_or_none
 
+QUOTE_SOURCE_KEYS = (
+    "symbol",
+    "name",
+    "instrument_name",
+    "exchange",
+    "price",
+    "close",
+    "previous_close",
+    "prev_close",
+    "open",
+    "high",
+    "low",
+    "volume",
+    "bid",
+    "ask",
+    "timestamp",
+    "datetime",
+)
+
 
 def pick_float(payload: dict[str, Any], *keys: str) -> float | None:
     if not isinstance(payload, dict):
@@ -33,25 +52,7 @@ def merge_quote_payloads_with_source(
         return {}, {}
     out: dict[str, Any] = {}
     detail: dict[str, str] = {}
-    keys = {
-        "symbol",
-        "name",
-        "instrument_name",
-        "exchange",
-        "price",
-        "close",
-        "previous_close",
-        "prev_close",
-        "open",
-        "high",
-        "low",
-        "volume",
-        "bid",
-        "ask",
-        "timestamp",
-        "datetime",
-    }
-    for key in keys:
+    for key in QUOTE_SOURCE_KEYS:
         first = primary.get(key) if isinstance(primary, dict) else None
         second = secondary.get(key) if isinstance(secondary, dict) else None
         if first not in (None, ""):

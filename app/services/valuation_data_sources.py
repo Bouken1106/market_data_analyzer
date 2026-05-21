@@ -21,7 +21,7 @@ from ..stooq import fetch_stooq_daily_history
 from ..utils import normalize_symbol
 from .market_data_math import beta_and_corr
 from .market_data_queries_historical_runtime import normalize_jquants_code
-from .payload_records import record_list
+from .payload_records import payload_rows
 from .valuation_edinet_sources import parse_edinet_xbrl_to_csv_zip, normalize_edinet_metrics
 from .valuation_errors import ValuationDataError
 from .valuation_jquants_sources import (
@@ -340,7 +340,7 @@ def normalize_fmp_metrics(
     profile = first_dict(profile_payload)
     ratios = first_dict(ratios_payload)
     key_metrics = first_dict(metrics_payload)
-    income_rows = record_list(income_payload)
+    income_rows = payload_rows(income_payload, "data")
     income = income_rows[0] if income_rows else first_dict(income_payload)
     balance = first_dict(balance_payload)
     cash_flow = first_dict(cash_flow_payload)

@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from ..ohlcv import close_values_by_date
-from ..utils import date_or_none
+from ..utils import date_or_none, exception_detail_text
 from .portfolio_common import apply_market_value_weights, price_map_from_rows
 from .portfolio_holdings import (
     MAX_HOLDINGS_PER_REGION,
@@ -114,12 +114,18 @@ def _empty_region_summary() -> dict[str, Any]:
     }
 
 
-def _empty_region_payload(region: str) -> dict[str, Any]:
+def _region_metadata(region: str) -> dict[str, str]:
     normalized_region = normalize_region(region)
     return {
         "region": normalized_region,
         "label": REGION_LABELS[normalized_region],
         "currency": REGION_CURRENCIES[normalized_region],
+    }
+
+
+def _empty_region_payload(region: str) -> dict[str, Any]:
+    return {
+        **_region_metadata(region),
         "holdings": [],
         "summary": _empty_region_summary(),
         "risk": _empty_risk_payload(lookback_days=None, note="No holdings saved."),
@@ -261,8 +267,7 @@ def _build_historical_series_bundle(
     )
     for symbol, result in zip(symbols, historical_results):
         if isinstance(result, Exception):
-            detail = getattr(result, "detail", None)
-            warnings.append(f"{symbol}: historical data unavailable ({detail or result}).")
+            warnings.append(f"{symbol}: historical data unavailable ({exception_detail_text(result)}).")
             continue
         points = result.get("points") if isinstance(result, dict) else None
         series = _close_series_from_points(points)
@@ -486,9 +491,7 @@ async def analyze_region_portfolio(
     )
 
     return {
-        "region": normalized_region,
-        "label": REGION_LABELS[normalized_region],
-        "currency": REGION_CURRENCIES[normalized_region],
+        **_region_metadata(normalized_region),
         "holdings": priced.rows,
         "summary": _build_region_summary(
             holdings_rows=priced.rows,

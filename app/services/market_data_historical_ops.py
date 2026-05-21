@@ -246,6 +246,31 @@ class MarketDataHistoricalOps:
         start_date: str,
         end_date: str,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        td_points, fmp_points = await self.fetch_twelvedata_and_fmp_series(
+            client=client,
+            symbol=symbol,
+            interval=interval,
+            outputsize=outputsize,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        merged = self.owner._merge_points_by_timestamp(fmp_points, td_points)
+        return merged, build_combined_historical_detail(
+            td_points=td_points,
+            fmp_points=fmp_points,
+            merged_points=merged,
+        )
+
+    async def fetch_twelvedata_and_fmp_series(
+        self,
+        *,
+        client: httpx.AsyncClient,
+        symbol: str,
+        interval: str,
+        outputsize: int,
+        start_date: str | None,
+        end_date: str | None,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         td_task = self.owner._fetch_series_twelvedata(
             client=client,
             symbol=symbol,
@@ -262,13 +287,16 @@ class MarketDataHistoricalOps:
             start_date=start_date,
             end_date=end_date,
         )
-        td_points, fmp_points = await asyncio.gather(td_task, fmp_task)
-        merged = self.owner._merge_points_by_timestamp(fmp_points, td_points)
-        return merged, build_combined_historical_detail(
-            td_points=td_points,
-            fmp_points=fmp_points,
-            merged_points=merged,
-        )
+        td_result, fmp_result = await asyncio.gather(td_task, fmp_task, return_exceptions=True)
+        td_points = td_result if isinstance(td_result, list) else []
+        fmp_points = fmp_result if isinstance(fmp_result, list) else []
+
+        if isinstance(td_result, Exception):
+            LOGGER.warning("Time series fetch failed (TD) for %s %s: %s", symbol, interval, td_result)
+        if isinstance(fmp_result, Exception):
+            LOGGER.warning("Time series fetch failed (FMP) for %s %s: %s", symbol, interval, fmp_result)
+
+        return td_points, fmp_points
 
     async def await_jquants_request_slot(self) -> None:
         await self.jquants.await_request_slot()
@@ -347,7 +375,7 @@ class MarketDataHistoricalOps:
                 end_date=end_date,
             )
 
-        td_task = self.owner._fetch_series_twelvedata(
+        td_points, fmp_points = await self.fetch_twelvedata_and_fmp_series(
             client=client,
             symbol=symbol,
             interval=interval,
@@ -355,23 +383,6 @@ class MarketDataHistoricalOps:
             start_date=start_date,
             end_date=end_date,
         )
-        fmp_task = self.owner._fetch_series_fmp(
-            client=client,
-            symbol=symbol,
-            interval=interval,
-            outputsize=outputsize,
-            start_date=start_date,
-            end_date=end_date,
-        )
-        td_result, fmp_result = await asyncio.gather(td_task, fmp_task, return_exceptions=True)
-        td_points = td_result if isinstance(td_result, list) else []
-        fmp_points = fmp_result if isinstance(fmp_result, list) else []
-
-        if isinstance(td_result, Exception):
-            LOGGER.warning("Time series fetch failed (TD) for %s %s: %s", symbol, interval, td_result)
-        if isinstance(fmp_result, Exception):
-            LOGGER.warning("Time series fetch failed (FMP) for %s %s: %s", symbol, interval, fmp_result)
-
         return self.owner._merge_points_by_timestamp(fmp_points, td_points)
 
     async def fetch_series_fmp(

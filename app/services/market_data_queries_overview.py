@@ -7,13 +7,14 @@ from typing import Any
 import httpx
 
 from ..config import settings
-from ..utils import normalize_symbols
+from ..utils import cached_attr, normalize_symbols
 from .market_data_overview_ops import MarketDataOverviewOps
 from .market_data_overview_service import (
     MarketDataOverviewQueryService,
     OverviewQueryContext,
     OverviewQueryDependencies,
 )
+from .market_data_payload_utils import QUOTE_SOURCE_KEYS
 from .market_data_queries_overview_support import (
     OverviewInputs,
     OverviewRequest,
@@ -28,15 +29,16 @@ from .market_data_queries_overview_support import (
 class MarketDataOverviewMixin:
     def _overview_query_service(self) -> MarketDataOverviewQueryService:
         service = getattr(self, "overview_query_service", None)
-        if service is None:
-            service = getattr(self, "_overview_query_service_instance", None)
-        if service is None:
-            service = MarketDataOverviewQueryService(
+        if service is not None:
+            return service
+        return cached_attr(
+            self,
+            "_overview_query_service_instance",
+            lambda: MarketDataOverviewQueryService(
                 context=self._overview_query_context(),
                 dependencies=self._overview_query_dependencies(),
-            )
-            setattr(self, "_overview_query_service_instance", service)
-        return service
+            ),
+        )
 
     def _overview_query_context(self) -> OverviewQueryContext:
         return OverviewQueryContext(
@@ -61,11 +63,7 @@ class MarketDataOverviewMixin:
         )
 
     def _overview_ops(self) -> MarketDataOverviewOps:
-        ops = getattr(self, "_overview_ops_service", None)
-        if ops is None:
-            ops = MarketDataOverviewOps(self)
-            setattr(self, "_overview_ops_service", ops)
-        return ops
+        return cached_attr(self, "_overview_ops_service", lambda: MarketDataOverviewOps(self))
 
     async def security_overview_payload(
         self,
@@ -181,24 +179,7 @@ class MarketDataOverviewMixin:
 
     @staticmethod
     def _quote_source_detail(provider: str) -> dict[str, str]:
-        return {
-            "symbol": provider,
-            "name": provider,
-            "instrument_name": provider,
-            "exchange": provider,
-            "price": provider,
-            "close": provider,
-            "previous_close": provider,
-            "prev_close": provider,
-            "open": provider,
-            "high": provider,
-            "low": provider,
-            "volume": provider,
-            "bid": provider,
-            "ask": provider,
-            "timestamp": provider,
-            "datetime": provider,
-        }
+        return {key: provider for key in QUOTE_SOURCE_KEYS}
 
     def _build_overview_request(
         self,

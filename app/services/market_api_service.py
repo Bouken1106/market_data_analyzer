@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from ..config import LOGGER, settings
+from ..utils import exception_detail_text
 from ..validation import require_symbols
 from .market_data_sparkline import (
     build_daily_sparkline_payload,
@@ -34,8 +35,7 @@ def clamp_int(value: int, *, minimum: int, maximum: int) -> int:
 
 
 def _exception_detail(exc: Exception) -> str:
-    detail = getattr(exc, "detail", None)
-    return str(detail or exc)
+    return exception_detail_text(exc)
 
 
 def _payload_points(payload: Any) -> list[Any] | None:
@@ -80,12 +80,11 @@ async def gather_relationship_points(
     hub: Any,
     request: RelationshipRequest,
 ) -> tuple[dict[str, list[dict[str, object]]], list[dict[str, str]]]:
-    responses = await asyncio.gather(
-        *[
-            hub.historical_payload(symbol=symbol, months=request.months, refresh=request.refresh)
-            for symbol in request.symbols
-        ],
-        return_exceptions=True,
+    responses = await gather_historical_payloads(
+        hub,
+        request.symbols,
+        months=request.months,
+        refresh=request.refresh,
     )
 
     points_by_symbol: dict[str, list[dict[str, object]]] = {}
@@ -101,6 +100,13 @@ async def gather_relationship_points(
         skipped.append({"symbol": symbol, "reason": "No historical points returned."})
 
     return points_by_symbol, skipped
+
+
+async def gather_historical_payloads(hub: Any, symbols: list[str], **kwargs: Any) -> list[Any]:
+    return await asyncio.gather(
+        *[hub.historical_payload(symbol=symbol, **kwargs) for symbol in symbols],
+        return_exceptions=True,
+    )
 
 
 def build_relationship_payload(
@@ -178,6 +184,23 @@ def build_eod_sparkline_item(
     )
 
 
+def build_eod_sparkline_item_from_payload(
+    *,
+    symbol: str,
+    payload: Any,
+    default_provider: str,
+) -> dict[str, Any] | None:
+    points = _payload_points(payload)
+    if points is None:
+        return None
+    return build_eod_sparkline_item(
+        symbol=symbol,
+        points=_dict_points(points),
+        source_detail=_payload_source_detail(payload),
+        default_provider=default_provider,
+    )
+
+
 async def gather_eod_sparkline_items(
     hub: Any,
     *,
@@ -185,16 +208,11 @@ async def gather_eod_sparkline_items(
     refresh: bool,
 ) -> list[dict[str, Any]]:
     provider_name = str(getattr(hub, "provider", "") or "provider").strip().lower() or "provider"
-    provider_responses = await asyncio.gather(
-        *[
-            hub.historical_payload(
-                symbol=symbol,
-                months=2,
-                refresh=refresh,
-            )
-            for symbol in symbols
-        ],
-        return_exceptions=True,
+    provider_responses = await gather_historical_payloads(
+        hub,
+        symbols,
+        months=2,
+        refresh=refresh,
     )
 
     items_by_symbol: dict[str, dict[str, Any]] = {}
@@ -204,14 +222,9 @@ async def gather_eod_sparkline_items(
             LOGGER.warning("Provider EOD sparkline fetch failed for %s: %s", symbol, _exception_detail(response))
             fallback_symbols.append(symbol)
             continue
-        points = _payload_points(response)
-        if points is None:
-            fallback_symbols.append(symbol)
-            continue
-        item = build_eod_sparkline_item(
+        item = build_eod_sparkline_item_from_payload(
             symbol=symbol,
-            points=_dict_points(points),
-            source_detail=_payload_source_detail(response),
+            payload=response,
             default_provider=provider_name,
         )
         if item is None:
@@ -222,31 +235,22 @@ async def gather_eod_sparkline_items(
     if not fallback_symbols:
         return [items_by_symbol[symbol] for symbol in symbols if symbol in items_by_symbol]
 
-    stooq_responses = await asyncio.gather(
-        *[
-            hub.historical_payload(
-                symbol=symbol,
-                years=1,
-                refresh=refresh,
-                source_preference="stooq",
-                allow_api_fallback=False,
-            )
-            for symbol in fallback_symbols
-        ],
-        return_exceptions=True,
+    stooq_responses = await gather_historical_payloads(
+        hub,
+        fallback_symbols,
+        years=1,
+        refresh=refresh,
+        source_preference="stooq",
+        allow_api_fallback=False,
     )
 
     for symbol, response in zip(fallback_symbols, stooq_responses):
         if isinstance(response, Exception):
             LOGGER.warning("EOD sparkline fetch failed for %s: %s", symbol, _exception_detail(response))
             continue
-        points = _payload_points(response)
-        if points is None:
-            continue
-        item = build_eod_sparkline_item(
+        item = build_eod_sparkline_item_from_payload(
             symbol=symbol,
-            points=_dict_points(points),
-            source_detail=_payload_source_detail(response),
+            payload=response,
             default_provider="stooq",
         )
         if item is not None:

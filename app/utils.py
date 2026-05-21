@@ -6,7 +6,7 @@ import json
 import math
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable, TypeVar
 
 from fastapi.responses import JSONResponse
 
@@ -18,6 +18,26 @@ from .config import (
     REST_MIN_POLL_INTERVAL_SEC,
     SYMBOL_PATTERN,
 )
+
+
+T = TypeVar("T")
+
+
+# ---------------------------------------------------------------------------
+# Object helpers
+# ---------------------------------------------------------------------------
+
+def cached_attr(owner: Any, name: str, factory: Callable[[], T]) -> T:
+    value = getattr(owner, name, None)
+    if value is None:
+        value = factory()
+        setattr(owner, name, value)
+    return value
+
+
+def exception_detail_text(exc: BaseException) -> str:
+    detail = getattr(exc, "detail", None)
+    return str(detail or exc)
 
 
 # ---------------------------------------------------------------------------

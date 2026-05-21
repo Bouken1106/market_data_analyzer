@@ -9,6 +9,7 @@ from app.services.market_data_historical_series import (
     normalize_twelvedata_series_payload,
 )
 from app.services.market_data_math import atr, beta_and_corr, daily_returns, intraday_vwap, moving_average
+from app.services.market_api_service import build_eod_sparkline_item_from_payload
 from app.services.market_data_overview_ops import MarketDataOverviewOps
 from app.services.market_data_sparkline import (
     build_daily_sparkline_payload,
@@ -25,7 +26,7 @@ from app.services.market_data_queries_overview_support import (
 )
 from app.services.market_data_queries_reference import FmpReferenceData
 from app.services.paper_portfolio import _apply_position_weights, _build_position_rows, _portfolio_summary
-from app.services.payload_records import first_record, payload_rows, record_list
+from app.services.payload_records import first_record, payload_row_list, payload_rows, record_list
 from app.services.portfolio_common import apply_market_value_weights, positive_price_or_none, price_map_from_rows
 from app.services.valuation_payload_inputs import (
     ValuationPayloadOptions,
@@ -56,6 +57,7 @@ from app.services.valuation_security_rules import (
 from app.services.watchlist_commentary_parser import commentary_from_json, fallback_commentary
 from app.services.watchlist_commentary_prompt import build_watchlist_prompt
 from app.services.watchlist_state import normalize_watchlist_namespace
+from app.utils import cached_attr
 
 
 class _OverviewOwner:
@@ -397,6 +399,24 @@ class RefactorHelperTest(unittest.TestCase):
         self.assertEqual(payload["price_mode"], "quote")
         self.assertEqual(provider_from_points(points, default_provider="cache"), "fmp")
 
+    def test_eod_sparkline_item_from_payload_reuses_provider_payload_shape(self) -> None:
+        item = build_eod_sparkline_item_from_payload(
+            symbol="AAPL",
+            payload={
+                "points": [
+                    {"t": "2026-04-01", "c": 100.0, "_src": "fmp"},
+                    {"t": "2026-04-02", "c": 101.5, "_src": "fmp"},
+                ],
+                "source_detail": {"provider": "fmp", "mode": "historical_daily"},
+            },
+            default_provider="provider",
+        )
+
+        self.assertIsNotNone(item)
+        self.assertEqual(item["symbol"], "AAPL")
+        self.assertEqual(item["latest_close"], 101.5)
+        self.assertEqual(item["source"], "fmp_eod")
+
     def test_valuation_payload_helpers_build_inputs_and_metrics(self) -> None:
         options = ValuationPayloadOptions(fair_per=12.0, fair_pbr=-1.0, equity_risk_premium=0.08, forecast_years=99)
         multiples = build_comparable_multiples(options)
@@ -461,9 +481,23 @@ class RefactorHelperTest(unittest.TestCase):
         rows = [{"symbol": "AAPL"}, object(), {"symbol": "MSFT"}]
 
         self.assertEqual(record_list(rows), [{"symbol": "AAPL"}, {"symbol": "MSFT"}])
+        self.assertEqual(payload_row_list({"data": rows}, "data"), [{"symbol": "AAPL"}, {"symbol": "MSFT"}])
+        self.assertEqual(payload_row_list([], "data"), [])
+        self.assertIsNone(payload_row_list({"unexpected": rows}, "data"))
         self.assertEqual(first_record({"data": rows}), {"symbol": "AAPL"})
         self.assertEqual(first_record({"symbol": "NVDA"}, row_keys=("data",)), {"symbol": "NVDA"})
         self.assertEqual(payload_rows({"historical": rows}, "historical", "data"), [{"symbol": "AAPL"}, {"symbol": "MSFT"}])
+
+    def test_cached_attr_reuses_lazy_service_instances(self) -> None:
+        class Owner:
+            pass
+
+        owner = Owner()
+        first = cached_attr(owner, "_service", lambda: {"created": 1})
+        second = cached_attr(owner, "_service", lambda: {"created": 2})
+
+        self.assertIs(first, second)
+        self.assertEqual(first, {"created": 1})
 
     def test_fmp_reference_payload_builders_shape_sections(self) -> None:
         queries = MarketDataQueriesMixin()

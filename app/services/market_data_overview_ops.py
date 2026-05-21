@@ -17,6 +17,7 @@ from .market_data_sparkline import (
 )
 from .market_data_provider_clients import owner_fmp_client, owner_twelvedata_client
 from .market_data_queries_overview_support import OverviewInputs
+from .payload_records import first_record
 
 
 class MarketDataOverviewOps:
@@ -149,17 +150,12 @@ class MarketDataOverviewOps:
             LOGGER.warning("FMP quote fetch failed for %s: %s", symbol, exc)
             return {}
 
-        row: dict[str, Any] | None = None
-        if isinstance(payload, list) and payload:
-            first = payload[0]
-            row = first if isinstance(first, dict) else None
-        elif isinstance(payload, dict):
-            if self.owner._is_fmp_error(payload):
-                LOGGER.warning("FMP quote API error for %s: %s", symbol, payload.get("Error Message"))
-                return {}
-            row = payload
+        if isinstance(payload, dict) and self.owner._is_fmp_error(payload):
+            LOGGER.warning("FMP quote API error for %s: %s", symbol, payload.get("Error Message"))
+            return {}
 
-        if not isinstance(row, dict):
+        row = first_record(payload, row_keys=("data",), allow_direct_dict=True)
+        if not row:
             return {}
 
         return {
