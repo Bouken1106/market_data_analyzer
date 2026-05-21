@@ -5,6 +5,7 @@ import unittest
 
 from app.services.valuation_data_sources import (
     merge_financial_metrics,
+    normalize_edinet_metrics,
     normalize_jquants_metrics,
     normalize_sec_company_facts,
     parse_fred_latest_rate,
@@ -190,6 +191,30 @@ class ValuationServiceTest(unittest.TestCase):
         self.assertEqual(metrics.shares_outstanding, 900.0)
         self.assertEqual(metrics.forecast_eps, 90.0)
         self.assertIn("J-Quants:fins/statements", metrics.data_sources)
+
+    def test_edinet_facts_normalize_japan_metrics(self) -> None:
+        metrics = normalize_edinet_metrics(
+            "7203.T",
+            {
+                "NetSales": 1000.0,
+                "OperatingIncome": 120.0,
+                "NetIncome": 80.0,
+                "NetCashProvidedByUsedInOperatingActivities": 100.0,
+                "PurchaseOfPropertyPlantAndEquipment": -20.0,
+                "CashAndCashEquivalents": 200.0,
+                "LongTermBorrowings": 50.0,
+                "TotalAssets": 500.0,
+                "Equity": 220.0,
+                "TotalNumberOfIssuedShares": 10.0,
+            },
+            doc_id="S100TEST",
+        )
+
+        self.assertEqual(metrics.symbol, "7203.T")
+        self.assertEqual(metrics.market, "JP")
+        self.assertEqual(metrics.free_cash_flow, 80.0)
+        self.assertEqual(metrics.interest_bearing_debt, 50.0)
+        self.assertEqual(metrics.data_sources, ("EDINET:S100TEST:csv",))
 
     def test_sec_companyfacts_normalizes_us_metrics(self) -> None:
         payload = {

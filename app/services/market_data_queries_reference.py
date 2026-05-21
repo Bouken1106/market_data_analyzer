@@ -24,6 +24,7 @@ from ..config import (
     SYMBOL_PATTERN,
 )
 from .market_data_provider_clients import FmpClient
+from .payload_records import first_record, payload_rows
 from .ttl_cache import build_cached_response, ttl_cache_lookup_response, ttl_cache_pop, ttl_cache_store
 
 
@@ -353,32 +354,24 @@ class MarketDataReferenceMixin:
 
     @staticmethod
     def _first_dict(payload: Any) -> dict[str, Any]:
-        if isinstance(payload, dict):
-            if payload.get("symbol") and any(
-                isinstance(value, (str, int, float, bool, dict, list, type(None))) for value in payload.values()
-            ):
-                return payload
-            data = payload.get("data")
-            if isinstance(data, list) and data and isinstance(data[0], dict):
-                return dict(data[0])
-            return {}
-        if isinstance(payload, list) and payload and isinstance(payload[0], dict):
-            return dict(payload[0])
-        return {}
+        return first_record(
+            payload,
+            row_keys=("data",),
+            allow_direct_dict=True,
+            direct_dict_predicate=MarketDataReferenceMixin._is_fmp_record_payload,
+            prefer_direct_dict=True,
+        )
+
+    @staticmethod
+    def _is_fmp_record_payload(payload: dict[str, Any]) -> bool:
+        return bool(
+            payload.get("symbol")
+            and any(isinstance(value, (str, int, float, bool, dict, list, type(None))) for value in payload.values())
+        )
 
     @staticmethod
     def _extract_historical_rows(payload: Any) -> list[dict[str, Any]]:
-        if isinstance(payload, dict):
-            rows = payload.get("historical")
-            if isinstance(rows, list):
-                return [dict(item) for item in rows if isinstance(item, dict)]
-            rows = payload.get("data")
-            if isinstance(rows, list):
-                return [dict(item) for item in rows if isinstance(item, dict)]
-            return []
-        if isinstance(payload, list):
-            return [dict(item) for item in payload if isinstance(item, dict)]
-        return []
+        return payload_rows(payload, "historical", "data")
 
     def _build_adjusted_price_summary(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
         cleaned = [dict(item) for item in rows if isinstance(item, dict)]

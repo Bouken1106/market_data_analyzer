@@ -24,15 +24,18 @@ from .valuation_numeric import (
     positive_float as _positive,
     sub_optional as _sub,
 )
+from .valuation_security_rules import (
+    SECURITY_BANK,
+    SECURITY_INSURANCE,
+    SECURITY_OPERATING,
+    SECURITY_REIT,
+    infer_security_type,
+    method_blocked_for_security_type,
+)
 
 
 MARKET_JP = "JP"
 MARKET_US = "US"
-
-SECURITY_OPERATING = "operating"
-SECURITY_BANK = "bank"
-SECURITY_INSURANCE = "insurance"
-SECURITY_REIT = "reit"
 
 
 @dataclass(frozen=True)
@@ -230,26 +233,12 @@ class DerivedValuationMetrics:
 
     @property
     def security_type(self) -> str:
-        explicit = _norm_text(self.metrics.security_type)
-        if explicit in {SECURITY_BANK, SECURITY_INSURANCE, SECURITY_REIT, SECURITY_OPERATING}:
-            return explicit
-
-        text = " ".join(
-            item
-            for item in (
-                _norm_text(self.metrics.sector),
-                _norm_text(self.metrics.industry),
-                _norm_text(self.metrics.company_name),
-            )
-            if item
+        return infer_security_type(
+            explicit_type=self.metrics.security_type,
+            sector=self.metrics.sector,
+            industry=self.metrics.industry,
+            company_name=self.metrics.company_name,
         )
-        if any(token in text for token in ("reit", "不動産投資信託", "投資法人")):
-            return SECURITY_REIT
-        if any(token in text for token in ("bank", "banks", "銀行")):
-            return SECURITY_BANK
-        if any(token in text for token in ("insurance", "保険")):
-            return SECURITY_INSURANCE
-        return SECURITY_OPERATING
 
     @property
     def shares(self) -> float | None:
@@ -710,7 +699,7 @@ class ValuationCalculator:
 
     def dcf(self) -> ValuationResult:
         method = "簡易DCF法"
-        if self._blocked_for_sector("fcf"):
+        if self._blocked_for_security_type("fcf"):
             return self._unavailable(method, "sector rule excludes this method")
         fcf = self.derived.free_cash_flow
         wacc = self.derived.wacc
@@ -740,7 +729,7 @@ class ValuationCalculator:
 
     def fcfe(self) -> ValuationResult:
         method = "FCFE法"
-        if self._blocked_for_sector("fcf"):
+        if self._blocked_for_security_type("fcf"):
             return self._unavailable(method, "sector rule excludes this method")
         operating_cf = _finite(self.metrics.operating_cash_flow)
         capex = _finite(self.metrics.capital_expenditure)
@@ -896,7 +885,7 @@ class ValuationCalculator:
         missing_multiple_reason: str,
         blocked_group: str | None = None,
     ) -> ValuationResult:
-        if blocked_group and self._blocked_for_sector(blocked_group):
+        if blocked_group and self._blocked_for_security_type(blocked_group):
             return self._unavailable(method, "sector rule excludes this method")
         base = _positive(base_value)
         if base is None:
@@ -918,7 +907,7 @@ class ValuationCalculator:
         missing_multiple_reason: str,
         blocked_group: str,
     ) -> ValuationResult:
-        if self._blocked_for_sector(blocked_group):
+        if self._blocked_for_security_type(blocked_group):
             return self._unavailable(method, "sector rule excludes this method")
         base = _positive(base_value)
         if base is None:
@@ -979,15 +968,8 @@ class ValuationCalculator:
     def _forecast_years(self) -> int:
         return max(1, min(20, int(self.assumptions.forecast_years or 1)))
 
-    def _blocked_for_sector(self, method_group: str) -> bool:
-        security_type = self.derived.security_type
-        if security_type == SECURITY_BANK:
-            return method_group in {"sales", "ev", "ev_ebitda", "fcf"}
-        if security_type == SECURITY_INSURANCE:
-            return method_group in {"sales", "ev", "ev_ebitda", "fcf"}
-        if security_type == SECURITY_REIT:
-            return method_group in {"per", "sales", "ev", "ev_ebitda", "fcf"}
-        return False
+    def _blocked_for_security_type(self, method_group: str) -> bool:
+        return method_blocked_for_security_type(self.derived.security_type, method_group)
 
     def _priced(
         self,
@@ -1089,10 +1071,6 @@ def build_comparable_multiples_from_metrics(
         source=source,
         assumptions=assumptions,
     )
-
-
-def _norm_text(value: Any) -> str:
-    return str(value or "").strip().lower()
 
 
 def _clamp(value: float, lower: float, upper: float) -> float:

@@ -4,6 +4,10 @@ import unittest
 
 from app.ohlcv import close_values_by_date, point_date_key, point_positive_close
 from app.services.market_data_historical_jquants import JQuantsHistoricalClient
+from app.services.market_data_historical_series import (
+    normalize_fmp_historical_payload,
+    normalize_twelvedata_series_payload,
+)
 from app.services.market_data_math import atr, beta_and_corr, daily_returns, intraday_vwap, moving_average
 from app.services.market_data_overview_ops import MarketDataOverviewOps
 from app.services.market_data_sparkline import (
@@ -21,6 +25,7 @@ from app.services.market_data_queries_overview_support import (
 )
 from app.services.market_data_queries_reference import FmpReferenceData
 from app.services.paper_portfolio import _apply_position_weights, _build_position_rows, _portfolio_summary
+from app.services.payload_records import first_record, payload_rows, record_list
 from app.services.portfolio_common import apply_market_value_weights, positive_price_or_none, price_map_from_rows
 from app.services.valuation_payload_inputs import (
     ValuationPayloadOptions,
@@ -41,6 +46,12 @@ from app.services.valuation_numeric import (
     positive_div,
     positive_float,
     sum_optional,
+)
+from app.services.valuation_security_rules import (
+    SECURITY_BANK,
+    SECURITY_REIT,
+    infer_security_type,
+    method_blocked_for_security_type,
 )
 from app.services.watchlist_commentary_parser import commentary_from_json, fallback_commentary
 from app.services.watchlist_commentary_prompt import build_watchlist_prompt
@@ -260,6 +271,31 @@ class RefactorHelperTest(unittest.TestCase):
         self.assertEqual(normalized[0]["t"], "2024-01-05")
         self.assertEqual(normalized[0]["_src"], "jquants")
 
+    def test_historical_series_helpers_normalize_provider_payloads(self) -> None:
+        twelvedata_points = normalize_twelvedata_series_payload(
+            {
+                "values": [
+                    {"datetime": "2024-01-02", "open": "9", "high": "11", "low": "8", "close": "10", "volume": "100"},
+                    {"datetime": "2024-01-03", "close": "bad"},
+                ]
+            }
+        )
+        fmp_points = normalize_fmp_historical_payload(
+            {
+                "historical": [
+                    {"date": "2024-01-01", "close": "9"},
+                    {"date": "2024-01-03", "close": "11"},
+                    {"date": "2024-01-02", "close": "10"},
+                ]
+            },
+            outputsize=2,
+        )
+
+        self.assertEqual(twelvedata_points[0]["t"], "2024-01-02")
+        self.assertEqual(twelvedata_points[0]["_src"], "twelvedata")
+        self.assertEqual([point["t"] for point in fmp_points], ["2024-01-02", "2024-01-03"])
+        self.assertEqual(fmp_points[0]["_src"], "fmp")
+
     def test_paper_portfolio_helpers_build_rows_and_summary(self) -> None:
         positions, total_market_value, total_cost_basis, has_market_value = _build_position_rows(
             {
@@ -413,6 +449,21 @@ class RefactorHelperTest(unittest.TestCase):
         self.assertEqual(median_positive([None, 5, 1, 3]), 3.0)
         self.assertEqual(first_present(None, "", {}, 0, "fallback"), 0)
         self.assertEqual(first_dict({"data": [{"value": 1}]}), {"value": 1})
+
+    def test_valuation_security_rules_infer_types_and_blocks_methods(self) -> None:
+        self.assertEqual(infer_security_type(sector="銀行業"), SECURITY_BANK)
+        self.assertEqual(infer_security_type(company_name="Example REIT"), SECURITY_REIT)
+        self.assertTrue(method_blocked_for_security_type(SECURITY_BANK, "fcf"))
+        self.assertTrue(method_blocked_for_security_type(SECURITY_REIT, "per"))
+        self.assertFalse(method_blocked_for_security_type("operating", "fcf"))
+
+    def test_payload_record_helpers_extract_common_provider_shapes(self) -> None:
+        rows = [{"symbol": "AAPL"}, object(), {"symbol": "MSFT"}]
+
+        self.assertEqual(record_list(rows), [{"symbol": "AAPL"}, {"symbol": "MSFT"}])
+        self.assertEqual(first_record({"data": rows}), {"symbol": "AAPL"})
+        self.assertEqual(first_record({"symbol": "NVDA"}, row_keys=("data",)), {"symbol": "NVDA"})
+        self.assertEqual(payload_rows({"historical": rows}, "historical", "data"), [{"symbol": "AAPL"}, {"symbol": "MSFT"}])
 
     def test_fmp_reference_payload_builders_shape_sections(self) -> None:
         queries = MarketDataQueriesMixin()

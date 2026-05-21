@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..utils import finite_float_or_none
+from .payload_records import first_record
 
 
 def parse_float(value: Any) -> float | None:
@@ -135,17 +136,7 @@ def path_float(payload: dict[str, Any] | None, *keys: str) -> float | None:
 
 
 def first_dict(payload: Any) -> dict[str, Any]:
-    if isinstance(payload, list):
-        for item in payload:
-            if isinstance(item, dict):
-                return dict(item)
-        return {}
-    if isinstance(payload, dict):
-        rows = payload.get("data")
-        if isinstance(rows, list):
-            return first_dict(rows)
-        return dict(payload)
-    return {}
+    return first_record(payload, row_keys=("data",), allow_direct_dict=True)
 
 
 def first_report(payload: Any, key: str) -> dict[str, Any]:

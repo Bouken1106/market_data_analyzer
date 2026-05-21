@@ -15,10 +15,10 @@ from ..config import (
     TIME_SERIES_MAX_OUTPUTSIZE,
     TIME_SERIES_URL,
 )
-from ..ohlcv import normalize_ohlcv_point
 from ..stooq import fetch_stooq_daily_history as default_fetch_stooq_daily_history
 from .market_data_full_history import FullDailyHistoryLoader
 from .market_data_historical_jquants import JQuantsHistoricalClient
+from .market_data_historical_series import normalize_fmp_historical_payload, normalize_twelvedata_series_payload
 from .market_data_provider_clients import owner_fmp_client, owner_twelvedata_client
 from .market_data_queries_historical_runtime import (
     build_combined_historical_detail,
@@ -325,26 +325,7 @@ class MarketDataHistoricalOps:
             LOGGER.warning("Time series API error for %s (%s) %s: %s", symbol, provider_symbol, interval, payload.get("message"))
             return []
 
-        values = payload.get("values") if isinstance(payload, dict) else None
-        if not isinstance(values, list):
-            return []
-
-        points: list[dict[str, Any]] = []
-        for item in values:
-            point = normalize_ohlcv_point(
-                item,
-                timestamp_keys=("datetime",),
-                open_keys=("open",),
-                high_keys=("high",),
-                low_keys=("low",),
-                close_keys=("close",),
-                volume_keys=("volume",),
-                source="twelvedata",
-            )
-            if point is not None:
-                points.append(point)
-
-        return points
+        return normalize_twelvedata_series_payload(payload)
 
     async def fetch_series_both(
         self,
@@ -420,34 +401,7 @@ class MarketDataHistoricalOps:
             LOGGER.warning("FMP time series API error for %s %s: %s", symbol, interval, payload.get("Error Message"))
             return []
 
-        if isinstance(payload, dict):
-            values = payload.get("historical") if isinstance(payload.get("historical"), list) else payload.get("data")
-        elif isinstance(payload, list):
-            values = payload
-        else:
-            values = None
-        if not isinstance(values, list):
-            return []
-
-        points: list[dict[str, Any]] = []
-        for item in values:
-            point = normalize_ohlcv_point(
-                item,
-                timestamp_keys=("date", "datetime"),
-                open_keys=("open",),
-                high_keys=("high",),
-                low_keys=("low",),
-                close_keys=("close",),
-                volume_keys=("volume",),
-                source="fmp",
-            )
-            if point is not None:
-                points.append(point)
-
-        points.sort(key=lambda item: str(item.get("t", "")))
-        if outputsize > 0 and len(points) > outputsize:
-            points = points[-outputsize:]
-        return points
+        return normalize_fmp_historical_payload(payload, outputsize=outputsize)
 
     async def fetch_full_daily_series(
         self,
