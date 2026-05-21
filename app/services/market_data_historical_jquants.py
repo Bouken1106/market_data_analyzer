@@ -37,6 +37,17 @@ class JQuantsErrorResolution:
     rate_limit_attempts: int
 
 
+@dataclass(frozen=True)
+class JQuantsPageFetchResult:
+    points: list[dict[str, Any]]
+    retry: bool
+    failed: bool
+    request_start: str | None
+    request_end: str | None
+    adjusted_to_coverage: bool
+    rate_limit_attempts: int
+
+
 class JQuantsHistoricalClient:
     def __init__(self, owner: Any) -> None:
         self.owner = owner
@@ -239,6 +250,123 @@ class JQuantsHistoricalClient:
                 points.append(point)
         return points
 
+    async def _fetch_pages_for_request(
+        self,
+        *,
+        client: httpx.AsyncClient,
+        symbol: str,
+        code: str,
+        headers: dict[str, str],
+        request_start: str | None,
+        request_end: str | None,
+        adjusted_to_coverage: bool,
+        rate_limit_attempts: int,
+    ) -> JQuantsPageFetchResult:
+        points: list[dict[str, Any]] = []
+        pagination_key: str | None = None
+
+        while True:
+            request_params = self._build_request_params(
+                code=code,
+                start_date=request_start,
+                end_date=request_end,
+                pagination_key=pagination_key,
+            )
+            response, payload = await self._fetch_page(
+                client=client,
+                symbol=symbol,
+                headers=headers,
+                request_params=request_params,
+            )
+            if response is None:
+                return self._page_fetch_failure(
+                    request_start=request_start,
+                    request_end=request_end,
+                    adjusted_to_coverage=adjusted_to_coverage,
+                    rate_limit_attempts=rate_limit_attempts,
+                )
+
+            if response.status_code >= 400:
+                return await self._page_fetch_error_result(
+                    payload=payload,
+                    symbol=symbol,
+                    request_start=request_start,
+                    request_end=request_end,
+                    adjusted_to_coverage=adjusted_to_coverage,
+                    rate_limit_attempts=rate_limit_attempts,
+                )
+
+            values = self._extract_daily_quote_values(payload)
+            if not isinstance(values, list):
+                return self._page_fetch_failure(
+                    request_start=request_start,
+                    request_end=request_end,
+                    adjusted_to_coverage=adjusted_to_coverage,
+                    rate_limit_attempts=rate_limit_attempts,
+                )
+
+            points.extend(self._normalize_values(values))
+
+            pagination_key = payload.get("pagination_key") if isinstance(payload, dict) else None
+            if not pagination_key:
+                return JQuantsPageFetchResult(
+                    points=points,
+                    retry=False,
+                    failed=False,
+                    request_start=request_start,
+                    request_end=request_end,
+                    adjusted_to_coverage=adjusted_to_coverage,
+                    rate_limit_attempts=rate_limit_attempts,
+                )
+
+    async def _page_fetch_error_result(
+        self,
+        *,
+        payload: Any,
+        symbol: str,
+        request_start: str | None,
+        request_end: str | None,
+        adjusted_to_coverage: bool,
+        rate_limit_attempts: int,
+    ) -> JQuantsPageFetchResult:
+        message = self._extract_error_message(payload)
+        resolution = await self._resolve_error_response(
+            message=message,
+            request_start=request_start,
+            request_end=request_end,
+            adjusted_to_coverage=adjusted_to_coverage,
+            rate_limit_attempts=rate_limit_attempts,
+        )
+        if not resolution.retry:
+            LOGGER.warning("J-Quants daily bars API error for %s: %s", symbol, payload)
+        return JQuantsPageFetchResult(
+            points=[],
+            retry=resolution.retry,
+            failed=not resolution.retry,
+            request_start=resolution.request_start,
+            request_end=resolution.request_end,
+            adjusted_to_coverage=resolution.adjusted_to_coverage,
+            rate_limit_attempts=resolution.rate_limit_attempts,
+        )
+
+    @staticmethod
+    def _page_fetch_failure(
+        *,
+        request_start: str | None,
+        request_end: str | None,
+        adjusted_to_coverage: bool,
+        rate_limit_attempts: int,
+    ) -> JQuantsPageFetchResult:
+        return JQuantsPageFetchResult(
+            points=[],
+            retry=False,
+            failed=True,
+            request_start=request_start,
+            request_end=request_end,
+            adjusted_to_coverage=adjusted_to_coverage,
+            rate_limit_attempts=rate_limit_attempts,
+        )
+
     async def fetch_series(
         self,
         client: httpx.AsyncClient,
@@ -266,56 +394,22 @@ class JQuantsHistoricalClient:
         rate_limit_attempts = 0
 
         while True:
-            points: list[dict[str, Any]] = []
-            pagination_key: str | None = None
-            should_retry = False
-
-            while True:
-                request_params = self._build_request_params(
-                    code=code,
-                    start_date=request_start,
-                    end_date=request_end,
-                    pagination_key=pagination_key,
-                )
-                response, payload = await self._fetch_page(
-                    client=client,
-                    symbol=symbol,
-                    headers=headers,
-                    request_params=request_params,
-                )
-                if response is None:
-                    return []
-
-                if response.status_code >= 400:
-                    message = self._extract_error_message(payload)
-                    resolution = await self._resolve_error_response(
-                        message=message,
-                        request_start=request_start,
-                        request_end=request_end,
-                        adjusted_to_coverage=adjusted_to_coverage,
-                        rate_limit_attempts=rate_limit_attempts,
-                    )
-                    request_start = resolution.request_start
-                    request_end = resolution.request_end
-                    adjusted_to_coverage = resolution.adjusted_to_coverage
-                    rate_limit_attempts = resolution.rate_limit_attempts
-                    if resolution.retry:
-                        should_retry = True
-                        break
-
-                    LOGGER.warning("J-Quants daily bars API error for %s: %s", symbol, payload)
-                    return []
-
-                values = self._extract_daily_quote_values(payload)
-                if not isinstance(values, list):
-                    return []
-
-                points.extend(self._normalize_values(values))
-
-                pagination_key = payload.get("pagination_key") if isinstance(payload, dict) else None
-                if not pagination_key:
-                    break
-
-            if should_retry:
+            result = await self._fetch_pages_for_request(
+                client=client,
+                symbol=symbol,
+                code=code,
+                headers=headers,
+                request_start=request_start,
+                request_end=request_end,
+                adjusted_to_coverage=adjusted_to_coverage,
+                rate_limit_attempts=rate_limit_attempts,
+            )
+            if result.failed:
+                return []
+            if result.retry:
+                request_start = result.request_start
+                request_end = result.request_end
+                adjusted_to_coverage = result.adjusted_to_coverage
+                rate_limit_attempts = result.rate_limit_attempts
                 continue
-            return sorted(points, key=lambda item: str(item.get("t") or ""))
+            return sorted(result.points, key=lambda item: str(item.get("t") or ""))

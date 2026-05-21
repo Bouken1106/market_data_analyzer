@@ -49,6 +49,9 @@ _FIELD_SOURCE_KEYS = {
     "previous_close_source": _QUOTE_PRICE_KEYS["previous_close"],
 }
 
+_DAY_VALUE_KEYS = ("day_open", "day_high", "day_low", "day_volume")
+_INTRADAY_FIELD_SOURCE = "intraday_1min"
+
 
 @dataclass(frozen=True)
 class OverviewRequest:
@@ -223,18 +226,17 @@ def build_price_context(
     day_series_source = series_source_descriptor(day_points)
     source_detail = quote_source_detail(quote)
 
-    current_price = pick_float(quote, *_QUOTE_PRICE_KEYS["current_price"])
-    if current_price is None:
-        current_price = latest_day["c"]
-    previous_close = pick_float(quote, *_QUOTE_PRICE_KEYS["previous_close"])
-    if previous_close is None and previous_day:
-        previous_close = previous_day["c"]
-
-    field_values = {key: pick_float(quote, *quote_keys) for key, quote_keys in _DAY_QUOTE_KEYS.items()}
-    field_sources = {
-        key: _source_value(source_detail, *source_keys)
-        for key, source_keys in _FIELD_SOURCE_KEYS.items()
-    }
+    current_price, previous_close = resolve_quote_prices(
+        quote=quote,
+        latest_day=latest_day,
+        previous_day=previous_day,
+        pick_float=pick_float,
+    )
+    field_values, field_sources = build_day_field_state(
+        quote=quote,
+        source_detail=source_detail,
+        pick_float=pick_float,
+    )
 
     fill_day_fields_from_intraday(
         field_values=field_values,
@@ -249,6 +251,59 @@ def build_price_context(
         day_series_source=day_series_source,
     )
 
+    metrics = compute_price_context_metrics(
+        day_points=day_points,
+        field_values=field_values,
+        current_price=current_price,
+        previous_close=previous_close,
+    )
+    return {
+        "current_price": current_price,
+        "previous_close": previous_close,
+        **field_values,
+        **metrics,
+        **field_sources,
+    }
+
+
+def resolve_quote_prices(
+    *,
+    quote: dict[str, Any],
+    latest_day: dict[str, Any],
+    previous_day: dict[str, Any] | None,
+    pick_float: Callable[..., float | None],
+) -> tuple[float | None, float | None]:
+    current_price = pick_float(quote, *_QUOTE_PRICE_KEYS["current_price"])
+    if current_price is None:
+        current_price = latest_day["c"]
+
+    previous_close = pick_float(quote, *_QUOTE_PRICE_KEYS["previous_close"])
+    if previous_close is None and previous_day:
+        previous_close = previous_day["c"]
+    return current_price, previous_close
+
+
+def build_day_field_state(
+    *,
+    quote: dict[str, Any],
+    source_detail: dict[str, Any],
+    pick_float: Callable[..., float | None],
+) -> tuple[dict[str, float | None], dict[str, str | None]]:
+    field_values = {key: pick_float(quote, *quote_keys) for key, quote_keys in _DAY_QUOTE_KEYS.items()}
+    field_sources = {
+        key: _source_value(source_detail, *source_keys)
+        for key, source_keys in _FIELD_SOURCE_KEYS.items()
+    }
+    return field_values, field_sources
+
+
+def compute_price_context_metrics(
+    *,
+    day_points: list[dict[str, Any]],
+    field_values: dict[str, float | None],
+    current_price: float | None,
+    previous_close: float | None,
+) -> dict[str, float | None]:
     change_abs, change_pct = compute_change_metrics(current=current_price, previous=previous_close)
     gap_abs, gap_pct = compute_change_metrics(current=field_values["day_open"], previous=previous_close)
     avg_volume_20, avg_volume_ratio, turnover = compute_volume_metrics(
@@ -263,14 +318,6 @@ def build_price_context(
     )
 
     return {
-        "current_price": current_price,
-        "previous_close": previous_close,
-        "day_open": field_values["day_open"],
-        "day_high": field_values["day_high"],
-        "day_low": field_values["day_low"],
-        "day_volume": field_values["day_volume"],
-        "bid": field_values["bid"],
-        "ask": field_values["ask"],
         "change_abs": change_abs,
         "change_pct": change_pct,
         "gap_abs": gap_abs,
@@ -280,7 +327,6 @@ def build_price_context(
         "turnover": turnover,
         "spread_abs": spread_abs,
         "spread_pct": spread_pct,
-        **field_sources,
     }
 
 
@@ -297,23 +343,19 @@ def fill_day_fields_from_intraday(
     if not latest_session:
         return
 
-    if field_values["day_open"] is None:
-        field_values["day_open"] = latest_session[0]["o"]
-    if field_values["day_high"] is None:
-        field_values["day_high"] = max((item["h"] for item in latest_session), default=None)
-    if field_values["day_low"] is None:
-        field_values["day_low"] = min((item["l"] for item in latest_session), default=None)
-    if field_values["day_volume"] is None:
-        field_values["day_volume"] = sum((item["v"] or 0.0) for item in latest_session)
-
-    if not field_sources["day_open_source"]:
-        field_sources["day_open_source"] = "intraday_1min"
-    if not field_sources["day_high_source"]:
-        field_sources["day_high_source"] = "intraday_1min"
-    if not field_sources["day_low_source"]:
-        field_sources["day_low_source"] = "intraday_1min"
-    if not field_sources["day_volume_source"] and field_values["day_volume"] is not None:
-        field_sources["day_volume_source"] = "intraday_1min"
+    intraday_values = {
+        "day_open": latest_session[0]["o"],
+        "day_high": max((item["h"] for item in latest_session), default=None),
+        "day_low": min((item["l"] for item in latest_session), default=None),
+        "day_volume": sum((item["v"] or 0.0) for item in latest_session),
+    }
+    fill_missing_day_values(field_values=field_values, replacements=intraday_values)
+    fill_missing_day_sources(
+        field_values=field_values,
+        field_sources=field_sources,
+        source=_INTRADAY_FIELD_SOURCE,
+        require_value_for=("day_volume",),
+    )
 
 
 def fill_day_fields_from_daily_series(
@@ -324,22 +366,49 @@ def fill_day_fields_from_daily_series(
     day_series_source: str,
 ) -> None:
     fallback_source = f"daily_series({day_series_source})"
-    if field_values["day_open"] is None:
-        field_values["day_open"] = latest_day["o"]
-        field_sources["day_open_source"] = fallback_source
-    if field_values["day_high"] is None:
-        field_values["day_high"] = latest_day["h"]
-        field_sources["day_high_source"] = fallback_source
-    if field_values["day_low"] is None:
-        field_values["day_low"] = latest_day["l"]
-        field_sources["day_low_source"] = fallback_source
-    if field_values["day_volume"] is None:
-        field_values["day_volume"] = latest_day["v"]
-        field_sources["day_volume_source"] = fallback_source
+    daily_values = {
+        "day_open": latest_day["o"],
+        "day_high": latest_day["h"],
+        "day_low": latest_day["l"],
+        "day_volume": latest_day["v"],
+    }
+    filled_fields = fill_missing_day_values(field_values=field_values, replacements=daily_values)
+    for field_key in filled_fields:
+        field_sources[f"{field_key}_source"] = fallback_source
     if not field_sources["current_price_source"]:
         field_sources["current_price_source"] = fallback_source
     if field_sources["previous_close_source"] is None:
         field_sources["previous_close_source"] = fallback_source
+
+
+def fill_missing_day_values(
+    *,
+    field_values: dict[str, float | None],
+    replacements: dict[str, float | None],
+) -> list[str]:
+    filled_fields: list[str] = []
+    for field_key in _DAY_VALUE_KEYS:
+        if field_values[field_key] is None:
+            field_values[field_key] = replacements[field_key]
+            filled_fields.append(field_key)
+    return filled_fields
+
+
+def fill_missing_day_sources(
+    *,
+    field_values: dict[str, float | None],
+    field_sources: dict[str, str | None],
+    source: str,
+    require_value_for: tuple[str, ...] = (),
+) -> None:
+    require_value = set(require_value_for)
+    for field_key in _DAY_VALUE_KEYS:
+        source_key = f"{field_key}_source"
+        if field_sources[source_key]:
+            continue
+        if field_key in require_value and field_values[field_key] is None:
+            continue
+        field_sources[source_key] = source
 
 
 def compute_change_metrics(*, current: float | None, previous: float | None) -> tuple[float | None, float | None]:

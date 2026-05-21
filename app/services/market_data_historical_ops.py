@@ -44,34 +44,92 @@ class MarketDataHistoricalOps:
         end_date: str | None,
         refresh: bool = False,
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        cached_full_points = await self.owner.full_daily_history_store.get(symbol, copy=False)
-        cached_updated_epoch = await self.owner.full_daily_history_store.last_updated_epoch(symbol)
-        if (
-            cached_full_points
-            and not refresh
-            and cached_updated_epoch is not None
-            and self.owner._is_cache_fresh(cached_updated_epoch, HISTORICAL_CACHE_TTL_SEC)
-        ):
-            cached_slice = self.owner._slice_daily_points(
-                cached_full_points,
+        cached_full_points, cached_updated_epoch = await self._read_stooq_cache(symbol)
+        cached_result = self._fresh_stooq_cache_result(
+            cached_full_points=cached_full_points,
+            cached_updated_epoch=cached_updated_epoch,
+            refresh=refresh,
+            outputsize=outputsize,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if cached_result is not None:
+            return cached_result
+
+        full_points, error_detail = await self._fetch_stooq_full_points(client=client, symbol=symbol)
+        if error_detail is not None:
+            return [], error_detail
+
+        if full_points:
+            await self.owner.full_daily_history_store.upsert(symbol, full_points)
+            fetched_result = self._stooq_slice_result(
+                full_points=full_points,
+                mode="stooq_live",
+                outputsize=outputsize,
                 start_date=start_date,
                 end_date=end_date,
-                outputsize=outputsize,
             )
-            if cached_slice:
-                return cached_slice, {
-                    "mode": "stooq_cached",
-                    "dataset": "historical_daily",
-                    "provider": "stooq",
-                    "points": len(cached_slice),
-                }
+            if fetched_result is not None:
+                return fetched_result
 
+        if cached_full_points:
+            stale_result = self._stooq_slice_result(
+                full_points=cached_full_points,
+                mode="stooq_cached_stale",
+                outputsize=outputsize,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            if stale_result is not None:
+                return stale_result
+
+        return [], build_stooq_historical_detail(
+            mode="stooq_empty_range" if (start_date or end_date) else "stooq_empty",
+            points=0,
+        )
+
+    async def _read_stooq_cache(self, symbol: str) -> tuple[list[dict[str, Any]], float | None]:
+        cached_full_points = await self.owner.full_daily_history_store.get(symbol, copy=False)
+        cached_updated_epoch = await self.owner.full_daily_history_store.last_updated_epoch(symbol)
+        return cached_full_points, cached_updated_epoch
+
+    def _fresh_stooq_cache_result(
+        self,
+        *,
+        cached_full_points: list[dict[str, Any]],
+        cached_updated_epoch: float | None,
+        refresh: bool,
+        outputsize: int,
+        start_date: str | None,
+        end_date: str | None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]] | None:
+        if (
+            not cached_full_points
+            or refresh
+            or cached_updated_epoch is None
+            or not self.owner._is_cache_fresh(cached_updated_epoch, HISTORICAL_CACHE_TTL_SEC)
+        ):
+            return None
+        return self._stooq_slice_result(
+            full_points=cached_full_points,
+            mode="stooq_cached",
+            outputsize=outputsize,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+    async def _fetch_stooq_full_points(
+        self,
+        *,
+        client: httpx.AsyncClient,
+        symbol: str,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
         fetch_stooq_daily_history = resolve_runtime_fetcher(
             "fetch_stooq_daily_history",
             default_fetch_stooq_daily_history,
         )
         try:
-            full_points = await fetch_stooq_daily_history(symbol, client=client)
+            return await fetch_stooq_daily_history(symbol, client=client), None
         except Exception as exc:
             LOGGER.warning("Stooq daily CSV fetch failed for %s: %s", symbol, exc)
             return [], build_stooq_historical_detail(
@@ -80,36 +138,26 @@ class MarketDataHistoricalOps:
                 error=str(exc).strip(),
             )
 
-        if full_points:
-            await self.owner.full_daily_history_store.upsert(symbol, full_points)
-            fetched_slice = self.owner._slice_daily_points(
-                full_points,
-                start_date=start_date,
-                end_date=end_date,
-                outputsize=outputsize,
-            )
-            if fetched_slice:
-                return fetched_slice, build_stooq_historical_detail(
-                    mode="stooq_live",
-                    points=len(fetched_slice),
-                )
-
-        if cached_full_points:
-            stale_slice = self.owner._slice_daily_points(
-                cached_full_points,
-                start_date=start_date,
-                end_date=end_date,
-                outputsize=outputsize,
-            )
-            if stale_slice:
-                return stale_slice, build_stooq_historical_detail(
-                    mode="stooq_cached_stale",
-                    points=len(stale_slice),
-                )
-
-        return [], build_stooq_historical_detail(
-            mode="stooq_empty_range" if (start_date or end_date) else "stooq_empty",
-            points=0,
+    def _stooq_slice_result(
+        self,
+        *,
+        full_points: list[dict[str, Any]],
+        mode: str,
+        outputsize: int,
+        start_date: str | None,
+        end_date: str | None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]] | None:
+        sliced_points = self.owner._slice_daily_points(
+            full_points,
+            start_date=start_date,
+            end_date=end_date,
+            outputsize=outputsize,
+        )
+        if not sliced_points:
+            return None
+        return sliced_points, build_stooq_historical_detail(
+            mode=mode,
+            points=len(sliced_points),
         )
 
     async def fetch_historical_points_with_detail(
