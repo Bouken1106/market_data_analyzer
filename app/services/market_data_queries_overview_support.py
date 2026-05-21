@@ -8,6 +8,7 @@ from typing import Any, Callable
 from fastapi import HTTPException
 
 from ..config import SYMBOL_PATTERN
+from ..utils import change_abs_percent, scaled_ratio
 
 PickFloat = Callable[..., float | None]
 BuildMarketItem = Callable[[str, float | None, float | None], dict[str, Any]]
@@ -412,10 +413,7 @@ def fill_missing_day_sources(
 
 
 def compute_change_metrics(*, current: float | None, previous: float | None) -> tuple[float | None, float | None]:
-    if current is None or previous is None or previous <= 0:
-        return None, None
-    change_abs = current - previous
-    return change_abs, (change_abs / previous) * 100
+    return change_abs_percent(current, previous)
 
 
 def compute_volume_metrics(
@@ -426,11 +424,7 @@ def compute_volume_metrics(
 ) -> tuple[float | None, float | None, float | None]:
     recent_daily_volumes = [p["v"] for p in day_points[-21:-1] if p.get("v") is not None and p["v"] > 0]
     avg_volume_20 = sum(recent_daily_volumes) / len(recent_daily_volumes) if recent_daily_volumes else None
-    avg_volume_ratio = (
-        (day_volume / avg_volume_20)
-        if day_volume is not None and avg_volume_20 is not None and avg_volume_20 > 0
-        else None
-    )
+    avg_volume_ratio = scaled_ratio(day_volume, avg_volume_20)
     turnover = current_price * day_volume if current_price is not None and day_volume is not None else None
     return avg_volume_20, avg_volume_ratio, turnover
 
@@ -442,11 +436,7 @@ def compute_spread_metrics(
     current_price: float | None,
 ) -> tuple[float | None, float | None]:
     spread_abs = ask - bid if ask is not None and bid is not None else None
-    spread_pct = (
-        (spread_abs / current_price) * 100
-        if spread_abs is not None and current_price is not None and current_price > 0
-        else None
-    )
+    spread_pct = scaled_ratio(spread_abs, current_price, scale=100.0)
     return spread_abs, spread_pct
 
 

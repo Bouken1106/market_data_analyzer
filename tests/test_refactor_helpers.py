@@ -8,6 +8,7 @@ from app.services.market_data_historical_series import (
     normalize_fmp_historical_payload,
     normalize_twelvedata_series_payload,
 )
+from app.services.market_data_intervals import is_daily_interval, normalized_interval
 from app.services.market_data_math import atr, beta_and_corr, daily_returns, intraday_vwap, moving_average
 from app.services.market_api_service import build_eod_sparkline_item_from_payload
 from app.services.market_data_overview_ops import MarketDataOverviewOps
@@ -297,6 +298,12 @@ class RefactorHelperTest(unittest.TestCase):
         self.assertEqual(twelvedata_points[0]["_src"], "twelvedata")
         self.assertEqual([point["t"] for point in fmp_points], ["2024-01-02", "2024-01-03"])
         self.assertEqual(fmp_points[0]["_src"], "fmp")
+
+    def test_market_data_interval_helpers_normalize_daily_aliases(self) -> None:
+        self.assertEqual(normalized_interval(" 1DAY "), "1day")
+        self.assertTrue(is_daily_interval("1d"))
+        self.assertTrue(is_daily_interval("day"))
+        self.assertFalse(is_daily_interval("5min"))
 
     def test_paper_portfolio_helpers_build_rows_and_summary(self) -> None:
         positions, total_market_value, total_cost_basis, has_market_value = _build_position_rows(

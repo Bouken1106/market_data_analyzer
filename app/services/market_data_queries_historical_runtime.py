@@ -7,6 +7,7 @@ from datetime import date
 from typing import Any, Callable
 
 from ..market_session import infer_country_from_symbol
+from .market_data_intervals import is_daily_interval
 
 _JQUANTS_COVERAGE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})\s*~\s*(\d{4}-\d{2}-\d{2})")
 
@@ -38,7 +39,7 @@ def normalize_jquants_code(symbol: str) -> str | None:
 def should_use_jquants_for_symbol(symbol: str, interval: str, *, api_key: str) -> bool:
     if not str(api_key or "").strip():
         return False
-    if str(interval or "").strip().lower() not in {"1day", "1d", "day"}:
+    if not is_daily_interval(interval):
         return False
     return infer_country_from_symbol(symbol) == "JAPAN" and normalize_jquants_code(symbol) is not None
 

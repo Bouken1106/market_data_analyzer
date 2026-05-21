@@ -113,6 +113,43 @@ def first_finite_float(
     return None
 
 
+def scaled_ratio(
+    numerator: Any,
+    denominator: Any,
+    *,
+    scale: float = 1.0,
+    require_positive_denominator: bool = True,
+) -> float | None:
+    numerator_value = finite_float_or_none(numerator)
+    denominator_value = finite_float_or_none(denominator)
+    if numerator_value is None or denominator_value is None:
+        return None
+    if require_positive_denominator:
+        if denominator_value <= 0:
+            return None
+    elif denominator_value == 0:
+        return None
+    return (numerator_value / denominator_value) * scale
+
+
+def percent_of(numerator: Any, denominator: Any) -> float | None:
+    return scaled_ratio(numerator, denominator, scale=100.0)
+
+
+def change_abs_percent(current: Any, previous: Any) -> tuple[float | None, float | None]:
+    current_value = finite_float_or_none(current)
+    previous_value = finite_float_or_none(previous)
+    if current_value is None or previous_value is None or previous_value <= 0:
+        return None, None
+    change_abs = current_value - previous_value
+    return change_abs, percent_of(change_abs, previous_value)
+
+
+def percent_change(current: Any, previous: Any) -> float | None:
+    _change_abs, change_pct = change_abs_percent(current, previous)
+    return change_pct
+
+
 # ---------------------------------------------------------------------------
 # Timestamp helpers
 # ---------------------------------------------------------------------------

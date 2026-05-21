@@ -16,6 +16,7 @@ from ..config import (
     TIME_SERIES_MAX_OUTPUTSIZE,
 )
 from ..utils import date_key_or_none
+from .market_data_intervals import is_daily_interval
 
 
 @dataclass(frozen=True)
@@ -64,10 +65,6 @@ def build_no_historical_data_detail(
     if error_text:
         return error_text
     return "No historical data found for this symbol."
-
-
-def is_daily_interval(interval: str) -> bool:
-    return str(interval).strip().lower() in {"1day", "1d", "day"}
 
 
 def build_historical_request(

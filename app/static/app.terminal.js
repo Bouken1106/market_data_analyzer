@@ -336,6 +336,24 @@ function formatSignedPercent(value) {
   return `${formatSigned(num, 2)}%`;
 }
 
+function percentOf(numerator, denominator) {
+  const numeratorNum = Number(numerator);
+  const denominatorNum = Number(denominator);
+  if (!Number.isFinite(numeratorNum) || !Number.isFinite(denominatorNum) || denominatorNum <= 0) {
+    return null;
+  }
+  return (numeratorNum / denominatorNum) * 100;
+}
+
+function percentChange(current, previous) {
+  const currentNum = Number(current);
+  const previousNum = Number(previous);
+  if (!Number.isFinite(currentNum) || !Number.isFinite(previousNum) || previousNum <= 0) {
+    return null;
+  }
+  return percentOf(currentNum - previousNum, previousNum);
+}
+
 function formatChartDateLabel(value) {
   const raw = String(value || "").trim();
   if (!raw) return "-";
@@ -830,7 +848,7 @@ function computeChangePct(symbol, currentPrice, insight = symbolInsightsBySymbol
   const priceNum = Number(currentPrice);
   const referenceClose = Number(insight?.reference_close);
   if (Number.isFinite(priceNum) && priceNum > 0 && Number.isFinite(referenceClose) && referenceClose > 0) {
-    return ((priceNum - referenceClose) / referenceClose) * 100;
+    return percentChange(priceNum, referenceClose);
   }
   const latestClose = Number(insight?.latest_close);
   const previousClose = Number(insight?.previous_close);
@@ -841,7 +859,7 @@ function computeChangePct(symbol, currentPrice, insight = symbolInsightsBySymbol
   if (!Number.isFinite(priceNum) || priceNum <= 0 || !Number.isFinite(fallbackReferenceClose) || fallbackReferenceClose <= 0) {
     return null;
   }
-  return ((priceNum - fallbackReferenceClose) / fallbackReferenceClose) * 100;
+  return percentChange(priceNum, fallbackReferenceClose);
 }
 
 function ensureWatchItem(symbol) {
@@ -1630,7 +1648,7 @@ function buildLineChartHtml(symbol, points) {
 
   const firstVisible = visible[0];
   const latestVisible = visible[visible.length - 1];
-  const diffPct = firstVisible.c > 0 ? ((latestVisible.c - firstVisible.c) / firstVisible.c) * 100 : 0;
+  const diffPct = percentChange(latestVisible.c, firstVisible.c) ?? 0;
 
   return `
     <div class="chart-controls">
@@ -2175,7 +2193,7 @@ function buildPortfolioView(baseState) {
     const rowPnl = Number.isFinite(lastPrice)
       ? (quantity > 0 ? (lastPrice - avgCost) * absQty : (avgCost - lastPrice) * absQty)
       : null;
-    const rowPnlPct = (Number.isFinite(rowPnl) && rowCostBasis > 0) ? (rowPnl / rowCostBasis) * 100 : null;
+    const rowPnlPct = percentOf(rowPnl, rowCostBasis);
 
     if (Number.isFinite(rowMarketValue)) marketValue += rowMarketValue;
     costBasis += rowCostBasis;
@@ -2194,7 +2212,7 @@ function buildPortfolioView(baseState) {
   const safeInitialCash = Number.isFinite(initialCash) && initialCash > 0 ? initialCash : safeCash;
   const equity = safeCash + marketValue;
   const unrealizedPnl = marketValue - costBasis;
-  const totalReturnPct = safeInitialCash > 0 ? ((equity - safeInitialCash) / safeInitialCash) * 100 : null;
+  const totalReturnPct = percentChange(equity, safeInitialCash);
   const rawRecentTrades = Array.isArray(baseState.recent_trades) ? baseState.recent_trades : [];
   const openDirectionBySymbol = new Map();
   positions.forEach((item) => {

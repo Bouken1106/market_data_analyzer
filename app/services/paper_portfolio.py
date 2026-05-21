@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from ..utils import finite_float_or_none
+from ..utils import finite_float_or_none, percent_change, percent_of
 from .portfolio_common import apply_market_value_weights, positive_price_or_none, price_map_from_rows
 
 _PRICE_UNAVAILABLE_DETAIL = "Current market price is unavailable. Set price manually."
@@ -30,7 +30,7 @@ def _position_pnl_fields(quantity: float, avg_cost: float, last_price: float | N
         unrealized_pnl = (last_price - avg_cost) * quantity
     else:
         unrealized_pnl = (avg_cost - last_price) * abs(quantity)
-    unrealized_pnl_pct = (unrealized_pnl / cost_basis) * 100 if cost_basis > 0 else None
+    unrealized_pnl_pct = percent_of(unrealized_pnl, cost_basis)
     return {
         "market_value": market_value,
         "unrealized_pnl": unrealized_pnl,
@@ -116,7 +116,7 @@ def _portfolio_summary(
     initial_cash = to_valid_price(state.get("initial_cash")) or cash
     equity = cash + total_market_value
     unrealized_total = total_market_value - total_cost_basis if has_market_value else None
-    total_return_pct = ((equity - initial_cash) / initial_cash * 100) if initial_cash > 0 else None
+    total_return_pct = percent_change(equity, initial_cash)
     return {
         "initial_cash": initial_cash,
         "cash": cash,

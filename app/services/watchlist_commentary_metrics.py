@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from ..utils import finite_float_or_none
+from ..utils import finite_float_or_none, percent_change
 
 
 def safe_float(value: Any) -> float | None:
@@ -38,13 +38,8 @@ def compute_watch_metrics(symbol: str, sparkline_item: dict[str, Any] | None) ->
                 continue
             trend_closes.append(close_value)
 
-    day_change_pct: float | None = None
-    if latest_close is not None and previous_close is not None and previous_close > 0:
-        day_change_pct = ((latest_close - previous_close) / previous_close) * 100
-
-    return_30d_pct: float | None = None
-    if len(trend_closes) >= 2 and trend_closes[0] > 0:
-        return_30d_pct = ((trend_closes[-1] - trend_closes[0]) / trend_closes[0]) * 100
+    day_change_pct = percent_change(latest_close, previous_close)
+    return_30d_pct = percent_change(trend_closes[-1], trend_closes[0]) if len(trend_closes) >= 2 else None
 
     daily_returns: list[float] = []
     for idx in range(1, len(trend_closes)):

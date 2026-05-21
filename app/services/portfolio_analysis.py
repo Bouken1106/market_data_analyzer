@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from ..ohlcv import close_values_by_date
-from ..utils import date_or_none, exception_detail_text
+from ..utils import date_or_none, exception_detail_text, percent_of
 from .portfolio_common import apply_market_value_weights, price_map_from_rows
 from .portfolio_holdings import (
     MAX_HOLDINGS_PER_REGION,
@@ -401,7 +401,9 @@ def _append_risk_coverage_note(
 ) -> None:
     if not analyzed_symbols or market_value_or_none is None or analyzed_market_value >= total_market_value:
         return
-    coverage_pct = (analyzed_market_value / total_market_value) * 100.0
+    coverage_pct = percent_of(analyzed_market_value, total_market_value)
+    if coverage_pct is None:
+        return
     existing_note = str(risk_payload.get("note") or "").strip()
     coverage_note = f"Risk metrics cover {coverage_pct:.1f}% of current market value."
     risk_payload["note"] = f"{existing_note} {coverage_note}".strip()
@@ -421,11 +423,7 @@ def _build_region_summary(
         "priced_holdings_count": priced_holdings_count,
         "analyzed_holdings_count": len(analyzed_symbols),
         "market_value": total_market_value if total_market_value > 0 else None,
-        "risk_coverage_pct": (
-            (analyzed_market_value / total_market_value) * 100.0
-            if total_market_value > 0
-            else None
-        ),
+        "risk_coverage_pct": percent_of(analyzed_market_value, total_market_value),
         "top_holding_symbol": top_holding_symbol,
         "top_holding_weight_pct": top_holding_weight,
         "effective_holdings": _effective_holdings(holdings_rows),

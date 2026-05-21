@@ -142,6 +142,24 @@ function formatPercent(value) {
   return `${sign}${value.toFixed(2)}%`;
 }
 
+function percentOf(numerator, denominator) {
+  const numeratorNum = Number(numerator);
+  const denominatorNum = Number(denominator);
+  if (!Number.isFinite(numeratorNum) || !Number.isFinite(denominatorNum) || denominatorNum <= 0) {
+    return null;
+  }
+  return (numeratorNum / denominatorNum) * 100;
+}
+
+function percentChange(current, previous) {
+  const currentNum = Number(current);
+  const previousNum = Number(previous);
+  if (!Number.isFinite(currentNum) || !Number.isFinite(previousNum) || previousNum <= 0) {
+    return null;
+  }
+  return percentOf(currentNum - previousNum, previousNum);
+}
+
 function formatSignedPrice(value) {
   if (!Number.isFinite(value)) return "-";
   const sign = value > 0 ? "+" : "";
@@ -267,7 +285,7 @@ function computeRollingRiskFromCloses(closes, window = 30) {
   let maxDrawdown = 0;
   for (const close of selected) {
     peak = Math.max(peak, close);
-    const drawdown = peak > 0 ? ((peak - close) / peak) * 100 : 0;
+    const drawdown = percentOf(peak - close, peak) ?? 0;
     maxDrawdown = Math.max(maxDrawdown, drawdown);
   }
 
@@ -306,8 +324,7 @@ function computeGapPctFromPoints(points) {
   const prev = rows[rows.length - 2];
   const open = Number(last?.o);
   const prevClose = Number(prev?.c);
-  if (!Number.isFinite(open) || !Number.isFinite(prevClose) || prevClose <= 0) return null;
-  return ((open - prevClose) / prevClose) * 100;
+  return percentChange(open, prevClose);
 }
 
 function setRiskMetrics(dayPoints, overview) {
@@ -352,8 +369,8 @@ function setRiskMetrics(dayPoints, overview) {
     let maxDrawdown = 0;
     for (const close of closes30) {
       peak = Math.max(peak, close);
-      if (peak <= 0) continue;
-      const drawdown = ((peak - close) / peak) * 100;
+      const drawdown = percentOf(peak - close, peak);
+      if (!Number.isFinite(drawdown)) continue;
       maxDrawdown = Math.max(maxDrawdown, drawdown);
     }
     riskDd30El.textContent = `${maxDrawdown.toFixed(2)}%`;

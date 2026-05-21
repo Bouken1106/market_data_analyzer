@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from ..utils import date_key_or_none, finite_float_or_none
+from ..utils import change_abs_percent, date_key_or_none, finite_float_or_none
 
 SparklineValue = tuple[str, float]
 CloseParser = Callable[[Any], float | None]
@@ -59,11 +59,7 @@ def build_daily_sparkline_payload(
     latest_date, latest_close = completed[0]
     previous_date, previous_close = completed[1]
     resolved_reference_close = reference_close if reference_close is not None else previous_close
-    change_abs = None
-    change_pct = None
-    if current_price is not None and resolved_reference_close is not None and resolved_reference_close > 0:
-        change_abs = current_price - resolved_reference_close
-        change_pct = (change_abs / resolved_reference_close) * 100.0
+    change_abs, change_pct = change_abs_percent(current_price, resolved_reference_close)
 
     recent_desc = completed[:max_points]
     recent_asc = list(reversed(recent_desc))

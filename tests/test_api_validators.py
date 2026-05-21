@@ -3,12 +3,16 @@ import unittest
 from fastapi import HTTPException
 
 from app.utils import (
+    change_abs_percent,
     date_key_or_none,
     date_or_none,
     epoch_from_iso8601,
     finite_float_or_none,
     first_finite_float,
     iso_date_or_none,
+    percent_change,
+    percent_of,
+    scaled_ratio,
     utc_datetime_or_none,
 )
 from app.validation import require_non_negative_float, require_positive_float, require_symbols
@@ -46,6 +50,14 @@ class ApiValidatorsTest(unittest.TestCase):
         self.assertIsNone(finite_float_or_none("nan"))
         self.assertEqual(first_finite_float("nan", "bad", "12.5"), 12.5)
         self.assertEqual(first_finite_float("-1", "2", minimum=0.0, strict_minimum=True), 2.0)
+
+    def test_ratio_helpers_apply_common_percentage_rules(self) -> None:
+        self.assertEqual(scaled_ratio("3", "2"), 1.5)
+        self.assertEqual(percent_of("-5", "20"), -25.0)
+        self.assertEqual(change_abs_percent("110", "100"), (10.0, 10.0))
+        self.assertEqual(percent_change("90", "100"), -10.0)
+        self.assertIsNone(percent_change("100", "0"))
+        self.assertIsNone(scaled_ratio("1", "0"))
 
     def test_timestamp_helpers_normalize_common_api_shapes(self) -> None:
         parsed = utc_datetime_or_none("2026-04-03T09:00:00+09:00")

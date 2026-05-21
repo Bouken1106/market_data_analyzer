@@ -18,6 +18,7 @@ from ..config import (
     LOGGER,
 )
 from ..ohlcv import normalize_ohlcv_point
+from .market_data_intervals import is_daily_interval
 from .market_data_queries_historical_runtime import (
     bound_jquants_request_dates,
     clamp_jquants_request_dates,
@@ -110,7 +111,7 @@ class JQuantsHistoricalClient:
 
     @staticmethod
     def _is_supported_interval(interval: str) -> bool:
-        return str(interval or "").strip().lower() in {"1day", "1d", "day"}
+        return is_daily_interval(interval)
 
     @staticmethod
     def _build_headers(api_key: str) -> dict[str, str]:

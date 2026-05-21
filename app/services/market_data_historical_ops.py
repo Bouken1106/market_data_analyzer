@@ -19,6 +19,7 @@ from ..stooq import fetch_stooq_daily_history as default_fetch_stooq_daily_histo
 from .market_data_full_history import FullDailyHistoryLoader
 from .market_data_historical_jquants import JQuantsHistoricalClient
 from .market_data_historical_series import normalize_fmp_historical_payload, normalize_twelvedata_series_payload
+from .market_data_intervals import is_daily_interval
 from .market_data_provider_clients import owner_fmp_client, owner_twelvedata_client
 from .market_data_queries_historical_runtime import (
     build_combined_historical_detail,
@@ -364,8 +365,7 @@ class MarketDataHistoricalOps:
         start_date: str | None = None,
         end_date: str | None = None,
     ) -> list[dict[str, Any]]:
-        normalized_interval = str(interval or "").strip().lower()
-        if normalized_interval not in {"1day", "1d", "day"}:
+        if not is_daily_interval(interval):
             return await self.owner._fetch_series_twelvedata(
                 client=client,
                 symbol=symbol,
@@ -394,7 +394,7 @@ class MarketDataHistoricalOps:
         start_date: str | None = None,
         end_date: str | None = None,
     ) -> list[dict[str, Any]]:
-        if str(interval or "").strip().lower() not in {"1day", "1d", "day"}:
+        if not is_daily_interval(interval):
             return []
 
         try:

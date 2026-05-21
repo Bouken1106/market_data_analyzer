@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..utils import first_finite_float, utc_datetime_or_none
+from ..utils import change_abs_percent, first_finite_float, utc_datetime_or_none
 
 QUOTE_SOURCE_KEYS = (
     "symbol",
@@ -102,11 +102,7 @@ def best_updated_at(
 
 
 def build_market_item(symbol: str, latest: float | None, previous: float | None) -> dict[str, Any]:
-    change_abs = None
-    change_pct = None
-    if latest is not None and previous is not None and previous > 0:
-        change_abs = latest - previous
-        change_pct = (change_abs / previous) * 100
+    change_abs, change_pct = change_abs_percent(latest, previous)
     return {
         "symbol": symbol,
         "price": latest,
