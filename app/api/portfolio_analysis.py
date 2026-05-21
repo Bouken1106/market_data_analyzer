@@ -13,6 +13,25 @@ from .deps import HubDep, PortfolioAnalysisStoreDep, SymbolCatalogStoreDep
 router = APIRouter()
 
 
+async def _resolve_request_holdings(
+    *,
+    jp_holdings: object,
+    us_holdings: object,
+    symbol_catalog_store: object,
+) -> tuple[list[dict[str, float]], list[dict[str, float]]]:
+    resolved_jp = await resolve_region_holdings(
+        jp_holdings,
+        region="jp",
+        symbol_catalog_store=symbol_catalog_store,
+    )
+    resolved_us = await resolve_region_holdings(
+        us_holdings,
+        region="us",
+        symbol_catalog_store=symbol_catalog_store,
+    )
+    return resolved_jp, resolved_us
+
+
 @router.get("/api/portfolio-analysis/portfolios")
 async def list_saved_portfolios(portfolio_analysis_store: PortfolioAnalysisStoreDep) -> JSONResponse:
     return ok_json_response(portfolios=await portfolio_analysis_store.list_portfolios())
@@ -45,14 +64,9 @@ async def save_saved_portfolio(
     symbol_catalog_store: SymbolCatalogStoreDep,
 ) -> JSONResponse:
     try:
-        jp_holdings = await resolve_region_holdings(
-            req.jp_holdings,
-            region="jp",
-            symbol_catalog_store=symbol_catalog_store,
-        )
-        us_holdings = await resolve_region_holdings(
-            req.us_holdings,
-            region="us",
+        jp_holdings, us_holdings = await _resolve_request_holdings(
+            jp_holdings=req.jp_holdings,
+            us_holdings=req.us_holdings,
             symbol_catalog_store=symbol_catalog_store,
         )
         portfolio = await portfolio_analysis_store.save_portfolio(
@@ -88,14 +102,9 @@ async def analyze_portfolio(
     symbol_catalog_store: SymbolCatalogStoreDep,
 ) -> JSONResponse:
     try:
-        jp_holdings = await resolve_region_holdings(
-            req.jp_holdings,
-            region="jp",
-            symbol_catalog_store=symbol_catalog_store,
-        )
-        us_holdings = await resolve_region_holdings(
-            req.us_holdings,
-            region="us",
+        jp_holdings, us_holdings = await _resolve_request_holdings(
+            jp_holdings=req.jp_holdings,
+            us_holdings=req.us_holdings,
             symbol_catalog_store=symbol_catalog_store,
         )
         payload = await analyze_saved_portfolio(

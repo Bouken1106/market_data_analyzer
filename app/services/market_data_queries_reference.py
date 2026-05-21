@@ -219,7 +219,6 @@ class MarketDataReferenceMixin:
         symbol: str,
         data: FmpReferenceData,
     ) -> dict[str, Any]:
-        adjusted_summary = self._build_adjusted_price_summary(data.historical)
         return {
             "symbol": symbol,
             "source": "fmp-live",
@@ -227,67 +226,91 @@ class MarketDataReferenceMixin:
             "cache_ttl_sec": FMP_REFERENCE_CACHE_TTL_SEC,
             "estimated_api_calls_on_refresh": 9,
             "cost_note": "This payload is cached to reduce API credit usage (Free plan: 250 calls/day).",
-            "profile": {
-                "company_name": data.profile.get("companyName") or data.profile.get("company_name"),
-                "exchange": data.profile.get("exchangeShortName") or data.profile.get("exchange"),
-                "sector": data.profile.get("sector"),
-                "industry": data.profile.get("industry"),
-                "country": data.profile.get("country"),
-                "website": data.profile.get("website"),
-                "ceo": data.profile.get("ceo"),
-                "description": data.profile.get("description"),
-                "market_cap": self._try_parse_float(data.profile.get("mktCap") or data.profile.get("marketCap")),
-                "beta": self._try_parse_float(data.profile.get("beta")),
-                "employees": data.profile.get("fullTimeEmployees"),
-                "ipo_date": data.profile.get("ipoDate"),
-            },
-            "adjusted_prices": adjusted_summary,
-            "corporate_actions": {
-                "dividends": self._normalize_actions(data.dividends, action_type="dividend"),
-                "splits": self._normalize_actions(data.splits, action_type="split"),
-            },
-            "financials": {
-                "ratios_ttm": {
-                    "pe_ratio_ttm": self._try_parse_float(data.ratios.get("peRatioTTM")),
-                    "pb_ratio_ttm": self._try_parse_float(data.ratios.get("priceToBookRatioTTM")),
-                    "ps_ratio_ttm": self._try_parse_float(data.ratios.get("priceToSalesRatioTTM")),
-                    "roe_ttm": self._try_parse_float(data.ratios.get("returnOnEquityTTM")),
-                    "net_margin_ttm": self._try_parse_float(data.ratios.get("netProfitMarginTTM")),
-                    "current_ratio_ttm": self._try_parse_float(data.ratios.get("currentRatioTTM")),
-                    "debt_to_equity_ttm": self._try_parse_float(data.ratios.get("debtEquityRatioTTM")),
-                },
-                "key_metrics_ttm": {
-                    "eps_ttm": self._try_parse_float(data.metrics.get("epsTTM")),
-                    "free_cash_flow_per_share_ttm": self._try_parse_float(data.metrics.get("freeCashFlowPerShareTTM")),
-                    "book_value_per_share_ttm": self._try_parse_float(data.metrics.get("bookValuePerShareTTM")),
-                    "dividend_yield_ttm": self._try_parse_float(data.metrics.get("dividendYieldTTM")),
-                },
-                "income_statement_latest": {
-                    "date": data.income.get("date"),
-                    "revenue": self._try_parse_float(data.income.get("revenue")),
-                    "gross_profit": self._try_parse_float(data.income.get("grossProfit")),
-                    "operating_income": self._try_parse_float(data.income.get("operatingIncome")),
-                    "net_income": self._try_parse_float(data.income.get("netIncome")),
-                    "eps": self._try_parse_float(data.income.get("eps")),
-                },
-                "balance_sheet_latest": {
-                    "date": data.balance_sheet.get("date"),
-                    "cash_and_short_term_investments": self._try_parse_float(
-                        data.balance_sheet.get("cashAndShortTermInvestments")
-                    ),
-                    "total_assets": self._try_parse_float(data.balance_sheet.get("totalAssets")),
-                    "total_debt": self._try_parse_float(data.balance_sheet.get("totalDebt")),
-                    "total_liabilities": self._try_parse_float(data.balance_sheet.get("totalLiabilities")),
-                    "total_equity": self._try_parse_float(data.balance_sheet.get("totalStockholdersEquity")),
-                },
-                "cash_flow_latest": {
-                    "date": data.cash_flow.get("date"),
-                    "operating_cash_flow": self._try_parse_float(data.cash_flow.get("operatingCashFlow")),
-                    "capital_expenditure": self._try_parse_float(data.cash_flow.get("capitalExpenditure")),
-                    "free_cash_flow": self._try_parse_float(data.cash_flow.get("freeCashFlow")),
-                    "dividends_paid": self._try_parse_float(data.cash_flow.get("dividendsPaid")),
-                },
-            },
+            "profile": self._build_profile_payload(data.profile),
+            "adjusted_prices": self._build_adjusted_price_summary(data.historical),
+            "corporate_actions": self._build_corporate_actions_payload(data),
+            "financials": self._build_financials_payload(data),
+        }
+
+    def _build_profile_payload(self, profile: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "company_name": profile.get("companyName") or profile.get("company_name"),
+            "exchange": profile.get("exchangeShortName") or profile.get("exchange"),
+            "sector": profile.get("sector"),
+            "industry": profile.get("industry"),
+            "country": profile.get("country"),
+            "website": profile.get("website"),
+            "ceo": profile.get("ceo"),
+            "description": profile.get("description"),
+            "market_cap": self._try_parse_float(profile.get("mktCap") or profile.get("marketCap")),
+            "beta": self._try_parse_float(profile.get("beta")),
+            "employees": profile.get("fullTimeEmployees"),
+            "ipo_date": profile.get("ipoDate"),
+        }
+
+    def _build_corporate_actions_payload(self, data: FmpReferenceData) -> dict[str, Any]:
+        return {
+            "dividends": self._normalize_actions(data.dividends, action_type="dividend"),
+            "splits": self._normalize_actions(data.splits, action_type="split"),
+        }
+
+    def _build_financials_payload(self, data: FmpReferenceData) -> dict[str, Any]:
+        return {
+            "ratios_ttm": self._build_ratios_payload(data.ratios),
+            "key_metrics_ttm": self._build_key_metrics_payload(data.metrics),
+            "income_statement_latest": self._build_income_statement_payload(data.income),
+            "balance_sheet_latest": self._build_balance_sheet_payload(data.balance_sheet),
+            "cash_flow_latest": self._build_cash_flow_payload(data.cash_flow),
+        }
+
+    def _build_ratios_payload(self, ratios: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "pe_ratio_ttm": self._try_parse_float(ratios.get("peRatioTTM")),
+            "pb_ratio_ttm": self._try_parse_float(ratios.get("priceToBookRatioTTM")),
+            "ps_ratio_ttm": self._try_parse_float(ratios.get("priceToSalesRatioTTM")),
+            "roe_ttm": self._try_parse_float(ratios.get("returnOnEquityTTM")),
+            "net_margin_ttm": self._try_parse_float(ratios.get("netProfitMarginTTM")),
+            "current_ratio_ttm": self._try_parse_float(ratios.get("currentRatioTTM")),
+            "debt_to_equity_ttm": self._try_parse_float(ratios.get("debtEquityRatioTTM")),
+        }
+
+    def _build_key_metrics_payload(self, metrics: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "eps_ttm": self._try_parse_float(metrics.get("epsTTM")),
+            "free_cash_flow_per_share_ttm": self._try_parse_float(metrics.get("freeCashFlowPerShareTTM")),
+            "book_value_per_share_ttm": self._try_parse_float(metrics.get("bookValuePerShareTTM")),
+            "dividend_yield_ttm": self._try_parse_float(metrics.get("dividendYieldTTM")),
+        }
+
+    def _build_income_statement_payload(self, income: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "date": income.get("date"),
+            "revenue": self._try_parse_float(income.get("revenue")),
+            "gross_profit": self._try_parse_float(income.get("grossProfit")),
+            "operating_income": self._try_parse_float(income.get("operatingIncome")),
+            "net_income": self._try_parse_float(income.get("netIncome")),
+            "eps": self._try_parse_float(income.get("eps")),
+        }
+
+    def _build_balance_sheet_payload(self, balance_sheet: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "date": balance_sheet.get("date"),
+            "cash_and_short_term_investments": self._try_parse_float(
+                balance_sheet.get("cashAndShortTermInvestments")
+            ),
+            "total_assets": self._try_parse_float(balance_sheet.get("totalAssets")),
+            "total_debt": self._try_parse_float(balance_sheet.get("totalDebt")),
+            "total_liabilities": self._try_parse_float(balance_sheet.get("totalLiabilities")),
+            "total_equity": self._try_parse_float(balance_sheet.get("totalStockholdersEquity")),
+        }
+
+    def _build_cash_flow_payload(self, cash_flow: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "date": cash_flow.get("date"),
+            "operating_cash_flow": self._try_parse_float(cash_flow.get("operatingCashFlow")),
+            "capital_expenditure": self._try_parse_float(cash_flow.get("capitalExpenditure")),
+            "free_cash_flow": self._try_parse_float(cash_flow.get("freeCashFlow")),
+            "dividends_paid": self._try_parse_float(cash_flow.get("dividendsPaid")),
         }
 
     async def _fmp_get_json(
@@ -338,30 +361,14 @@ class MarketDataReferenceMixin:
         latest = cleaned[-1] if cleaned else {}
         close_value = self._try_parse_float(latest.get("close"))
         adj_close_value = self._try_parse_float(latest.get("adjClose") or latest.get("adjustedClose"))
-        factor = None
-        if close_value and adj_close_value:
-            try:
-                factor = adj_close_value / close_value if close_value != 0 else None
-            except Exception:
-                factor = None
+        factor = self._adjustment_factor(close_value=close_value, adj_close_value=adj_close_value)
 
         recent: list[dict[str, Any]] = []
         for item in cleaned[-60:]:
-            close_item = self._try_parse_float(item.get("close"))
-            adj_item = self._try_parse_float(item.get("adjClose") or item.get("adjustedClose"))
-            if close_item is None and adj_item is None:
+            point = self._adjusted_price_point(item)
+            if point is None:
                 continue
-            recent.append(
-                {
-                    "date": item.get("date"),
-                    "close": close_item,
-                    "adj_close": adj_item,
-                    "open": self._try_parse_float(item.get("open")),
-                    "high": self._try_parse_float(item.get("high")),
-                    "low": self._try_parse_float(item.get("low")),
-                    "volume": self._try_parse_float(item.get("volume")),
-                }
-            )
+            recent.append(point)
 
         return {
             "latest_date": latest.get("date"),
@@ -369,6 +376,27 @@ class MarketDataReferenceMixin:
             "latest_adj_close": adj_close_value,
             "latest_adjustment_factor": factor,
             "recent_points": recent,
+        }
+
+    @staticmethod
+    def _adjustment_factor(*, close_value: float | None, adj_close_value: float | None) -> float | None:
+        if close_value is None or adj_close_value is None or close_value == 0:
+            return None
+        return adj_close_value / close_value
+
+    def _adjusted_price_point(self, item: dict[str, Any]) -> dict[str, Any] | None:
+        close_item = self._try_parse_float(item.get("close"))
+        adj_item = self._try_parse_float(item.get("adjClose") or item.get("adjustedClose"))
+        if close_item is None and adj_item is None:
+            return None
+        return {
+            "date": item.get("date"),
+            "close": close_item,
+            "adj_close": adj_item,
+            "open": self._try_parse_float(item.get("open")),
+            "high": self._try_parse_float(item.get("high")),
+            "low": self._try_parse_float(item.get("low")),
+            "volume": self._try_parse_float(item.get("volume")),
         }
 
     def _normalize_actions(self, rows: list[dict[str, Any]], action_type: str) -> list[dict[str, Any]]:

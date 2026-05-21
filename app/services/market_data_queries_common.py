@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Any
 
+from ..market_session import DEFAULT_COUNTRY_KEY, DEFAULT_MARKET_SESSIONS
 from ..ohlcv import latest_session_points, merge_points_by_timestamp as merge_ohlcv_points
 from .market_data_market_hours import (
     is_country_market_open,
@@ -174,28 +175,32 @@ class MarketDataQueryCommonMixin:
     def _resolve_symbol_country_key(self, symbol: str) -> str:
         return resolve_symbol_country_key(
             symbol,
-            symbol_country_map=self.symbol_country_map,
-            default_country_key=self.default_country_key,
+            symbol_country_map=getattr(self, "symbol_country_map", {}),
+            default_country_key=getattr(self, "default_country_key", DEFAULT_COUNTRY_KEY),
         )
 
     def _is_country_market_open(self, country_key: str, now_utc: datetime) -> bool:
-        return is_country_market_open(country_key, market_sessions=self.market_sessions, now_utc=now_utc)
+        return is_country_market_open(
+            country_key,
+            market_sessions=getattr(self, "market_sessions", DEFAULT_MARKET_SESSIONS),
+            now_utc=now_utc,
+        )
 
     def _is_symbol_market_open(self, symbol: str, now_utc: datetime | None = None) -> bool:
         return is_symbol_market_open(
             symbol,
-            symbol_country_map=self.symbol_country_map,
-            default_country_key=self.default_country_key,
-            market_sessions=self.market_sessions,
+            symbol_country_map=getattr(self, "symbol_country_map", {}),
+            default_country_key=getattr(self, "default_country_key", DEFAULT_COUNTRY_KEY),
+            market_sessions=getattr(self, "market_sessions", DEFAULT_MARKET_SESSIONS),
             now_utc=now_utc,
         )
 
     def _open_symbols(self, symbols: list[str]) -> list[str]:
         return open_symbols(
             symbols,
-            symbol_country_map=self.symbol_country_map,
-            default_country_key=self.default_country_key,
-            market_sessions=self.market_sessions,
+            symbol_country_map=getattr(self, "symbol_country_map", {}),
+            default_country_key=getattr(self, "default_country_key", DEFAULT_COUNTRY_KEY),
+            market_sessions=getattr(self, "market_sessions", DEFAULT_MARKET_SESSIONS),
         )
 
     @staticmethod

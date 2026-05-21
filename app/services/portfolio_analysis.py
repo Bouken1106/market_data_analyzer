@@ -5,14 +5,16 @@ from __future__ import annotations
 import asyncio
 import math
 import re
-from typing import Any
 import unicodedata
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from ..utils import finite_float_or_none, is_valid_symbol, normalize_symbol
+from .portfolio_common import apply_market_value_weights, positive_price_or_none, price_map_from_rows
 
 DEFAULT_ANALYSIS_LOOKBACK_DAYS = 252
 MIN_ANALYSIS_LOOKBACK_DAYS = 63
@@ -73,6 +75,23 @@ _COMPANY_SUFFIX_WORDS = frozenset(
 )
 
 
+@dataclass
+class _HistoricalSeriesBundle:
+    last_close_by_symbol: dict[str, float]
+    last_close_date_by_symbol: dict[str, str]
+    series_by_symbol: dict[str, pd.Series]
+    analyzed_symbols: set[str]
+
+
+@dataclass
+class _PricedHoldingsBundle:
+    rows: list[dict[str, Any]]
+    total_market_value: float
+    priced_holdings_count: int
+    analyzed_market_value: float
+    stale_historical_symbols: list[str]
+
+
 def normalize_region(region: str) -> str:
     normalized = str(region or "").strip().lower()
     if normalized not in REGION_LABELS:
@@ -103,6 +122,34 @@ def _holding_mapping(item: Any) -> dict[str, Any]:
         dumped = item.model_dump()
         return dumped if isinstance(dumped, dict) else {}
     return item if isinstance(item, dict) else {}
+
+
+def _iter_holding_inputs(raw: Any) -> list[tuple[str, Any]]:
+    items = raw if isinstance(raw, list) else []
+    inputs: list[tuple[str, Any]] = []
+    for item in items:
+        mapping = _holding_mapping(item)
+        raw_symbol = str(mapping.get("symbol") or "").strip()
+        raw_quantity = mapping.get("quantity")
+        if not raw_symbol and (raw_quantity is None or str(raw_quantity).strip() == ""):
+            continue
+        inputs.append((raw_symbol, raw_quantity))
+    return inputs
+
+
+def _finalize_aggregated_holdings(aggregated: dict[str, float]) -> list[dict[str, float]]:
+    holdings = [
+        {
+            "symbol": symbol,
+            "quantity": quantity,
+        }
+        for symbol, quantity in aggregated.items()
+        if quantity > 0
+    ]
+    if len(holdings) > MAX_HOLDINGS_PER_REGION:
+        raise ValueError(f"You can save up to {MAX_HOLDINGS_PER_REGION} holdings per region.")
+    holdings.sort(key=lambda item: item["symbol"])
+    return holdings
 
 
 def _normalize_search_text(raw: Any) -> str:
@@ -203,17 +250,10 @@ async def resolve_region_holdings(
     symbol_catalog_store: Any | None = None,
 ) -> list[dict[str, float]]:
     normalized_region = normalize_region(region)
-    items = raw if isinstance(raw, list) else []
     aggregated: dict[str, float] = {}
     catalog_rows = await _load_region_catalog(symbol_catalog_store, region=normalized_region)
 
-    for item in items:
-        mapping = _holding_mapping(item)
-        raw_symbol = str(mapping.get("symbol") or "").strip()
-        raw_quantity = mapping.get("quantity")
-        if not raw_symbol and (raw_quantity is None or str(raw_quantity).strip() == ""):
-            continue
-
+    for raw_symbol, raw_quantity in _iter_holding_inputs(raw):
         quantity = finite_float_or_none(raw_quantity, minimum=0.0, strict_minimum=True)
         if quantity is None:
             raise ValueError(f"Quantity must be greater than 0 for {raw_symbol or 'holding'}.")
@@ -223,51 +263,25 @@ async def resolve_region_holdings(
             resolved_symbol = normalize_region_symbol(raw_symbol, region=normalized_region)
         aggregated[resolved_symbol] = aggregated.get(resolved_symbol, 0.0) + float(quantity)
 
-    holdings = [
-        {"symbol": symbol, "quantity": quantity}
-        for symbol, quantity in aggregated.items()
-        if quantity > 0
-    ]
-    if len(holdings) > MAX_HOLDINGS_PER_REGION:
-        raise ValueError(f"You can save up to {MAX_HOLDINGS_PER_REGION} holdings per region.")
-    holdings.sort(key=lambda item: item["symbol"])
-    return holdings
+    return _finalize_aggregated_holdings(aggregated)
 
 
 def normalize_region_holdings(raw: Any, *, region: str) -> list[dict[str, float]]:
     normalized_region = normalize_region(region)
-    items = raw if isinstance(raw, list) else []
     aggregated: dict[str, float] = {}
 
-    for item in items:
-        mapping = _holding_mapping(item)
-        raw_symbol = str(mapping.get("symbol") or "").strip()
-        raw_quantity = mapping.get("quantity")
-        if not raw_symbol and (raw_quantity is None or str(raw_quantity).strip() == ""):
-            continue
-
+    for raw_symbol, raw_quantity in _iter_holding_inputs(raw):
         symbol = normalize_region_symbol(raw_symbol, region=normalized_region)
         quantity = finite_float_or_none(raw_quantity, minimum=0.0, strict_minimum=True)
         if quantity is None:
             raise ValueError(f"Quantity must be greater than 0 for {symbol}.")
         aggregated[symbol] = aggregated.get(symbol, 0.0) + float(quantity)
 
-    holdings = [
-        {
-            "symbol": symbol,
-            "quantity": quantity,
-        }
-        for symbol, quantity in aggregated.items()
-        if quantity > 0
-    ]
-    if len(holdings) > MAX_HOLDINGS_PER_REGION:
-        raise ValueError(f"You can save up to {MAX_HOLDINGS_PER_REGION} holdings per region.")
-    holdings.sort(key=lambda item: item["symbol"])
-    return holdings
+    return _finalize_aggregated_holdings(aggregated)
 
 
 def _valid_price(value: Any) -> float | None:
-    return finite_float_or_none(value, minimum=0.0, strict_minimum=True)
+    return positive_price_or_none(value)
 
 
 def _iso_date_or_none(value: Any) -> str | None:
@@ -297,17 +311,11 @@ def _historical_close_is_stale(last_close_date: str | None, *, today: date | Non
 
 
 def _build_current_price_map(rows: list[Any]) -> dict[str, float]:
-    price_map: dict[str, float] = {}
-    if not isinstance(rows, list):
-        return price_map
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        symbol = normalize_symbol(row.get("symbol"))
-        price = _valid_price(row.get("price"))
-        if symbol and price is not None:
-            price_map[symbol] = price
-    return price_map
+    return {
+        symbol: price
+        for symbol, price in price_map_from_rows(rows).items()
+        if price is not None
+    }
 
 
 def _close_series_from_points(points: Any) -> pd.Series | None:
@@ -332,6 +340,36 @@ def _close_series_from_points(points: Any) -> pd.Series | None:
     return series.sort_index()
 
 
+def _empty_risk_payload(*, lookback_days: int | None, note: str | None) -> dict[str, Any]:
+    return {
+        "lookback_days": lookback_days,
+        "observation_count": 0,
+        "analysis_start": None,
+        "analysis_end": None,
+        "daily_volatility_pct": None,
+        "annualized_volatility_pct": None,
+        "value_at_risk_95_pct": None,
+        "value_at_risk_95_amount": None,
+        "expected_shortfall_95_pct": None,
+        "expected_shortfall_95_amount": None,
+        "max_drawdown_pct": None,
+        "note": note,
+    }
+
+
+def _empty_region_summary() -> dict[str, Any]:
+    return {
+        "holdings_count": 0,
+        "priced_holdings_count": 0,
+        "analyzed_holdings_count": 0,
+        "market_value": None,
+        "risk_coverage_pct": None,
+        "top_holding_symbol": None,
+        "top_holding_weight_pct": None,
+        "effective_holdings": None,
+    }
+
+
 def _empty_region_payload(region: str) -> dict[str, Any]:
     normalized_region = normalize_region(region)
     return {
@@ -339,30 +377,8 @@ def _empty_region_payload(region: str) -> dict[str, Any]:
         "label": REGION_LABELS[normalized_region],
         "currency": REGION_CURRENCIES[normalized_region],
         "holdings": [],
-        "summary": {
-            "holdings_count": 0,
-            "priced_holdings_count": 0,
-            "analyzed_holdings_count": 0,
-            "market_value": None,
-            "risk_coverage_pct": None,
-            "top_holding_symbol": None,
-            "top_holding_weight_pct": None,
-            "effective_holdings": None,
-        },
-        "risk": {
-            "lookback_days": None,
-            "observation_count": 0,
-            "analysis_start": None,
-            "analysis_end": None,
-            "daily_volatility_pct": None,
-            "annualized_volatility_pct": None,
-            "value_at_risk_95_pct": None,
-            "value_at_risk_95_amount": None,
-            "expected_shortfall_95_pct": None,
-            "expected_shortfall_95_amount": None,
-            "max_drawdown_pct": None,
-            "note": "No holdings saved.",
-        },
+        "summary": _empty_region_summary(),
+        "risk": _empty_risk_payload(lookback_days=None, note="No holdings saved."),
         "warnings": [],
     }
 
@@ -398,20 +414,7 @@ def _build_risk_payload(
     market_value: float | None,
     portfolio_values: pd.Series | None,
 ) -> dict[str, Any]:
-    base_payload = {
-        "lookback_days": lookback_days,
-        "observation_count": 0,
-        "analysis_start": None,
-        "analysis_end": None,
-        "daily_volatility_pct": None,
-        "annualized_volatility_pct": None,
-        "value_at_risk_95_pct": None,
-        "value_at_risk_95_amount": None,
-        "expected_shortfall_95_pct": None,
-        "expected_shortfall_95_amount": None,
-        "max_drawdown_pct": None,
-        "note": None,
-    }
+    base_payload = _empty_risk_payload(lookback_days=lookback_days, note=None)
     if portfolio_values is None or len(portfolio_values) < 2:
         base_payload["note"] = "Risk metrics need more historical data."
         return base_payload
@@ -478,6 +481,212 @@ def _historical_months_for_lookback(lookback_days: int) -> int:
     return max(6, int(math.ceil(lookback_days / 21.0)) + 3)
 
 
+async def _fetch_region_historical_results(
+    hub: Any,
+    *,
+    symbols: list[str],
+    lookback_days: int,
+) -> list[Any]:
+    historical_months = _historical_months_for_lookback(lookback_days)
+    historical_years = max(1, int(math.ceil(historical_months / 12.0)))
+    return await asyncio.gather(
+        *[
+            hub.historical_payload(
+                symbol=symbol,
+                years=historical_years,
+                months=historical_months,
+                refresh=False,
+            )
+            for symbol in symbols
+        ],
+        return_exceptions=True,
+    )
+
+
+def _build_historical_series_bundle(
+    *,
+    symbols: list[str],
+    historical_results: list[Any],
+    warnings: list[str],
+) -> _HistoricalSeriesBundle:
+    bundle = _HistoricalSeriesBundle(
+        last_close_by_symbol={},
+        last_close_date_by_symbol={},
+        series_by_symbol={},
+        analyzed_symbols=set(),
+    )
+    for symbol, result in zip(symbols, historical_results):
+        if isinstance(result, Exception):
+            detail = getattr(result, "detail", None)
+            warnings.append(f"{symbol}: historical data unavailable ({detail or result}).")
+            continue
+        points = result.get("points") if isinstance(result, dict) else None
+        series = _close_series_from_points(points)
+        if series is None:
+            warnings.append(f"{symbol}: no usable close-price history returned.")
+            continue
+        last_close = float(series.iloc[-1])
+        bundle.last_close_by_symbol[symbol] = last_close
+        bundle.last_close_date_by_symbol[symbol] = series.index[-1].date().isoformat()
+        bundle.series_by_symbol[symbol] = series
+        bundle.analyzed_symbols.add(symbol)
+    return bundle
+
+
+async def _current_price_map_from_task(current_rows_task: asyncio.Task, warnings: list[str]) -> dict[str, float]:
+    try:
+        current_rows = await current_rows_task
+    except Exception as exc:
+        warnings.append(f"Latest prices unavailable ({exc}). Falling back to historical close where possible.")
+        return {}
+    return _build_current_price_map(current_rows)
+
+
+def _last_price_fields(
+    *,
+    current_price: float | None,
+    latest_close: float | None,
+    last_close_date: str | None,
+) -> tuple[float | None, str]:
+    historical_close_stale = (
+        current_price is None
+        and latest_close is not None
+        and _historical_close_is_stale(last_close_date)
+    )
+    if current_price is not None:
+        return current_price, "market"
+    if historical_close_stale:
+        return None, "stale_historical_close"
+    if latest_close is not None:
+        return latest_close, "historical_close"
+    return None, "unavailable"
+
+
+def _build_priced_holdings_bundle(
+    *,
+    holdings: list[dict[str, float]],
+    current_price_by_symbol: dict[str, float],
+    historical: _HistoricalSeriesBundle,
+) -> _PricedHoldingsBundle:
+    rows: list[dict[str, Any]] = []
+    total_market_value = 0.0
+    priced_holdings_count = 0
+    analyzed_market_value = 0.0
+    stale_historical_symbols: list[str] = []
+
+    for holding in holdings:
+        symbol = holding["symbol"]
+        quantity = float(holding["quantity"])
+        current_price = current_price_by_symbol.get(symbol)
+        latest_close = historical.last_close_by_symbol.get(symbol)
+        last_close_date = historical.last_close_date_by_symbol.get(symbol)
+        last_price, last_price_source = _last_price_fields(
+            current_price=current_price,
+            latest_close=latest_close,
+            last_close_date=last_close_date,
+        )
+        market_value = (last_price * quantity) if last_price is not None else None
+        if market_value is not None:
+            priced_holdings_count += 1
+            total_market_value += market_value
+            if symbol in historical.analyzed_symbols:
+                analyzed_market_value += market_value
+        elif last_price_source == "stale_historical_close":
+            stale_historical_symbols.append(symbol)
+
+        rows.append(
+            {
+                "symbol": symbol,
+                "quantity": quantity,
+                "last_price": last_price,
+                "last_price_source": last_price_source,
+                "last_close_date": last_close_date,
+                "market_value": market_value,
+                "weight": None,
+                "risk_included": symbol in historical.analyzed_symbols,
+            }
+        )
+
+    _apply_holding_weights(rows, total_market_value)
+    rows.sort(
+        key=lambda item: (
+            item.get("market_value") is None,
+            -(float(item["market_value"]) if isinstance(item.get("market_value"), (int, float)) else 0.0),
+            str(item["symbol"]),
+        )
+    )
+    return _PricedHoldingsBundle(
+        rows=rows,
+        total_market_value=total_market_value,
+        priced_holdings_count=priced_holdings_count,
+        analyzed_market_value=analyzed_market_value,
+        stale_historical_symbols=stale_historical_symbols,
+    )
+
+
+def _apply_holding_weights(rows: list[dict[str, Any]], total_market_value: float) -> None:
+    apply_market_value_weights(rows, total_market_value)
+
+
+def _append_stale_historical_warnings(
+    *,
+    symbols: list[str],
+    last_close_date_by_symbol: dict[str, str],
+    warnings: list[str],
+) -> None:
+    for symbol in symbols:
+        last_close_date = last_close_date_by_symbol.get(symbol)
+        if last_close_date:
+            warnings.append(
+                f"{symbol}: latest available close is stale ({last_close_date}). Current market value is omitted."
+            )
+        else:
+            warnings.append(
+                f"{symbol}: latest available close is stale. Current market value is omitted."
+            )
+
+
+def _append_risk_coverage_note(
+    *,
+    risk_payload: dict[str, Any],
+    analyzed_symbols: set[str],
+    analyzed_market_value: float,
+    total_market_value: float,
+    market_value_or_none: float | None,
+) -> None:
+    if not analyzed_symbols or market_value_or_none is None or analyzed_market_value >= total_market_value:
+        return
+    coverage_pct = (analyzed_market_value / total_market_value) * 100.0
+    existing_note = str(risk_payload.get("note") or "").strip()
+    coverage_note = f"Risk metrics cover {coverage_pct:.1f}% of current market value."
+    risk_payload["note"] = f"{existing_note} {coverage_note}".strip()
+
+
+def _build_region_summary(
+    *,
+    holdings_rows: list[dict[str, Any]],
+    priced_holdings_count: int,
+    analyzed_symbols: set[str],
+    total_market_value: float,
+    analyzed_market_value: float,
+) -> dict[str, Any]:
+    top_holding_symbol, top_holding_weight = _top_holding_summary(holdings_rows)
+    return {
+        "holdings_count": len(holdings_rows),
+        "priced_holdings_count": priced_holdings_count,
+        "analyzed_holdings_count": len(analyzed_symbols),
+        "market_value": total_market_value if total_market_value > 0 else None,
+        "risk_coverage_pct": (
+            (analyzed_market_value / total_market_value) * 100.0
+            if total_market_value > 0
+            else None
+        ),
+        "top_holding_symbol": top_holding_symbol,
+        "top_holding_weight_pct": top_holding_weight,
+        "effective_holdings": _effective_holdings(holdings_rows),
+    }
+
+
 async def analyze_region_portfolio(
     hub: Any,
     *,
@@ -494,165 +703,60 @@ async def analyze_region_portfolio(
     warnings: list[str] = []
 
     current_rows_task = asyncio.create_task(hub.current_rows(symbols))
-    historical_months = _historical_months_for_lookback(lookback_days)
-    historical_years = max(1, int(math.ceil(historical_months / 12.0)))
-    historical_results = await asyncio.gather(
-        *[
-            hub.historical_payload(
-                symbol=symbol,
-                years=historical_years,
-                months=historical_months,
-                refresh=False,
-            )
-            for symbol in symbols
-        ],
-        return_exceptions=True,
+    historical_results = await _fetch_region_historical_results(
+        hub,
+        symbols=symbols,
+        lookback_days=lookback_days,
     )
-
-    last_close_by_symbol: dict[str, float] = {}
-    last_close_date_by_symbol: dict[str, str] = {}
-    series_by_symbol: dict[str, pd.Series] = {}
-    analyzed_symbols: set[str] = set()
-
-    for symbol, result in zip(symbols, historical_results):
-        if isinstance(result, Exception):
-            detail = getattr(result, "detail", None)
-            warnings.append(f"{symbol}: historical data unavailable ({detail or result}).")
-            continue
-        points = result.get("points") if isinstance(result, dict) else None
-        series = _close_series_from_points(points)
-        if series is None:
-            warnings.append(f"{symbol}: no usable close-price history returned.")
-            continue
-        last_close = float(series.iloc[-1])
-        last_close_by_symbol[symbol] = last_close
-        last_close_date_by_symbol[symbol] = series.index[-1].date().isoformat()
-        series_by_symbol[symbol] = series
-        analyzed_symbols.add(symbol)
-
-    current_rows: list[Any] = []
-    try:
-        current_rows = await current_rows_task
-    except Exception as exc:
-        warnings.append(f"Latest prices unavailable ({exc}). Falling back to historical close where possible.")
-
-    current_price_by_symbol = _build_current_price_map(current_rows)
-    holdings_rows: list[dict[str, Any]] = []
-    total_market_value = 0.0
-    priced_holdings_count = 0
-    analyzed_market_value = 0.0
-    stale_historical_symbols: list[str] = []
-
-    for holding in holdings:
-        symbol = holding["symbol"]
-        quantity = float(holding["quantity"])
-        current_price = current_price_by_symbol.get(symbol)
-        latest_close = last_close_by_symbol.get(symbol)
-        last_close_date = last_close_date_by_symbol.get(symbol)
-        historical_close_stale = (
-            current_price is None
-            and latest_close is not None
-            and _historical_close_is_stale(last_close_date)
-        )
-        if current_price is not None:
-            last_price = current_price
-        elif historical_close_stale:
-            last_price = None
-        else:
-            last_price = latest_close
-        last_price_source = (
-            "market"
-            if current_price is not None
-            else "stale_historical_close"
-            if historical_close_stale
-            else "historical_close"
-            if latest_close is not None
-            else "unavailable"
-        )
-        market_value = (last_price * quantity) if last_price is not None else None
-        if market_value is not None:
-            priced_holdings_count += 1
-            total_market_value += market_value
-            if symbol in analyzed_symbols:
-                analyzed_market_value += market_value
-        elif historical_close_stale:
-            stale_historical_symbols.append(symbol)
-
-        holdings_rows.append(
-            {
-                "symbol": symbol,
-                "quantity": quantity,
-                "last_price": last_price,
-                "last_price_source": last_price_source,
-                "last_close_date": last_close_date,
-                "market_value": market_value,
-                "weight": None,
-                "risk_included": symbol in analyzed_symbols,
-            }
-        )
-
-    if total_market_value > 0:
-        for item in holdings_rows:
-            market_value = item.get("market_value")
-            if isinstance(market_value, (int, float)):
-                item["weight"] = (float(market_value) / total_market_value) * 100.0
-
-    holdings_rows.sort(
-        key=lambda item: (
-            item.get("market_value") is None,
-            -(float(item["market_value"]) if isinstance(item.get("market_value"), (int, float)) else 0.0),
-            str(item["symbol"]),
-        )
+    historical = _build_historical_series_bundle(
+        symbols=symbols,
+        historical_results=historical_results,
+        warnings=warnings,
+    )
+    current_price_by_symbol = await _current_price_map_from_task(current_rows_task, warnings)
+    priced = _build_priced_holdings_bundle(
+        holdings=holdings,
+        current_price_by_symbol=current_price_by_symbol,
+        historical=historical,
     )
 
     portfolio_values = _portfolio_value_series(
-        {symbol: series_by_symbol[symbol] for symbol in symbols if symbol in series_by_symbol},
-        {symbol: quantities_by_symbol[symbol] for symbol in symbols if symbol in series_by_symbol},
+        {symbol: historical.series_by_symbol[symbol] for symbol in symbols if symbol in historical.series_by_symbol},
+        {symbol: quantities_by_symbol[symbol] for symbol in symbols if symbol in historical.series_by_symbol},
         lookback_days=lookback_days,
     )
-    market_value_or_none = total_market_value if total_market_value > 0 else None
-    risk_market_value = analyzed_market_value if analyzed_market_value > 0 else market_value_or_none
+    market_value_or_none = priced.total_market_value if priced.total_market_value > 0 else None
+    risk_market_value = priced.analyzed_market_value if priced.analyzed_market_value > 0 else market_value_or_none
     risk_payload = _build_risk_payload(
         lookback_days=lookback_days,
         market_value=risk_market_value,
         portfolio_values=portfolio_values,
     )
-    for symbol in stale_historical_symbols:
-        last_close_date = last_close_date_by_symbol.get(symbol)
-        if last_close_date:
-            warnings.append(
-                f"{symbol}: latest available close is stale ({last_close_date}). Current market value is omitted."
-            )
-        else:
-            warnings.append(
-                f"{symbol}: latest available close is stale. Current market value is omitted."
-            )
-    if analyzed_symbols and market_value_or_none is not None and analyzed_market_value < total_market_value:
-        coverage_pct = (analyzed_market_value / total_market_value) * 100.0
-        existing_note = str(risk_payload.get("note") or "").strip()
-        coverage_note = f"Risk metrics cover {coverage_pct:.1f}% of current market value."
-        risk_payload["note"] = f"{existing_note} {coverage_note}".strip()
+    _append_stale_historical_warnings(
+        symbols=priced.stale_historical_symbols,
+        last_close_date_by_symbol=historical.last_close_date_by_symbol,
+        warnings=warnings,
+    )
+    _append_risk_coverage_note(
+        risk_payload=risk_payload,
+        analyzed_symbols=historical.analyzed_symbols,
+        analyzed_market_value=priced.analyzed_market_value,
+        total_market_value=priced.total_market_value,
+        market_value_or_none=market_value_or_none,
+    )
 
-    top_holding_symbol, top_holding_weight = _top_holding_summary(holdings_rows)
     return {
         "region": normalized_region,
         "label": REGION_LABELS[normalized_region],
         "currency": REGION_CURRENCIES[normalized_region],
-        "holdings": holdings_rows,
-        "summary": {
-            "holdings_count": len(holdings_rows),
-            "priced_holdings_count": priced_holdings_count,
-            "analyzed_holdings_count": len(analyzed_symbols),
-            "market_value": market_value_or_none,
-            "risk_coverage_pct": (
-                (analyzed_market_value / total_market_value) * 100.0
-                if total_market_value > 0
-                else None
-            ),
-            "top_holding_symbol": top_holding_symbol,
-            "top_holding_weight_pct": top_holding_weight,
-            "effective_holdings": _effective_holdings(holdings_rows),
-        },
+        "holdings": priced.rows,
+        "summary": _build_region_summary(
+            holdings_rows=priced.rows,
+            priced_holdings_count=priced.priced_holdings_count,
+            analyzed_symbols=historical.analyzed_symbols,
+            total_market_value=priced.total_market_value,
+            analyzed_market_value=priced.analyzed_market_value,
+        ),
         "risk": risk_payload,
         "warnings": warnings,
     }

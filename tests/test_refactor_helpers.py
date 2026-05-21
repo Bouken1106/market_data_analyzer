@@ -5,13 +5,16 @@ import unittest
 from app.services.market_data_historical_jquants import JQuantsHistoricalClient
 from app.services.market_data_math import atr, beta_and_corr, moving_average
 from app.services.market_data_overview_ops import MarketDataOverviewOps
+from app.services.market_data_queries import MarketDataQueriesMixin
 from app.services.market_data_queries_overview_support import (
     OverviewInputs,
     OverviewRequest,
     build_overview_payload,
     build_overview_source_detail,
 )
+from app.services.market_data_queries_reference import FmpReferenceData
 from app.services.paper_portfolio import _apply_position_weights, _build_position_rows, _portfolio_summary
+from app.services.portfolio_common import apply_market_value_weights, positive_price_or_none, price_map_from_rows
 from app.services.watchlist_commentary_parser import commentary_from_json, fallback_commentary
 from app.services.watchlist_commentary_prompt import build_watchlist_prompt
 
@@ -203,6 +206,29 @@ class RefactorHelperTest(unittest.TestCase):
         self.assertEqual(summary["equity"], 1_005.0)
         self.assertEqual(summary["unrealized_pnl"], 55.0)
 
+    def test_portfolio_common_helpers_normalize_prices_and_weights(self) -> None:
+        rows = [
+            {"symbol": " aapl ", "price": "123.45"},
+            {"symbol": "MSFT", "price": "not-a-number"},
+            {"symbol": "", "price": 99},
+            object(),
+        ]
+
+        self.assertEqual(positive_price_or_none("0"), None)
+        self.assertEqual(price_map_from_rows(rows), {"AAPL": 123.45})
+        self.assertEqual(price_map_from_rows(rows, include_missing=True), {"AAPL": 123.45, "MSFT": None})
+
+        weighted = [
+            {"market_value": 30.0, "weight": None},
+            {"market_value": 70.0, "weight": None},
+            {"market_value": None, "weight": None},
+        ]
+        apply_market_value_weights(weighted, 100.0)
+
+        self.assertEqual(weighted[0]["weight"], 30.0)
+        self.assertEqual(weighted[1]["weight"], 70.0)
+        self.assertIsNone(weighted[2]["weight"])
+
     def test_market_data_overview_ops_helpers_build_completed_snapshot(self) -> None:
         ops = MarketDataOverviewOps(owner=_OverviewOwner())
         points = [
@@ -227,6 +253,41 @@ class RefactorHelperTest(unittest.TestCase):
         self.assertEqual(snapshot["change_abs"], 5.0)
         self.assertEqual(snapshot["trend_30d"], [106.0, 108.0])
         self.assertEqual(snapshot["source"], "fmp")
+
+    def test_fmp_reference_payload_builders_shape_sections(self) -> None:
+        queries = MarketDataQueriesMixin()
+        data = FmpReferenceData(
+            profile={
+                "companyName": "Example Inc.",
+                "exchangeShortName": "NASDAQ",
+                "sector": "Technology",
+                "mktCap": "123456",
+                "beta": "1.25",
+            },
+            ratios={"peRatioTTM": "20.5", "returnOnEquityTTM": "0.31"},
+            metrics={"epsTTM": "5.25", "dividendYieldTTM": "0.01"},
+            income={"date": "2025-12-31", "revenue": "1000", "netIncome": "200"},
+            balance_sheet={"date": "2025-12-31", "totalAssets": "5000", "totalDebt": "700"},
+            cash_flow={"date": "2025-12-31", "operatingCashFlow": "300", "freeCashFlow": "250"},
+            historical=[
+                {"date": "2025-01-02", "close": "100", "adjClose": "99", "volume": "1000"},
+                {"date": "2025-01-03", "close": "110", "adjustedClose": "108.9", "volume": "1200"},
+            ],
+            dividends=[{"date": "2025-01-15", "dividend": "0.25", "adjDividend": "0.24"}],
+            splits=[{"date": "2025-02-01", "numerator": "2", "denominator": "1"}],
+        )
+
+        payload = queries._build_fmp_reference_payload(symbol="EXM", data=data)
+
+        self.assertEqual(payload["symbol"], "EXM")
+        self.assertEqual(payload["profile"]["company_name"], "Example Inc.")
+        self.assertEqual(payload["profile"]["market_cap"], 123456.0)
+        self.assertEqual(payload["financials"]["ratios_ttm"]["pe_ratio_ttm"], 20.5)
+        self.assertEqual(payload["financials"]["key_metrics_ttm"]["eps_ttm"], 5.25)
+        self.assertEqual(payload["financials"]["income_statement_latest"]["net_income"], 200.0)
+        self.assertEqual(payload["adjusted_prices"]["latest_adjustment_factor"], 108.9 / 110.0)
+        self.assertEqual(payload["corporate_actions"]["dividends"][0]["dividend"], 0.25)
+        self.assertEqual(payload["corporate_actions"]["splits"][0]["numerator"], 2.0)
 
 
 if __name__ == "__main__":

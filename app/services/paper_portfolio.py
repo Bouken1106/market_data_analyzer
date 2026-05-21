@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from ..utils import finite_float_or_none
+from .portfolio_common import apply_market_value_weights, positive_price_or_none, price_map_from_rows
 
 _PRICE_UNAVAILABLE_DETAIL = "Current market price is unavailable. Set price manually."
 
@@ -16,15 +17,7 @@ def _as_position_symbols(positions_raw: dict[str, Any]) -> list[str]:
 
 
 def _build_price_map(rows: list[Any]) -> dict[str, float | None]:
-    price_map: dict[str, float | None] = {}
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        symbol = str(row.get("symbol") or "").upper().strip()
-        if not symbol:
-            continue
-        price_map[symbol] = to_valid_price(row.get("price"))
-    return price_map
+    return price_map_from_rows(rows, include_missing=True)
 
 
 def _position_pnl_fields(quantity: float, avg_cost: float, last_price: float | None) -> dict[str, float | None]:
@@ -46,7 +39,7 @@ def _position_pnl_fields(quantity: float, avg_cost: float, last_price: float | N
 
 
 def to_valid_price(value: Any) -> float | None:
-    return finite_float_or_none(value, minimum=0.0, strict_minimum=True)
+    return positive_price_or_none(value)
 
 
 def to_finite_number(value: Any) -> float | None:
@@ -103,12 +96,7 @@ def _build_position_rows(
 
 
 def _apply_position_weights(positions: list[dict[str, Any]], total_market_value: float) -> None:
-    if total_market_value <= 0:
-        return
-    for item in positions:
-        market_value = item.get("market_value")
-        if isinstance(market_value, (int, float)):
-            item["weight"] = (float(market_value) / total_market_value) * 100
+    apply_market_value_weights(positions, total_market_value)
 
 
 def _build_recent_trades(state: Any) -> tuple[list[dict[str, Any]], int]:
