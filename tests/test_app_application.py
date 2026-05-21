@@ -31,6 +31,7 @@ class ApplicationRoutesTest(unittest.TestCase):
         expected_paths = {
             "/",
             "/jp-monitor",
+            "/valuation",
             "/portfolio-analysis",
             "/relationship-lab",
             "/leadlag-lab",
@@ -41,20 +42,28 @@ class ApplicationRoutesTest(unittest.TestCase):
 
         with TestClient(app) as client:
             jp_monitor_response = client.get("/jp-monitor")
+            valuation_response = client.get("/valuation")
             portfolio_analysis_response = client.get("/portfolio-analysis")
             relationship_response = client.get("/relationship-lab")
             leadlag_response = client.get("/leadlag-lab")
             historical_response = client.get("/historical/AAPL")
+            valuation_js_response = client.get("/static/valuation.js")
             static_js_response = client.get("/static/app.terminal.js")
 
         self.assertEqual(jp_monitor_response.status_code, 200)
+        self.assertEqual(valuation_response.status_code, 200)
         self.assertEqual(portfolio_analysis_response.status_code, 200)
         self.assertEqual(relationship_response.status_code, 200)
         self.assertEqual(leadlag_response.status_code, 200)
         self.assertEqual(historical_response.status_code, 200)
+        self.assertEqual(valuation_js_response.status_code, 200)
         self.assertEqual(static_js_response.status_code, 200)
         self.assertEqual(
             jp_monitor_response.headers.get("Cache-Control"),
+            "no-store, no-cache, must-revalidate, max-age=0",
+        )
+        self.assertEqual(
+            valuation_response.headers.get("Cache-Control"),
             "no-store, no-cache, must-revalidate, max-age=0",
         )
         self.assertEqual(
@@ -67,6 +76,10 @@ class ApplicationRoutesTest(unittest.TestCase):
         )
         self.assertEqual(
             historical_response.headers.get("Cache-Control"),
+            "no-store, no-cache, must-revalidate, max-age=0",
+        )
+        self.assertEqual(
+            valuation_js_response.headers.get("Cache-Control"),
             "no-store, no-cache, must-revalidate, max-age=0",
         )
         self.assertEqual(

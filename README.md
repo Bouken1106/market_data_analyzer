@@ -132,6 +132,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 - `/`: US Monitor（米国株リアルタイム監視）
 - `/jp-monitor`: JP Stock Monitor（日本株の日次モニター。手動更新ベース）
+- `/valuation`: 理論株価（銘柄を指定して評価手法別の理論株価と乖離率を表示）
 - `/leadlag-lab`: Lead-Lag Lab（日米業種 ETF の部分空間正則化付き PCA 検証）
 - `/relationship-lab`: Relationship Lab（複数銘柄の相関・共分散・ローリング相関・高相関ペア乖離を可視化）
 - `/` には Paper Portfolio（仮想資産）パネルを搭載し、実注文なしで売買シミュレーション可能

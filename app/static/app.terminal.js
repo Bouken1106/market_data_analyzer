@@ -27,6 +27,7 @@ const symbolPanelEl = document.getElementById("symbol-panel");
 const centerPaneEl = document.querySelector(".center-pane");
 const panelSymbolEl = document.getElementById("panel-symbol");
 const panelUpdatedEl = document.getElementById("panel-updated");
+const panelValuationLink = document.getElementById("panel-valuation-link");
 const panelRefreshBtn = document.getElementById("panel-refresh");
 const chartWrapEl = document.getElementById("chart-wrap");
 const kpiPriceEl = document.getElementById("kpi-price");
@@ -1904,6 +1905,9 @@ function renderActiveTab() {
   if (!state) return;
 
   panelSymbolEl.textContent = buildSymbolDisplayLabel(activeTabSymbol);
+  if (panelValuationLink) {
+    panelValuationLink.href = `/valuation?symbol=${encodeURIComponent(activeTabSymbol)}`;
+  }
 
   if (state.loading) {
     panelUpdatedEl.textContent = "Loading...";

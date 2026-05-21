@@ -18,6 +18,9 @@
     <a href="/jp-monitor" class="nav-tab" data-path="/jp-monitor">
       <span class="nav-tab-icon">🇯🇵</span> JP Monitor
     </a>
+    <a href="/valuation" class="nav-tab" data-path="/valuation">
+      <span class="nav-tab-icon">FV</span> 理論株価
+    </a>
     <a href="/portfolio-analysis" class="nav-tab" data-path="/portfolio-analysis">
       <span class="nav-tab-icon">🧾</span> Portfolio Risk
     </a>
@@ -106,7 +109,10 @@
             <h3 id="panel-symbol">-</h3>
             <p id="panel-updated" class="hint">-</p>
           </div>
-          <button id="panel-refresh" type="button" class="minor-action">更新</button>
+          <div class="panel-actions">
+            <a id="panel-valuation-link" class="minor-action panel-valuation-link" href="/valuation">理論株価</a>
+            <button id="panel-refresh" type="button" class="minor-action">更新</button>
+          </div>
         </div>
 
         <div id="chart-wrap" class="chart-wrap"></div>

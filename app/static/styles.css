@@ -1678,6 +1678,83 @@ details.mlops-inline-help[data-help-popover-active="true"] > div {
   font-size: 0.8rem;
 }
 
+.valuation-layout {
+  max-width: 1180px;
+}
+
+.valuation-page-header .header-top {
+  align-items: flex-start;
+}
+
+.valuation-overview-link {
+  align-self: center;
+  border: 1px solid rgba(57, 210, 192, 0.42);
+  color: #a7eee5;
+  white-space: nowrap;
+}
+
+.valuation-overview-link[aria-disabled="true"] {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.valuation-control-card,
+.valuation-result-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.valuation-search-form {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.valuation-symbol-area {
+  position: relative;
+  min-width: 0;
+}
+
+.valuation-symbol-area .symbol-dropdown {
+  top: calc(100% + 4px);
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius);
+}
+
+.valuation-form-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.valuation-form-actions button {
+  min-width: 88px;
+}
+
+.valuation-table-wrap {
+  max-height: 460px;
+  overflow: auto;
+}
+
+.valuation-page .overview-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.valuation-page .valuation-table td:nth-child(1) {
+  min-width: 160px;
+}
+
+.valuation-page .valuation-table td:nth-child(4) {
+  white-space: normal;
+  min-width: 220px;
+}
+
 .overview-tech {
   z-index: 40;
 }
@@ -1751,6 +1828,14 @@ details.mlops-inline-help[data-help-popover-active="true"] > div {
   }
 
   .valuation-actions {
+    justify-content: flex-start;
+  }
+
+  .valuation-search-form {
+    grid-template-columns: 1fr;
+  }
+
+  .valuation-form-actions {
     justify-content: flex-start;
   }
 
@@ -2711,6 +2796,27 @@ button {
   justify-content: space-between;
   align-items: flex-start;
   gap: 6px;
+}
+
+.monitor-page .panel-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.monitor-page .panel-valuation-link {
+  border: 1px solid rgba(57, 210, 192, 0.35);
+  color: #a7eee5;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.monitor-page .panel-valuation-link:hover {
+  border-color: rgba(57, 210, 192, 0.62);
+  color: #d3fff8;
+  text-decoration: none;
 }
 
 .monitor-page #panel-symbol {
