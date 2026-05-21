@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from ..utils import finite_float_or_none
+from ..utils import date_key_or_none, finite_float_or_none
 
 SparklineValue = tuple[str, float]
 CloseParser = Callable[[Any], float | None]
@@ -28,7 +28,7 @@ def daily_close_values(
         close_value = parse_close(point.get("c"))
         if close_value is None:
             continue
-        timestamp = raw_timestamp.split(" ")[0] if date_only else raw_timestamp
+        timestamp = (date_key_or_none(raw_timestamp) or raw_timestamp) if date_only else raw_timestamp
         values.append((timestamp, close_value))
     values.sort(key=lambda item: item[0], reverse=True)
     return values

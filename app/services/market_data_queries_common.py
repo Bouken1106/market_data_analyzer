@@ -7,6 +7,7 @@ from typing import Any
 
 from ..market_session import DEFAULT_COUNTRY_KEY, DEFAULT_MARKET_SESSIONS
 from ..ohlcv import latest_session_points, merge_points_by_timestamp as merge_ohlcv_points
+from ..utils import date_or_none, epoch_from_iso8601, finite_float_or_none
 from .market_data_market_hours import (
     is_country_market_open,
     is_symbol_market_open,
@@ -66,14 +67,7 @@ class MarketDataQueryCommonMixin:
 
     @staticmethod
     def _point_date(point: dict[str, Any]) -> date | None:
-        raw_t = str(point.get("t", "")).strip()
-        if not raw_t:
-            return None
-        date_text = raw_t.split(" ")[0]
-        try:
-            return date.fromisoformat(date_text)
-        except ValueError:
-            return None
+        return date_or_none(point.get("t"))
 
     @staticmethod
     def _merge_points_by_timestamp(
@@ -214,23 +208,11 @@ class MarketDataQueryCommonMixin:
 
     @staticmethod
     def _try_parse_float(value: Any) -> float | None:
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
+        return finite_float_or_none(value)
 
     @staticmethod
     def _parse_iso_epoch(value: Any) -> float | None:
-        text = str(value or "").strip()
-        if not text:
-            return None
-        try:
-            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc).timestamp()
+        return epoch_from_iso8601(value)
 
     @staticmethod
     def _is_fmp_error(payload: Any) -> bool:

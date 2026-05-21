@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from .utils import date_key_or_none, first_finite_float
+
 
 def _pick_text(payload: dict[str, Any], keys: tuple[str, ...]) -> str:
     for key in keys:
@@ -14,12 +16,7 @@ def _pick_text(payload: dict[str, Any], keys: tuple[str, ...]) -> str:
 
 
 def _pick_float(payload: dict[str, Any], keys: tuple[str, ...]) -> float | None:
-    for key in keys:
-        try:
-            return float(payload.get(key))
-        except (TypeError, ValueError):
-            continue
-    return None
+    return first_finite_float(*(payload.get(key) for key in keys))
 
 
 def normalize_ohlcv_point(
@@ -97,13 +94,13 @@ def merge_points_by_timestamp(*point_groups: Iterable[dict[str, Any]]) -> list[d
 def latest_session_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not points:
         return []
-    latest_date = str(points[-1].get("t") or "").split(" ")[0]
+    latest_date = date_key_or_none(points[-1].get("t"))
     if not latest_date:
         return points
 
     start_idx = len(points) - 1
     while start_idx > 0:
-        prior_date = str(points[start_idx - 1].get("t") or "").split(" ")[0]
+        prior_date = date_key_or_none(points[start_idx - 1].get("t"))
         if prior_date != latest_date:
             break
         start_idx -= 1

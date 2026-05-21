@@ -8,6 +8,8 @@ from typing import Any
 
 import numpy as np
 
+from ..utils import date_key_or_none, finite_float_or_none
+
 
 @dataclass(frozen=True)
 class RelationshipDataset:
@@ -23,21 +25,17 @@ class RelationshipDataset:
 
 def _extract_close(point: dict[str, Any]) -> float | None:
     for key in ("c", "close", "price"):
-        value = point.get(key)
-        try:
-            parsed = float(value)
-        except (TypeError, ValueError):
-            continue
-        if np.isfinite(parsed) and parsed > 0:
+        parsed = finite_float_or_none(point.get(key), minimum=0.0, strict_minimum=True)
+        if parsed is not None:
             return parsed
     return None
 
 
 def _extract_time(point: dict[str, Any]) -> str:
     for key in ("t", "date", "datetime", "timestamp"):
-        value = point.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
+        value = date_key_or_none(point.get(key))
+        if value:
+            return value
     return ""
 
 
@@ -94,10 +92,7 @@ def _matrix_to_rows(symbols: list[str], matrix: np.ndarray) -> list[dict[str, An
 
 
 def _safe_scalar(value: float | np.floating[Any]) -> float | None:
-    parsed = float(value)
-    if not np.isfinite(parsed):
-        return None
-    return parsed
+    return finite_float_or_none(value)
 
 
 def _window_corr(x: np.ndarray, y: np.ndarray, window: int) -> float | None:

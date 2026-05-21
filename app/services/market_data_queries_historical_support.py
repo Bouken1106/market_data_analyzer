@@ -15,6 +15,7 @@ from ..config import (
     SYMBOL_PATTERN,
     TIME_SERIES_MAX_OUTPUTSIZE,
 )
+from ..utils import date_key_or_none
 
 
 @dataclass(frozen=True)
@@ -157,7 +158,7 @@ def slice_daily_points(
 ) -> list[dict[str, Any]]:
     filtered: list[dict[str, Any]] = []
     for item in points:
-        point_date = str(item.get("t") or "").split(" ")[0]
+        point_date = date_key_or_none(item.get("t"))
         if not point_date:
             continue
         if start_date and point_date < start_date:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from ..utils import to_iso8601
+from ..utils import epoch_from_iso8601, to_iso8601
 
 MAX_CACHED_PRICE_AGE_SEC = 7 * 24 * 3600
 
@@ -114,8 +114,8 @@ def iter_fresh_cached_price_rows(
             continue
         raw_ts = cached.get("timestamp")
         if raw_ts:
-            try:
-                ts_epoch = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00")).astimezone(timezone.utc).timestamp()
+            ts_epoch = epoch_from_iso8601(raw_ts)
+            if ts_epoch is not None:
                 if (now_epoch - ts_epoch) > MAX_CACHED_PRICE_AGE_SEC:
                     logger.info(
                         "Skipping stale cached price for %s (age %.0fh > %dh)",
@@ -124,8 +124,6 @@ def iter_fresh_cached_price_rows(
                         MAX_CACHED_PRICE_AGE_SEC // 3600,
                     )
                     continue
-            except (ValueError, TypeError):
-                pass
         hydrated.append(
             (
                 symbol,

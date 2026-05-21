@@ -17,6 +17,7 @@ from ..config import (
     TIME_SERIES_MAX_OUTPUTSIZE,
 )
 from ..ohlcv import merge_points_by_timestamp as merge_ohlcv_points
+from ..utils import date_or_none
 from .market_data_provider_clients import owner_twelvedata_client
 
 
@@ -247,16 +248,4 @@ class FullDailyHistoryLoader:
             return None
 
         parsed_iso = self.owner._parse_timestamp(raw_value)
-        if not parsed_iso:
-            text = str(raw_value).strip()
-            if text:
-                try:
-                    return date.fromisoformat(text.split(" ")[0])
-                except ValueError:
-                    return None
-            return None
-
-        try:
-            return date.fromisoformat(parsed_iso[:10])
-        except ValueError:
-            return None
+        return date_or_none(parsed_iso or raw_value)

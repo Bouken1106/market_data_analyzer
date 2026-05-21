@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from app.stores.paper_portfolio import PaperPortfolioStore
+from app.stores.paper_portfolio_engine import validate_trade_request
 
 
 class PaperPortfolioStoreTest(unittest.TestCase):
@@ -72,6 +73,13 @@ class PaperPortfolioStoreTest(unittest.TestCase):
         self.assertEqual(reset_state["cash"], 500.0)
         self.assertEqual(persisted["positions"], {})
         self.assertEqual(persisted["trades"], [])
+
+    def test_validate_trade_request_rejects_non_finite_numbers(self) -> None:
+        with self.assertRaisesRegex(ValueError, "quantity must be greater than 0"):
+            validate_trade_request("AAPL", "buy", float("nan"), 100)
+
+        with self.assertRaisesRegex(ValueError, "price must be greater than 0"):
+            validate_trade_request("AAPL", "buy", 1, float("inf"))
 
 
 if __name__ == "__main__":

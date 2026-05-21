@@ -2,25 +2,15 @@
 
 from __future__ import annotations
 
-import math
-from datetime import datetime, timezone
 from typing import Any
 
-from ..utils import _datetime_from_unix
+from ..utils import first_finite_float, utc_datetime_or_none
 
 
 def pick_float(payload: dict[str, Any], *keys: str) -> float | None:
     if not isinstance(payload, dict):
         return None
-    for key in keys:
-        value = payload.get(key)
-        try:
-            num = float(value)
-        except (TypeError, ValueError):
-            continue
-        if math.isfinite(num):
-            return num
-    return None
+    return first_finite_float(*(payload.get(key) for key in keys))
 
 
 def pick_string(payload: dict[str, Any], *keys: str) -> str | None:
@@ -89,25 +79,8 @@ def series_source_descriptor(points: list[dict[str, Any]]) -> str:
 
 
 def parse_timestamp(raw: Any) -> str | None:
-    if raw is None:
-        return None
-    if isinstance(raw, (int, float)):
-        parsed = _datetime_from_unix(raw)
-        return parsed.isoformat() if parsed is not None else None
-    text = str(raw).strip()
-    if not text:
-        return None
-    if text.isdigit():
-        parsed = _datetime_from_unix(text)
-        return parsed.isoformat() if parsed is not None else None
-    normalized = text.replace("Z", "+00:00")
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc).isoformat()
+    parsed = utc_datetime_or_none(raw)
+    return parsed.isoformat() if parsed is not None else None
 
 
 def best_updated_at(

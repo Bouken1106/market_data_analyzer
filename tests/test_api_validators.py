@@ -2,7 +2,15 @@ import unittest
 
 from fastapi import HTTPException
 
-from app.utils import finite_float_or_none
+from app.utils import (
+    date_key_or_none,
+    date_or_none,
+    epoch_from_iso8601,
+    finite_float_or_none,
+    first_finite_float,
+    iso_date_or_none,
+    utc_datetime_or_none,
+)
 from app.validation import require_non_negative_float, require_positive_float, require_symbols
 
 
@@ -36,6 +44,20 @@ class ApiValidatorsTest(unittest.TestCase):
         self.assertIsNone(finite_float_or_none(0, minimum=0.0, strict_minimum=True))
         self.assertEqual(finite_float_or_none(0, minimum=0.0), 0.0)
         self.assertIsNone(finite_float_or_none("nan"))
+        self.assertEqual(first_finite_float("nan", "bad", "12.5"), 12.5)
+        self.assertEqual(first_finite_float("-1", "2", minimum=0.0, strict_minimum=True), 2.0)
+
+    def test_timestamp_helpers_normalize_common_api_shapes(self) -> None:
+        parsed = utc_datetime_or_none("2026-04-03T09:00:00+09:00")
+
+        self.assertEqual(parsed.isoformat() if parsed else None, "2026-04-03T00:00:00+00:00")
+        self.assertEqual(utc_datetime_or_none("1").isoformat(), "1970-01-01T00:00:01+00:00")
+        self.assertEqual(utc_datetime_or_none("1.0").isoformat(), "1970-01-01T00:00:01+00:00")
+        self.assertEqual(epoch_from_iso8601("1970-01-01T00:00:01Z"), 1.0)
+        self.assertEqual(iso_date_or_none("2026-04-03 09:30:00"), "2026-04-03")
+        self.assertEqual(date_or_none("2026-04-03T09:30:00+09:00").isoformat(), "2026-04-03")
+        self.assertEqual(date_key_or_none("2026-04-03T09:30:00Z"), "2026-04-03")
+        self.assertEqual(date_key_or_none("provider-specific-date"), "provider-specific-date")
 
 
 if __name__ == "__main__":

@@ -6,10 +6,11 @@ import math
 from typing import Any
 
 from ..ohlcv import latest_session_points
+from ..utils import date_key_or_none, finite_float_or_none
 
 
 def moving_average(points: list[dict[str, Any]], window: int) -> float | None:
-    closes = [item["c"] for item in points if isinstance(item.get("c"), (int, float))]
+    closes = [close for item in points if (close := finite_float_or_none(item.get("c"))) is not None]
     if len(closes) < window or window <= 0:
         return None
     sample = closes[-window:]
@@ -20,15 +21,16 @@ def atr(points: list[dict[str, Any]], window: int = 14) -> float | None:
     if len(points) < window + 1:
         return None
     trs: list[float] = []
-    prev_close = points[0]["c"]
+    prev_close = finite_float_or_none(points[0].get("c"))
     for item in points[1:]:
-        high = item.get("h")
-        low = item.get("l")
-        close = item.get("c")
-        if not isinstance(high, (int, float)) or not isinstance(low, (int, float)) or not isinstance(close, (int, float)):
-            prev_close = close if isinstance(close, (int, float)) else prev_close
+        high = finite_float_or_none(item.get("h"))
+        low = finite_float_or_none(item.get("l"))
+        close = finite_float_or_none(item.get("c"))
+        if high is None or low is None or close is None:
+            prev_close = close if close is not None else prev_close
             continue
-        tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+        reference_close = prev_close if prev_close is not None else close
+        tr = max(high - low, abs(high - reference_close), abs(low - reference_close))
         if tr >= 0:
             trs.append(tr)
         prev_close = close
@@ -47,9 +49,9 @@ def intraday_vwap(points: list[dict[str, Any]]) -> float | None:
     pv_sum = 0.0
     v_sum = 0.0
     for item in latest_session:
-        close = item.get("c")
-        volume = item.get("v")
-        if not isinstance(close, (int, float)) or not isinstance(volume, (int, float)) or volume <= 0:
+        close = finite_float_or_none(item.get("c"))
+        volume = finite_float_or_none(item.get("v"), minimum=0.0, strict_minimum=True)
+        if close is None or volume is None:
             continue
         pv_sum += close * volume
         v_sum += volume
@@ -61,11 +63,11 @@ def intraday_vwap(points: list[dict[str, Any]]) -> float | None:
 def daily_returns(points: list[dict[str, Any]], max_len: int) -> dict[str, float]:
     closes: list[tuple[str, float]] = []
     for item in points:
-        raw_t = str(item.get("t", "")).strip()
-        close = item.get("c")
-        if not raw_t or not isinstance(close, (int, float)) or close <= 0:
+        date_key = date_key_or_none(item.get("t"))
+        close = finite_float_or_none(item.get("c"), minimum=0.0, strict_minimum=True)
+        if not date_key or close is None:
             continue
-        closes.append((raw_t.split(" ")[0], close))
+        closes.append((date_key, close))
     if len(closes) < 2:
         return {}
     target = closes[-(max_len + 1) :]

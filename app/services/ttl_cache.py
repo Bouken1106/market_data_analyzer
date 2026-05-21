@@ -7,6 +7,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, MutableMapping, TypeVar
 
+from ..utils import finite_float_or_none
+
 K = TypeVar("K")
 V = TypeVar("V")
 
@@ -25,11 +27,11 @@ def _copy_payload(payload: V, copy_fn: Callable[[V], V] | None) -> V:
 
 
 def ttl_cache_is_fresh(cached_epoch: Any, ttl_sec: int, *, now_epoch: float | None = None) -> bool:
-    reference_now = time.time() if now_epoch is None else float(now_epoch)
-    try:
-        return (reference_now - float(cached_epoch)) <= ttl_sec
-    except (TypeError, ValueError):
+    reference_now = time.time() if now_epoch is None else finite_float_or_none(now_epoch)
+    parsed_epoch = finite_float_or_none(cached_epoch)
+    if reference_now is None or parsed_epoch is None:
         return False
+    return (reference_now - parsed_epoch) <= ttl_sec
 
 
 def build_cached_response(

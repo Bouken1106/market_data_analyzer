@@ -12,7 +12,7 @@ import httpx
 from fastapi import HTTPException
 
 from ..config import LOGGER, settings
-from ..utils import fallback_interval_seconds
+from ..utils import fallback_interval_seconds, finite_float_or_none
 from .market_data_state_support import (
     build_empty_price_row,
     build_price_record,
@@ -26,10 +26,8 @@ from .market_data_state_support import (
 class MarketDataStateMixin:
     @staticmethod
     def _is_cache_fresh(cached_epoch: Any, ttl_sec: int) -> bool:
-        try:
-            return (time.time() - float(cached_epoch)) <= ttl_sec
-        except (TypeError, ValueError):
-            return False
+        parsed_epoch = finite_float_or_none(cached_epoch)
+        return parsed_epoch is not None and (time.time() - parsed_epoch) <= ttl_sec
 
     @staticmethod
     def _build_price_record(
@@ -269,11 +267,8 @@ class MarketDataStateMixin:
         for point in points:
             if not isinstance(point, dict) or self._point_date(point) != session_date:
                 continue
-            try:
-                close_value = float(point.get("c"))
-            except (TypeError, ValueError):
-                continue
-            if close_value > 0:
+            close_value = finite_float_or_none(point.get("c"), minimum=0.0, strict_minimum=True)
+            if close_value is not None:
                 return True
         return False
 

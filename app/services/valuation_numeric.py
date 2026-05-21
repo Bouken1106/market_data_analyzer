@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import math
 from typing import Any
+
+from ..utils import finite_float_or_none
 
 
 def parse_float(value: Any) -> float | None:
@@ -12,11 +13,7 @@ def parse_float(value: Any) -> float | None:
     text = str(value).strip().replace(",", "")
     if not text or text in {"-", ".", "None", "null", "NaN"}:
         return None
-    try:
-        parsed = float(text)
-    except (TypeError, ValueError):
-        return None
-    return parsed if math.isfinite(parsed) else None
+    return finite_float_or_none(text)
 
 
 def positive_float(value: Any) -> float | None:

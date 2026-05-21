@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from ..utils import date_key_or_none, finite_float_or_none
 from .data_adapter import HistoricalPointBatch
 from .schemas import LeadLagConfig
 
@@ -38,15 +39,15 @@ def _points_to_price_series(points: list[dict[str, Any]], field: str) -> pd.Seri
     for item in points:
         if not isinstance(item, dict):
             continue
-        day = str(item.get("t") or "").split(" ")[0]
+        day = date_key_or_none(item.get("t"))
         if not day:
             continue
         try:
             index_value = pd.Timestamp(day)
-            price = float(item.get(field))
         except (TypeError, ValueError):
             continue
-        if not np.isfinite(price) or price <= 0:
+        price = finite_float_or_none(item.get(field), minimum=0.0, strict_minimum=True)
+        if price is None:
             continue
         values[index_value] = price
     if not values:

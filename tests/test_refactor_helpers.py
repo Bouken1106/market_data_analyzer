@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from app.services.market_data_historical_jquants import JQuantsHistoricalClient
-from app.services.market_data_math import atr, beta_and_corr, moving_average
+from app.services.market_data_math import atr, beta_and_corr, daily_returns, intraday_vwap, moving_average
 from app.services.market_data_overview_ops import MarketDataOverviewOps
 from app.services.market_data_sparkline import (
     build_daily_sparkline_payload,
@@ -73,6 +73,37 @@ class RefactorHelperTest(unittest.TestCase):
         ]
         self.assertEqual(moving_average(points, 2), 13.0)
         self.assertAlmostEqual(atr(points, 2), 3.0)
+        self.assertEqual(moving_average([{"c": "10"}, {"c": float("nan")}, {"c": "14"}], 2), 12.0)
+        self.assertAlmostEqual(
+            atr(
+                [
+                    {"c": "10.0", "h": "11.0", "l": "9.0"},
+                    {"c": "12.0", "h": "13.0", "l": "10.0"},
+                    {"c": "14.0", "h": "15.0", "l": "12.0"},
+                ],
+                2,
+            ),
+            3.0,
+        )
+        string_returns = daily_returns(
+            [
+                {"t": "2024-01-01 15:00:00", "c": "100"},
+                {"t": "2024-01-02 15:00:00", "c": "110"},
+                {"t": "2024-01-03 15:00:00", "c": "bad"},
+            ],
+            max_len=5,
+        )
+        self.assertEqual(set(string_returns), {"2024-01-02"})
+        self.assertAlmostEqual(string_returns["2024-01-02"], 0.1)
+        self.assertEqual(
+            intraday_vwap(
+                [
+                    {"t": "2024-01-03 09:30:00", "c": "10", "v": "100"},
+                    {"t": "2024-01-03 09:31:00", "c": "20", "v": "300"},
+                ]
+            ),
+            17.5,
+        )
 
         left = [{"t": "2024-01-01", "c": 100.0}, {"t": "2024-01-02", "c": 110.0}, {"t": "2024-01-03", "c": 118.0}]
         right = [{"t": "2024-01-01", "c": 50.0}, {"t": "2024-01-02", "c": 60.0}, {"t": "2024-01-03", "c": 63.0}]

@@ -10,7 +10,7 @@ from typing import Any
 
 from ..config import LOGGER
 from ..ohlcv import normalize_ohlcv_points
-from ..utils import is_valid_symbol, normalize_symbol, read_json_file, write_json_file
+from ..utils import epoch_from_iso8601, is_valid_symbol, normalize_symbol, read_json_file, write_json_file
 
 
 class FullDailyHistoryStore:
@@ -34,13 +34,9 @@ class FullDailyHistoryStore:
             return []
         updated_raw = payload.get("updated_at")
         if isinstance(updated_raw, str):
-            try:
-                parsed = datetime.fromisoformat(updated_raw.replace("Z", "+00:00"))
-                if parsed.tzinfo is None:
-                    parsed = parsed.replace(tzinfo=timezone.utc)
-                self._updated_at_epoch[symbol] = parsed.astimezone(timezone.utc).timestamp()
-            except Exception:
-                pass
+            parsed_epoch = epoch_from_iso8601(updated_raw)
+            if parsed_epoch is not None:
+                self._updated_at_epoch[symbol] = parsed_epoch
         points = payload.get("points")
         if not isinstance(points, list):
             return []

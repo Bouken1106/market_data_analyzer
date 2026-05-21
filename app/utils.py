@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -81,6 +81,18 @@ def finite_float_or_none(
     return numeric
 
 
+def first_finite_float(
+    *values: Any,
+    minimum: float | None = None,
+    strict_minimum: bool = False,
+) -> float | None:
+    for value in values:
+        parsed = finite_float_or_none(value, minimum=minimum, strict_minimum=strict_minimum)
+        if parsed is not None:
+            return parsed
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Timestamp helpers
 # ---------------------------------------------------------------------------
@@ -91,7 +103,7 @@ def utc_now_iso() -> str:
 
 def to_iso8601(value: Any) -> str:
     if isinstance(value, (int, float)):
-        parsed = _datetime_from_unix(value)
+        parsed = datetime_from_unix(value)
         if parsed is not None:
             return parsed.isoformat()
     if isinstance(value, str) and value:
@@ -99,7 +111,7 @@ def to_iso8601(value: Any) -> str:
     return utc_now_iso()
 
 
-def _datetime_from_unix(value: Any) -> datetime | None:
+def datetime_from_unix(value: Any) -> datetime | None:
     try:
         numeric = float(value)
     except (TypeError, ValueError):
@@ -120,6 +132,74 @@ def _datetime_from_unix(value: Any) -> datetime | None:
         return datetime.fromtimestamp(numeric, tz=timezone.utc)
     except (OverflowError, OSError, ValueError):
         return None
+
+
+def datetime_from_iso8601(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def utc_datetime_or_none(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return datetime_from_unix(value)
+
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.isdigit():
+        return datetime_from_unix(text)
+    numeric = finite_float_or_none(text)
+    if numeric is not None:
+        return datetime_from_unix(numeric)
+    return datetime_from_iso8601(text)
+
+
+def date_or_none(value: Any) -> date | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    date_text = text.split(" ")[0]
+    try:
+        return date.fromisoformat(date_text)
+    except ValueError:
+        pass
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
+def iso_date_or_none(value: Any) -> str | None:
+    parsed = date_or_none(value)
+    return parsed.isoformat() if parsed is not None else None
+
+
+def date_key_or_none(value: Any) -> str | None:
+    parsed = iso_date_or_none(value)
+    if parsed is not None:
+        return parsed
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return text.split(" ")[0]
+
+
+def epoch_from_iso8601(value: Any) -> float | None:
+    parsed = datetime_from_iso8601(value)
+    return parsed.timestamp() if parsed is not None else None
+
+
+_datetime_from_unix = datetime_from_unix
 
 
 def read_json_file(path: Path) -> Any | None:

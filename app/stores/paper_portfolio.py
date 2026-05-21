@@ -6,7 +6,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from ..utils import is_valid_symbol, normalize_symbol, utc_now_iso
+from ..utils import finite_float_or_none, is_valid_symbol, normalize_symbol, utc_now_iso
 from .json_state import JsonStateStore
 from .paper_portfolio_engine import (
     SUPPORTED_TRADE_SIDES,
@@ -69,23 +69,31 @@ class PaperPortfolioStore(JsonStateStore):
 
     @staticmethod
     def _to_positive_float(value: Any, fallback: float) -> float:
-        try:
-            parsed = float(value)
-        except (TypeError, ValueError):
-            return float(fallback)
-        if parsed <= 0:
-            return float(fallback)
-        return parsed
+        return PaperPortfolioStore._float_or_fallback(
+            value,
+            fallback=fallback,
+            minimum=0.0,
+            strict_minimum=True,
+        )
 
     @staticmethod
     def _to_non_negative_float(value: Any, fallback: float) -> float:
-        try:
-            parsed = float(value)
-        except (TypeError, ValueError):
-            return float(fallback)
-        if parsed < 0:
-            return float(fallback)
-        return parsed
+        return PaperPortfolioStore._float_or_fallback(
+            value,
+            fallback=fallback,
+            minimum=0.0,
+        )
+
+    @staticmethod
+    def _float_or_fallback(
+        value: Any,
+        *,
+        fallback: float,
+        minimum: float | None = None,
+        strict_minimum: bool = False,
+    ) -> float:
+        parsed = finite_float_or_none(value, minimum=minimum, strict_minimum=strict_minimum)
+        return float(fallback) if parsed is None else parsed
 
     def _normalize_positions(self, raw: Any) -> dict[str, dict[str, float]]:
         if not isinstance(raw, dict):
@@ -141,13 +149,7 @@ class PaperPortfolioStore(JsonStateStore):
 
     @staticmethod
     def _to_non_negative_or_negative_float(value: Any) -> float | None:
-        try:
-            parsed = float(value)
-        except (TypeError, ValueError):
-            return None
-        if parsed != parsed:  # NaN guard
-            return None
-        return parsed
+        return finite_float_or_none(value)
 
     def _write_no_lock(self) -> None:
         payload = self._snapshot_state_no_lock()

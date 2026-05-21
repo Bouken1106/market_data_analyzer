@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from ..utils import is_valid_symbol, normalize_symbol
+from ..utils import finite_float_or_none, is_valid_symbol, normalize_symbol
 
 SUPPORTED_TRADE_SIDES = frozenset({"buy", "sell", "short", "cover"})
 TradeApplier = Callable[..., tuple[float, float | None]]
@@ -13,16 +13,16 @@ TradeApplier = Callable[..., tuple[float, float | None]]
 def validate_trade_request(symbol: str, side: str, quantity: float, price: float) -> tuple[str, str, float, float]:
     normalized_symbol = normalize_symbol(symbol)
     normalized_side = str(side or "").lower().strip()
-    qty = float(quantity)
-    px = float(price)
+    qty = finite_float_or_none(quantity, minimum=0.0, strict_minimum=True)
+    px = finite_float_or_none(price, minimum=0.0, strict_minimum=True)
 
     if not is_valid_symbol(normalized_symbol):
         raise ValueError("Invalid symbol format.")
     if normalized_side not in SUPPORTED_TRADE_SIDES:
         raise ValueError("side must be buy, sell, short, or cover.")
-    if qty <= 0:
+    if qty is None:
         raise ValueError("quantity must be greater than 0.")
-    if px <= 0:
+    if px is None:
         raise ValueError("price must be greater than 0.")
     return normalized_symbol, normalized_side, qty, px
 
