@@ -92,6 +92,24 @@ const PAGE_CONFIG = {
   staticFallbackLabel: String(pageDataset.staticFallback || "manual").trim() || "manual",
 };
 
+const shouldUseEodOnlySparkline = () => PAGE_CONFIG.marketPreset === "us";
+const applySparklineModeParams = (params) => {
+  if (shouldUseEodOnlySparkline()) {
+    params.set("eod_cache_only", "true");
+  }
+  return params;
+};
+const isConfiguredMarketOpenNow = () => {
+  if (PAGE_CONFIG.marketPreset !== "us") return false;
+  return isConfiguredRegularSessionOpen(readZoneClockParts(new Date(), sessionFormatter));
+};
+const resolveSparklinePriceSource = (item, hasCurrentPrice) => {
+  if (String(item?.price_mode || "").trim() === "eod_close") {
+    return "eod_close";
+  }
+  return hasCurrentPrice ? "sparkline_quote" : "sparkline_close";
+};
+
 const MAX_SYMBOLS = 8;
 const MAX_DROPDOWN_ITEMS = 120;
 const PRIMARY_TIME_ZONE = PAGE_CONFIG.primaryTimeZone;
@@ -1277,7 +1295,7 @@ async function loadSymbolInsights(symbols, refresh = false) {
   targets.forEach((symbol) => sparklineFetchInFlight.add(symbol));
 
   try {
-    const params = new URLSearchParams({ symbols: targets.join(",") });
+    const params = applySparklineModeParams(new URLSearchParams({ symbols: targets.join(",") }));
     if (refresh) params.set("refresh", "true");
     const { response, result } = await fetchJson(`/api/sparkline?${params.toString()}`);
     if (!response.ok || !Array.isArray(result.items)) return;
@@ -1303,15 +1321,18 @@ async function loadSymbolInsights(symbols, refresh = false) {
         trend_30d: trend,
       });
 
-      // 価格が未取得/0のときは quote 現在値を優先し、なければ終値で補完する
+      // EODモードでは終値、通常モードではquote現在値を優先する。
       const existingRow = latestRowsBySymbol.get(symbol);
       const hasValidPrice = Number(existingRow?.price) > 0;
       const fallbackPrice = (Number.isFinite(currentPrice) && currentPrice > 0) ? currentPrice : latestClose;
+      const hasCurrentPrice = Number.isFinite(currentPrice) && currentPrice > 0;
+      const resolvedSource = resolveSparklinePriceSource(item, hasCurrentPrice);
+      const isEodClose = resolvedSource === "eod_close";
+      const marketOpen = isConfiguredMarketOpenNow();
       const shouldReplaceCachedPrice = (
-        !hasValidPrice
-        || refresh
-        || !PAGE_CONFIG.streamEnabled
-        || (Number.isFinite(currentPrice) && currentPrice > 0)
+        isEodClose
+          ? (!hasValidPrice || !marketOpen || !PAGE_CONFIG.streamEnabled)
+          : (!hasValidPrice || refresh || !PAGE_CONFIG.streamEnabled || hasCurrentPrice)
       );
       if (shouldReplaceCachedPrice && Number.isFinite(fallbackPrice) && fallbackPrice > 0) {
         latestRowsBySymbol.set(symbol, {
@@ -1319,7 +1340,7 @@ async function loadSymbolInsights(symbols, refresh = false) {
           symbol,
           price: fallbackPrice,
           timestamp: item?.updated_at ?? item?.latest_close_date ?? existingRow?.timestamp ?? null,
-          source: existingRow?.source || (Number.isFinite(currentPrice) && currentPrice > 0 ? "sparkline_quote" : "sparkline_close"),
+          source: (refresh || resolvedSource === "eod_close") ? resolvedSource : (existingRow?.source || resolvedSource),
         });
         saveWatchlistRowsCache();
       }
@@ -2763,14 +2784,18 @@ async function refreshWatchlistData() {
         });
         saveSymbolInsightsCache();
 
-        // 現在価格が未取得の場合は quote 現在値を優先し、なければ終値で補完する。
+        // EODモードでは終値、通常モードではquote現在値を優先する。
         const existingRow = latestRowsBySymbol.get(symbol);
         const hasValidPrice = existingRow && Number(existingRow.price) > 0;
         const fallbackPrice = (Number.isFinite(currentPrice) && currentPrice > 0) ? currentPrice : latestClose;
+        const hasCurrentPrice = Number.isFinite(currentPrice) && currentPrice > 0;
+        const resolvedSource = resolveSparklinePriceSource(item, hasCurrentPrice);
+        const isEodClose = resolvedSource === "eod_close";
+        const marketOpen = isConfiguredMarketOpenNow();
         const shouldReplaceCachedPrice = (
-          !hasValidPrice
-          || !PAGE_CONFIG.streamEnabled
-          || (Number.isFinite(currentPrice) && currentPrice > 0)
+          isEodClose
+            ? (!hasValidPrice || !marketOpen || !PAGE_CONFIG.streamEnabled)
+            : (!hasValidPrice || !PAGE_CONFIG.streamEnabled || hasCurrentPrice)
         );
         if (shouldReplaceCachedPrice && Number.isFinite(fallbackPrice) && fallbackPrice > 0) {
           latestRowsBySymbol.set(symbol, {
@@ -2778,7 +2803,7 @@ async function refreshWatchlistData() {
             symbol,
             price: fallbackPrice,
             timestamp: item.updated_at ?? item.latest_close_date ?? null,
-            source: Number.isFinite(currentPrice) && currentPrice > 0 ? "sparkline_quote" : "sparkline_close",
+            source: resolvedSource,
           });
           saveWatchlistRowsCache();
         }
@@ -2786,7 +2811,7 @@ async function refreshWatchlistData() {
     };
 
     // まずは一括再取得。取りこぼした銘柄のみ個別再取得する。
-    const batchParams = new URLSearchParams({ symbols: symbols.join(","), refresh: "true" });
+    const batchParams = applySparklineModeParams(new URLSearchParams({ symbols: symbols.join(","), refresh: "true" }));
     const batch = await fetchJson(`/api/sparkline?${batchParams.toString()}`);
     if (batch.response.ok) {
       applyItems(batch.result?.items);
@@ -2794,7 +2819,7 @@ async function refreshWatchlistData() {
 
     const missing = symbols.filter((symbol) => !refreshed.has(symbol));
     for (const symbol of missing) {
-      const params = new URLSearchParams({ symbols: symbol, refresh: "true" });
+      const params = applySparklineModeParams(new URLSearchParams({ symbols: symbol, refresh: "true" }));
       const single = await fetchJson(`/api/sparkline?${params.toString()}`);
       if (!single.response.ok) continue;
       applyItems(single.result?.items);

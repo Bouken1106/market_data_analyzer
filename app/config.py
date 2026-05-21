@@ -116,6 +116,10 @@ class StorageSettings:
     ui_state_cache_path: Path
     paper_initial_cash: float
     auto_refresh_on_startup: bool
+    realtime_on_market_open: bool
+    eod_cache_auto_refresh: bool
+    eod_cache_refresh_delay_min: int
+    eod_cache_refresh_check_sec: int
 
 
 @dataclass(frozen=True)
@@ -271,6 +275,10 @@ def _load_storage_settings(app_dir: Path) -> StorageSettings:
         ui_state_cache_path=app_dir / "cache" / "ui_state.json",
         paper_initial_cash=_float_env("PAPER_INITIAL_CASH", default=1_000_000, minimum=1),
         auto_refresh_on_startup=_bool_env("AUTO_REFRESH_ON_STARTUP", default=False),
+        realtime_on_market_open=_bool_env("REALTIME_ON_MARKET_OPEN", default=True),
+        eod_cache_auto_refresh=_bool_env("EOD_CACHE_AUTO_REFRESH", default=True),
+        eod_cache_refresh_delay_min=_int_env("EOD_CACHE_REFRESH_DELAY_MIN", default=45, minimum=0),
+        eod_cache_refresh_check_sec=_int_env("EOD_CACHE_REFRESH_CHECK_SEC", default=300, minimum=60),
     )
 
 
@@ -401,6 +409,10 @@ PAPER_PORTFOLIO_CACHE_PATH = settings.storage.paper_portfolio_cache_path
 UI_STATE_CACHE_PATH = settings.storage.ui_state_cache_path
 PAPER_INITIAL_CASH = settings.storage.paper_initial_cash
 AUTO_REFRESH_ON_STARTUP = settings.storage.auto_refresh_on_startup
+REALTIME_ON_MARKET_OPEN = settings.storage.realtime_on_market_open
+EOD_CACHE_AUTO_REFRESH = settings.storage.eod_cache_auto_refresh
+EOD_CACHE_REFRESH_DELAY_MIN = settings.storage.eod_cache_refresh_delay_min
+EOD_CACHE_REFRESH_CHECK_SEC = settings.storage.eod_cache_refresh_check_sec
 
 # ---------------------------------------------------------------------------
 # Historical data

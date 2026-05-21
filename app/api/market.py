@@ -10,6 +10,8 @@ from ..models import SymbolUpdateRequest, WatchlistStateRequest
 from ..services.market_api_service import (
     build_relationship_payload,
     build_relationship_request,
+    gather_cached_eod_sparkline_items,
+    gather_eod_sparkline_items,
     gather_relationship_points,
     latest_watchlist_commentary_payload,
     persist_watchlist_commentary,
@@ -170,7 +172,13 @@ async def security_overview(
 
 
 @router.get("/api/sparkline")
-async def sparkline(symbols: str, hub: HubDep, refresh: bool = False) -> JSONResponse:
+async def sparkline(
+    symbols: str,
+    hub: HubDep,
+    refresh: bool = False,
+    eod_only: bool = False,
+    eod_cache_only: bool = False,
+) -> JSONResponse:
     max_symbols = settings.provider.max_basic_symbols
     target_symbols = require_symbols(
         symbols,
@@ -178,7 +186,12 @@ async def sparkline(symbols: str, hub: HubDep, refresh: bool = False) -> JSONRes
         max_detail=f"You can request up to {max_symbols} symbols at once.",
     )
 
-    items = await hub.sparkline_payload(target_symbols, refresh=refresh)
+    if eod_cache_only:
+        items = await gather_cached_eod_sparkline_items(hub, symbols=target_symbols)
+    elif eod_only:
+        items = await gather_eod_sparkline_items(hub, symbols=target_symbols, refresh=refresh)
+    else:
+        items = await hub.sparkline_payload(target_symbols, refresh=refresh)
     return ok_json_response(
         symbols=target_symbols,
         items=items,

@@ -76,6 +76,10 @@ FULL_HISTORY_CHUNK_YEARS=15
 FULL_HISTORY_MAX_CHUNKS=20
 DAILY_DIFF_MIN_RECHECK_SEC=21600
 BETA_MARKET_RECHECK_SEC=86400
+REALTIME_ON_MARKET_OPEN=true
+EOD_CACHE_AUTO_REFRESH=true
+EOD_CACHE_REFRESH_DELAY_MIN=45
+EOD_CACHE_REFRESH_CHECK_SEC=300
 PAPER_INITIAL_CASH=1000000
 LMSTUDIO_BASE_URL=http://127.0.0.1:1234/v1
 LMSTUDIO_CHAT_COMPLETIONS_URL=http://127.0.0.1:1234/v1/chat/completions
@@ -184,6 +188,8 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - ヒストリカルデータは `GET /api/historical/{symbol}` で取得し、サーバー側でTTLキャッシュします。
 - 銘柄詳細ビューは `GET /api/security-overview/{symbol}` で取得し、短時間TTLキャッシュします（複数API呼び出しを集約）。
 - 銘柄詳細の日足データは最古日からの履歴をディスク永続化し、次回以降は差分更新のみでAPI消費を抑えます。
+- US Monitor の手動更新は、通常ローカルの日足終値キャッシュだけを読み、APIを呼びません。日足終値キャッシュは米国市場の引け後（既定45分後）に1日1回バックグラウンドで更新します。
+- 米国市場の通常取引時間中は、WebSocket/RESTフォールバックの価格行を優先してリアルタイム価格を表示します（`REALTIME_ON_MARKET_OPEN=false` で無効化可能）。
 - 価格の自動更新（WebSocket購読/RESTフォールバック）は「各国マーケットの営業日・営業時間内」のみ実行します（営業時間外は `market-closed`）。
 - 国判定は `SYMBOL_COUNTRY_MAP`（例: `AAPL:United States,7203.T:Japan,9988.HK:Hong Kong`）を優先し、未設定時はシンボル接尾辞ヒント（`.T`, `.HK`, `.L` など）→ `SYMBOL_CATALOG_COUNTRY` の順で判定します。
 - この時間判定は通常取引時間ベースです（祝日・臨時休場・昼休みは未考慮）。

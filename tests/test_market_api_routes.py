@@ -11,10 +11,24 @@ from app.application import create_app
 from app.bootstrap import AppServices
 
 
+class _FakeDailyHistoryStore:
+    async def get(self, symbol: str, *, copy: bool = True) -> list[dict[str, object]]:
+        del copy
+        closes = {
+            "AAPL": (121.0, 123.45),
+            "MSFT": (230.0, 234.56),
+        }
+        previous, latest = closes.get(symbol, (100.0, 101.0))
+        return [
+            {"t": "2026-04-01", "c": previous, "_src": "test-cache"},
+            {"t": "2026-04-02", "c": latest, "_src": "test-cache"},
+        ]
+
+
 class _FakeHub:
     def __init__(self) -> None:
         self.provider = "both"
-        self.full_daily_history_store = object()
+        self.full_daily_history_store = _FakeDailyHistoryStore()
         self.symbols = ["AAPL", "MSFT"]
         self.listeners: list[asyncio.Queue] = []
         self.set_symbols_calls: list[list[str]] = []
@@ -294,6 +308,53 @@ class MarketApiRoutesTest(unittest.TestCase):
 
         self.assertEqual(portfolio_response.status_code, 200)
         self.assertEqual(portfolio_response.json()["equity"], 1000.0)
+
+    def test_sparkline_eod_only_uses_provider_historical_payload_without_quote(self) -> None:
+        with TestClient(self.app) as client:
+            response = client.get("/api/sparkline?symbols=AAPL,MSFT&refresh=true&eod_only=true")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["symbols"], ["AAPL", "MSFT"])
+        self.assertEqual(len(payload["items"]), 2)
+        self.assertEqual(payload["items"][0]["symbol"], "AAPL")
+        self.assertEqual(payload["items"][0]["latest_close"], 123.45)
+        self.assertEqual(payload["items"][0]["current_price"], 123.45)
+        self.assertEqual(payload["items"][0]["reference_close"], 121.0)
+        self.assertEqual(payload["items"][0]["price_mode"], "eod_close")
+        self.assertEqual(payload["items"][0]["source"], "both_eod")
+        self.assertEqual(self.hub.sparkline_calls, [])
+        self.assertEqual(
+            self.hub.historical_calls,
+            [
+                {
+                    "symbol": "AAPL",
+                    "years": 5,
+                    "refresh": True,
+                    "months": 2,
+                },
+                {
+                    "symbol": "MSFT",
+                    "years": 5,
+                    "refresh": True,
+                    "months": 2,
+                },
+            ],
+        )
+
+    def test_sparkline_eod_cache_only_reads_daily_history_store_without_api_calls(self) -> None:
+        with TestClient(self.app) as client:
+            response = client.get("/api/sparkline?symbols=AAPL,MSFT&eod_cache_only=true")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["symbols"], ["AAPL", "MSFT"])
+        self.assertEqual(len(payload["items"]), 2)
+        self.assertEqual(payload["items"][0]["latest_close"], 123.45)
+        self.assertEqual(payload["items"][0]["source"], "test-cache_eod")
+        self.assertEqual(payload["items"][0]["price_mode"], "eod_close")
+        self.assertEqual(self.hub.sparkline_calls, [])
+        self.assertEqual(self.hub.historical_calls, [])
 
     def test_market_stream_response_emits_initial_snapshot_and_unregisters_listener(self) -> None:
         async def run_test() -> None:
