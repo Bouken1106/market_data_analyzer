@@ -85,6 +85,22 @@ const fmpCfSnapshotEl = document.getElementById("fmp-cf-snapshot");
 const fmpDividendsEl = document.getElementById("fmp-dividends");
 const fmpSplitsEl = document.getElementById("fmp-splits");
 const fmpCompanyProfileEl = document.getElementById("fmp-company-profile");
+const loadValuationBtn = document.getElementById("load-valuation");
+const refreshValuationBtn = document.getElementById("refresh-valuation");
+const valuationMetaEl = document.getElementById("valuation-meta");
+const valuationCurrentEl = document.getElementById("valuation-current");
+const valuationMedianEl = document.getElementById("valuation-median");
+const valuationUpsideEl = document.getElementById("valuation-upside");
+const valuationCountEl = document.getElementById("valuation-count");
+const valuationBodyEl = document.getElementById("valuation-body");
+const valuationFairPerInput = document.getElementById("valuation-fair-per");
+const valuationFairPbrInput = document.getElementById("valuation-fair-pbr");
+const valuationFairPsrInput = document.getElementById("valuation-fair-psr");
+const valuationFairEvEbitdaInput = document.getElementById("valuation-fair-ev-ebitda");
+const valuationFairPFcfInput = document.getElementById("valuation-fair-p-fcf");
+const valuationRiskFreeInput = document.getElementById("valuation-risk-free-rate");
+const valuationFcfGrowthInput = document.getElementById("valuation-fcf-growth-rate");
+const valuationTerminalGrowthInput = document.getElementById("valuation-terminal-growth-rate");
 
 let currentSymbol = "";
 let currentPayload = null;
@@ -167,6 +183,12 @@ function setFmpMeta(message, isError = false) {
   fmpReferenceMetaEl.classList.toggle("error", Boolean(isError));
 }
 
+function setValuationMeta(message, isError = false) {
+  if (!valuationMetaEl) return;
+  valuationMetaEl.textContent = message || "";
+  valuationMetaEl.classList.toggle("error", Boolean(isError));
+}
+
 function closeParamHelpPopovers(exceptDetail = null) {
   const openDetails = document.querySelectorAll("details.param-help[open]");
   openDetails.forEach((detail) => {
@@ -178,6 +200,22 @@ function closeParamHelpPopovers(exceptDetail = null) {
 function setCurrentPrice(value) {
   const num = Number(value);
   currentPriceEl.textContent = Number.isFinite(num) ? `$${formatPrice(num)}` : "-";
+}
+
+function currencyPrefix(currency) {
+  const code = String(currency || "").toUpperCase();
+  if (code === "JPY") return "¥";
+  if (code === "EUR") return "€";
+  if (code === "GBP") return "£";
+  return "$";
+}
+
+function formatCurrencyValue(value, currency = "USD") {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "-";
+  const code = String(currency || "").toUpperCase();
+  const digits = code === "JPY" ? 0 : 2;
+  return `${currencyPrefix(code)}${num.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
 }
 
 function quantile(sortedValues, q) {
@@ -1124,6 +1162,122 @@ function renderFmpReference(payload) {
   }
 }
 
+function setValuationPlaceholder() {
+  if (valuationCurrentEl) valuationCurrentEl.textContent = "-";
+  if (valuationMedianEl) valuationMedianEl.textContent = "-";
+  if (valuationUpsideEl) {
+    valuationUpsideEl.textContent = "-";
+    setMetricTrendClass(valuationUpsideEl, "neutral");
+  }
+  if (valuationCountEl) valuationCountEl.textContent = "-";
+  if (valuationBodyEl) {
+    valuationBodyEl.innerHTML = '<tr><td colspan="4">-</td></tr>';
+  }
+}
+
+function readValuationNumber(inputEl) {
+  const value = Number(inputEl?.value);
+  return Number.isFinite(value) ? value : null;
+}
+
+function valuationParams(refresh = false, cacheOnly = true) {
+  const params = new URLSearchParams();
+  if (refresh) params.set("refresh", "true");
+  params.set("cache_only", cacheOnly ? "true" : "false");
+
+  const entries = [
+    ["fair_per", readValuationNumber(valuationFairPerInput)],
+    ["fair_pbr", readValuationNumber(valuationFairPbrInput)],
+    ["fair_psr", readValuationNumber(valuationFairPsrInput)],
+    ["fair_ev_ebitda", readValuationNumber(valuationFairEvEbitdaInput)],
+    ["fair_p_fcf", readValuationNumber(valuationFairPFcfInput)],
+    ["risk_free_rate", readValuationNumber(valuationRiskFreeInput)],
+    ["fcf_growth_rate", readValuationNumber(valuationFcfGrowthInput)],
+    ["terminal_growth_rate", readValuationNumber(valuationTerminalGrowthInput)],
+  ];
+  entries.forEach(([key, value]) => {
+    if (Number.isFinite(value)) params.set(key, String(value));
+  });
+  return params;
+}
+
+function renderValuation(payload) {
+  const currency = payload?.currency || "USD";
+  const summary = payload?.summary || {};
+  const current = Number(payload?.current_price);
+  const medianPrice = Number(summary.median_price);
+  const medianUpside = Number(summary.median_upside_pct);
+  const calculated = Number(summary.calculated_count);
+  const total = Number(summary.method_count);
+
+  if (valuationCurrentEl) valuationCurrentEl.textContent = formatCurrencyValue(current, currency);
+  if (valuationMedianEl) valuationMedianEl.textContent = formatCurrencyValue(medianPrice, currency);
+  if (valuationUpsideEl) {
+    valuationUpsideEl.textContent = Number.isFinite(medianUpside) ? formatPercent(medianUpside) : "-";
+    setMetricTrendClass(valuationUpsideEl, Number.isFinite(medianUpside) ? (medianUpside >= 0 ? "good" : "bad") : "neutral");
+  }
+  if (valuationCountEl) {
+    valuationCountEl.textContent = Number.isFinite(calculated) && Number.isFinite(total) ? `${calculated} / ${total}` : "-";
+  }
+
+  if (!valuationBodyEl) return;
+  const rows = Array.isArray(payload?.valuations) ? payload.valuations : [];
+  if (rows.length === 0) {
+    valuationBodyEl.innerHTML = '<tr><td colspan="4">No valuation methods returned.</td></tr>';
+    return;
+  }
+  valuationBodyEl.innerHTML = rows.map((item) => {
+    const theoretical = Number(item?.theoretical_price);
+    const upside = Number(item?.upside_pct);
+    const calculatedLabel = item?.is_calculated ? "calculated" : (item?.unavailable_reason || "unavailable");
+    const upsideClass = Number.isFinite(upside) ? (upside >= 0 ? "metric-good" : "metric-bad") : "";
+    return `
+      <tr>
+        <td>${escapeHtml(item?.method_name || "-")}</td>
+        <td>${Number.isFinite(theoretical) ? formatCurrencyValue(theoretical, currency) : "-"}</td>
+        <td class="${upsideClass}">${Number.isFinite(upside) ? formatPercent(upside) : "-"}</td>
+        <td>${escapeHtml(calculatedLabel)}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+async function loadValuation(refresh = false, cacheOnly = true) {
+  if (!currentSymbol || !loadValuationBtn || !refreshValuationBtn) return;
+  loadValuationBtn.disabled = true;
+  refreshValuationBtn.disabled = true;
+  setValuationMeta(refresh ? "Refreshing valuation..." : "Loading cached valuation...");
+
+  try {
+    const params = valuationParams(refresh, cacheOnly);
+    const response = await fetch(`/api/valuation/${encodeURIComponent(currentSymbol)}?${params.toString()}`);
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.ok) {
+      setValuationPlaceholder();
+      setValuationMeta(result.detail || "Failed to load valuation", true);
+      return;
+    }
+    renderValuation(result);
+    const inputStatus = result.input_status || {};
+    const count = result.summary?.calculated_count ?? 0;
+    const total = result.summary?.method_count ?? 0;
+    const fundamentals = inputStatus.fundamentals_source || inputStatus.fundamentals_error || "no fundamentals";
+    setValuationMeta(`Loaded valuation (${count}/${total} methods, fundamentals: ${fundamentals}).`);
+  } finally {
+    loadValuationBtn.disabled = false;
+    refreshValuationBtn.disabled = false;
+  }
+}
+
 async function loadFmpReference(refresh = false, cacheOnly = false) {
   if (!currentSymbol || !loadFmpReferenceBtn || !refreshFmpReferenceBtn) return;
   loadFmpReferenceBtn.disabled = true;
@@ -1394,6 +1548,16 @@ if (clearFmpReferenceCacheBtn) {
     await clearFmpReferenceCache();
   });
 }
+if (loadValuationBtn) {
+  loadValuationBtn.addEventListener("click", async () => {
+    await loadValuation(false, true);
+  });
+}
+if (refreshValuationBtn) {
+  refreshValuationBtn.addEventListener("click", async () => {
+    await loadValuation(true, false);
+  });
+}
 
 interval1mBtn.addEventListener("click", async () => { await setActiveInterval("1min"); });
 interval5mBtn.addEventListener("click", async () => { await setActiveInterval("5min"); });
@@ -1476,11 +1640,14 @@ async function init() {
   symbolSubtitleEl.textContent = "Loading...";
   setFmpPlaceholder();
   setFmpMeta("FMP reference data is loaded on demand. Press Load FMP Data or Refresh FMP Data.");
+  setValuationPlaceholder();
+  setValuationMeta("Cached fundamentals are loaded automatically when available. Use Refresh Valuation to fetch fresh fundamentals.");
   setIntervalButtonAvailability();
   setIntervalButtonState();
   drawPlaceholder("Loading...");
 
   await loadOverview(false);
+  await loadValuation(false, true);
 }
 
 void init();

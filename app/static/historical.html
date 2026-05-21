@@ -383,6 +383,84 @@
       </section>
     </section>
 
+    <section class="card overview-valuation">
+      <div class="header-top valuation-header">
+        <h2 class="section-title">理論株価</h2>
+        <div class="valuation-actions">
+          <button id="load-valuation" type="button" class="minor-action">Load Cached</button>
+          <button id="refresh-valuation" type="button" class="minor-action">Refresh Valuation</button>
+        </div>
+      </div>
+      <p id="valuation-meta" class="hint">Cached fundamentals are loaded automatically when available.</p>
+
+      <div class="overview-group">
+        <h3 class="overview-subtitle">Summary</h3>
+        <div class="status-row valuation-summary">
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Current</span>
+              <details class="param-help"><summary>?</summary><p>理論株価との比較に使う現在値です。</p></details>
+            </div>
+            <span id="valuation-current">-</span>
+          </div>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Median Fair Value</span>
+              <details class="param-help"><summary>?</summary><p>計算できた評価方法の中央値です。</p></details>
+            </div>
+            <span id="valuation-median">-</span>
+          </div>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Median Upside</span>
+              <details class="param-help"><summary>?</summary><p>中央値と現在値の乖離率です。</p></details>
+            </div>
+            <span id="valuation-upside">-</span>
+          </div>
+          <div>
+            <div class="overview-help-row">
+              <span class="label">Calculated</span>
+              <details class="param-help"><summary>?</summary><p>計算できた方式数 / 全方式数です。</p></details>
+            </div>
+            <span id="valuation-count">-</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="overview-group">
+        <h3 class="overview-subtitle">Assumptions</h3>
+        <div class="valuation-assumptions">
+          <label>PER<input id="valuation-fair-per" type="number" min="0.01" step="0.1" value="15"></label>
+          <label>PBR<input id="valuation-fair-pbr" type="number" min="0.01" step="0.1" value="2"></label>
+          <label>PSR<input id="valuation-fair-psr" type="number" min="0.01" step="0.1" value="2"></label>
+          <label>EV/EBITDA<input id="valuation-fair-ev-ebitda" type="number" min="0.01" step="0.1" value="10"></label>
+          <label>P/FCF<input id="valuation-fair-p-fcf" type="number" min="0.01" step="0.1" value="15"></label>
+          <label>Risk Free<input id="valuation-risk-free-rate" type="number" min="0" step="0.001" value="0.04"></label>
+          <label>FCF Growth<input id="valuation-fcf-growth-rate" type="number" step="0.001" value="0.02"></label>
+          <label>Terminal Growth<input id="valuation-terminal-growth-rate" type="number" step="0.001" value="0.01"></label>
+        </div>
+      </div>
+
+      <div class="overview-group">
+        <h3 class="overview-subtitle">Methods</h3>
+        <div class="table-wrap valuation-table-wrap">
+          <table class="valuation-table">
+            <thead>
+              <tr>
+                <th>Method</th>
+                <th>Theoretical</th>
+                <th>Upside</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="valuation-body">
+              <tr><td colspan="4">-</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <section class="card overview-fmp">
       <div class="header-top fmp-header">
         <h2 class="section-title">FMP Fundamentals + Corporate Actions</h2>
@@ -496,7 +574,7 @@
     </section>
   </main>
 
-  <script src="/static/historical.js?v=20260210" defer></script>
+  <script src="/static/historical.js?v=20260521a" defer></script>
   <script src="/static/help_popover.js?v=20260323a" defer></script>
 </body>
 

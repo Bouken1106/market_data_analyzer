@@ -63,8 +63,6 @@ class MarketDataReferenceMixin:
         normalized = symbol.upper().strip()
         if not SYMBOL_PATTERN.match(normalized):
             raise HTTPException(status_code=400, detail="Invalid symbol format.")
-        if not self.fmp_api_key:
-            raise HTTPException(status_code=400, detail="FMP_API_KEY is required for reference data.")
 
         if not refresh:
             cached_payload = await ttl_cache_lookup_response(
@@ -103,6 +101,8 @@ class MarketDataReferenceMixin:
 
         if cache_only:
             raise HTTPException(status_code=404, detail="No cached FMP reference data found for this symbol.")
+        if not self.fmp_api_key:
+            raise HTTPException(status_code=400, detail="FMP_API_KEY is required for reference data.")
 
         payload = await self._fetch_fmp_reference_live(normalized)
         await ttl_cache_store(

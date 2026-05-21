@@ -36,6 +36,9 @@ class _FakeHub:
         self.historical_calls: list[dict[str, object]] = []
         self.overview_calls: list[dict[str, object]] = []
         self.sparkline_calls: list[dict[str, object]] = []
+        self.fmp_reference_calls: list[dict[str, object]] = []
+        self.clear_fmp_reference_calls: list[str] = []
+        self.clear_overview_calls: list[str] = []
         self.refresh_api_credits_calls = 0
         self.rows_by_symbol = {
             "AAPL": {"symbol": "AAPL", "price": 123.45, "updated_at": "2026-04-03T00:00:00Z"},
@@ -113,8 +116,48 @@ class _FakeHub:
         return {
             "symbol": symbol,
             "price": {"current": 123.45},
-            "market": {"spy": {"symbol": "SPY"}} if include_market else {},
+            "market": {"spy": {"symbol": "SPY"}, "beta_60d_vs_spy": 1.0} if include_market else {},
         }
+
+    async def clear_symbol_overview_cache(self, symbol: str) -> dict[str, object]:
+        self.clear_overview_calls.append(symbol)
+        return {"symbol": symbol, "removed_overview_entries": 1}
+
+    async def fmp_reference_payload(
+        self,
+        symbol: str,
+        *,
+        refresh: bool = False,
+        cache_only: bool = False,
+    ) -> dict[str, object]:
+        self.fmp_reference_calls.append({"symbol": symbol, "refresh": refresh, "cache_only": cache_only})
+        return {
+            "symbol": symbol,
+            "source": "test-fmp",
+            "profile": {
+                "company_name": "Example Inc.",
+                "sector": "Technology",
+                "market_cap": 12_345.0,
+                "beta": 1.1,
+            },
+            "financials": {
+                "ratios_ttm": {"roe_ttm": 0.2},
+                "key_metrics_ttm": {"eps_ttm": 5.0, "book_value_per_share_ttm": 20.0},
+                "income_statement_latest": {"date": "2025-12-31", "revenue": 1_000.0, "net_income": 500.0, "eps": 5.0},
+                "balance_sheet_latest": {
+                    "cash_and_short_term_investments": 1_000.0,
+                    "total_debt": 500.0,
+                    "total_liabilities": 3_000.0,
+                    "total_assets": 5_000.0,
+                    "total_equity": 2_000.0,
+                },
+                "cash_flow_latest": {"operating_cash_flow": 800.0, "capital_expenditure": -200.0, "free_cash_flow": 600.0},
+            },
+        }
+
+    async def clear_fmp_reference_cache(self, symbol: str) -> dict[str, object]:
+        self.clear_fmp_reference_calls.append(symbol)
+        return {"symbol": symbol, "removed_memory_cache": True, "removed_disk_cache": False}
 
     async def sparkline_payload(self, symbols: list[str], *, refresh: bool = False) -> list[dict[str, object]]:
         self.sparkline_calls.append({"symbols": list(symbols), "refresh": refresh})
@@ -270,6 +313,10 @@ class MarketApiRoutesTest(unittest.TestCase):
                 overview_response = client.get(
                     "/api/security-overview/AAPL?refresh=true&include_intraday=false&include_market=false&include_qqq=false"
                 )
+                clear_overview_response = client.post("/api/security-overview/AAPL/clear-cache")
+                fmp_response = client.get("/api/fmp-reference/AAPL?cache_only=true")
+                clear_fmp_response = client.post("/api/fmp-reference/AAPL/clear-cache")
+                valuation_response = client.get("/api/valuation/AAPL?cache_only=false&fair_per=15&fair_pbr=2")
                 sparkline_response = client.get("/api/sparkline?symbols=AAPL,MSFT&refresh=true")
                 commentary_response = client.get("/api/watchlist-commentary?symbols=AAPL,MSFT&refresh=true")
                 portfolio_response = client.get("/api/portfolio")
@@ -284,7 +331,7 @@ class MarketApiRoutesTest(unittest.TestCase):
         self.assertEqual(overview_response.status_code, 200)
         self.assertEqual(overview_response.json()["price"]["current"], 123.45)
         self.assertEqual(
-            self.hub.overview_calls[-1],
+            self.hub.overview_calls[0],
             {
                 "symbol": "AAPL",
                 "refresh": True,
@@ -293,6 +340,20 @@ class MarketApiRoutesTest(unittest.TestCase):
                 "include_qqq": False,
             },
         )
+        self.assertEqual(clear_overview_response.status_code, 200)
+        self.assertEqual(clear_overview_response.json()["removed_overview_entries"], 1)
+        self.assertEqual(self.hub.clear_overview_calls[-1], "AAPL")
+
+        self.assertEqual(fmp_response.status_code, 200)
+        self.assertEqual(fmp_response.json()["profile"]["company_name"], "Example Inc.")
+        self.assertEqual(self.hub.fmp_reference_calls[0], {"symbol": "AAPL", "refresh": False, "cache_only": True})
+        self.assertEqual(clear_fmp_response.status_code, 200)
+        self.assertEqual(self.hub.clear_fmp_reference_calls[-1], "AAPL")
+
+        self.assertEqual(valuation_response.status_code, 200)
+        valuation_payload = valuation_response.json()
+        self.assertEqual(valuation_payload["symbol"], "AAPL")
+        self.assertGreater(valuation_payload["summary"]["calculated_count"], 0)
 
         self.assertEqual(sparkline_response.status_code, 200)
         self.assertEqual(sparkline_response.json()["symbols"], ["AAPL", "MSFT"])

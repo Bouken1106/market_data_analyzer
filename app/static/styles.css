@@ -1428,6 +1428,7 @@ details.mlops-inline-help[data-help-popover-active="true"] > div {
 .overview-side-panel .section-title,
 .overview-metrics .section-title,
 .overview-tech .section-title,
+.overview-valuation .section-title,
 .overview-fmp .section-title {
   font-family: var(--font-display);
   font-size: 0.88rem;
@@ -1484,6 +1485,11 @@ details.mlops-inline-help[data-help-popover-active="true"] > div {
   background: linear-gradient(180deg, rgba(240, 136, 62, 0.13) 0%, rgba(19, 28, 38, 0.96) 34%, rgba(19, 28, 38, 1) 100%);
 }
 
+.overview-valuation {
+  border-color: rgba(57, 210, 192, 0.44);
+  background: linear-gradient(180deg, rgba(57, 210, 192, 0.12) 0%, rgba(19, 28, 38, 0.96) 34%, rgba(19, 28, 38, 1) 100%);
+}
+
 .overview-metrics::before {
   width: 3px;
   opacity: 0.85;
@@ -1502,6 +1508,12 @@ details.mlops-inline-help[data-help-popover-active="true"] > div {
   background: linear-gradient(180deg, var(--amber) 0%, rgba(240, 136, 62, 0.18) 100%);
 }
 
+.overview-valuation::before {
+  width: 3px;
+  opacity: 0.9;
+  background: linear-gradient(180deg, var(--cyan) 0%, rgba(57, 210, 192, 0.18) 100%);
+}
+
 .overview-subtitle {
   margin: 0 0 6px;
   padding-left: 2px;
@@ -1514,12 +1526,14 @@ details.mlops-inline-help[data-help-popover-active="true"] > div {
 }
 
 .overview-detail-grid .status-row,
+.overview-valuation .status-row,
 .overview-fmp .status-row {
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
 }
 
 .overview-metrics .status-row>div,
 .overview-tech .status-row>div,
+.overview-valuation .status-row>div,
 .overview-fmp .status-row>div {
   border-left-width: 3px;
 }
@@ -1534,6 +1548,11 @@ details.mlops-inline-help[data-help-popover-active="true"] > div {
   background: linear-gradient(180deg, rgba(57, 210, 192, 0.11) 0%, rgba(25, 36, 48, 0.96) 100%);
 }
 
+.overview-valuation .status-row>div {
+  border-left-color: rgba(57, 210, 192, 0.68);
+  background: linear-gradient(180deg, rgba(57, 210, 192, 0.12) 0%, rgba(25, 36, 48, 0.96) 100%);
+}
+
 .overview-fmp .status-row>div {
   border-left-color: rgba(240, 136, 62, 0.62);
   background: linear-gradient(180deg, rgba(240, 136, 62, 0.12) 0%, rgba(25, 36, 48, 0.96) 100%);
@@ -1541,6 +1560,7 @@ details.mlops-inline-help[data-help-popover-active="true"] > div {
 
 .overview-metrics .status-row span:not(.label),
 .overview-tech .status-row span:not(.label),
+.overview-valuation .status-row span:not(.label),
 .overview-fmp .status-row span:not(.label) {
   font-size: 0.9rem;
   line-height: 1.5;
@@ -1548,6 +1568,7 @@ details.mlops-inline-help[data-help-popover-active="true"] > div {
 
 .overview-metrics .label,
 .overview-tech .label,
+.overview-valuation .label,
 .overview-fmp .label {
   color: #d2dfeb;
   font-size: 0.73rem;
@@ -1579,7 +1600,19 @@ details.mlops-inline-help[data-help-popover-active="true"] > div {
   align-items: flex-start;
 }
 
+.valuation-header {
+  align-items: flex-start;
+}
+
 .fmp-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.valuation-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -1597,6 +1630,52 @@ details.mlops-inline-help[data-help-popover-active="true"] > div {
   background: rgba(240, 136, 62, 0.22);
   border-color: rgba(240, 136, 62, 0.7);
   color: #ffe6d1;
+}
+
+.valuation-actions .minor-action {
+  border: 1px solid rgba(57, 210, 192, 0.48);
+  background: rgba(57, 210, 192, 0.14);
+  color: #a7eee5;
+}
+
+.valuation-actions .minor-action:hover {
+  background: rgba(57, 210, 192, 0.22);
+  border-color: rgba(57, 210, 192, 0.7);
+  color: #d3fff8;
+}
+
+.valuation-assumptions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+}
+
+.valuation-assumptions label {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: #d2dfeb;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.valuation-assumptions input {
+  padding: 6px 8px;
+  font-size: 0.82rem;
+}
+
+.valuation-table {
+  font-size: 0.86rem;
+}
+
+.valuation-table td:nth-child(2),
+.valuation-table td:nth-child(3) {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.valuation-table td:nth-child(4) {
+  color: var(--text-muted);
+  font-size: 0.8rem;
 }
 
 .overview-tech {
@@ -1662,7 +1741,16 @@ details.mlops-inline-help[data-help-popover-active="true"] > div {
     align-items: flex-start;
   }
 
+  .valuation-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
   .fmp-actions {
+    justify-content: flex-start;
+  }
+
+  .valuation-actions {
     justify-content: flex-start;
   }
 
@@ -1706,6 +1794,7 @@ details.mlops-inline-help[data-help-popover-active="true"] > div {
   }
 
   .overview-detail-grid .status-row,
+  .overview-valuation .status-row,
   .overview-fmp .status-row {
     grid-template-columns: 1fr;
   }

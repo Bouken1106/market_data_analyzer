@@ -17,6 +17,7 @@ from ..services.market_api_service import (
     persist_watchlist_commentary,
     require_basic_watchlist_symbols,
 )
+from ..services.valuation_service import build_valuation_payload
 from ..services.watchlist_commentary import build_watchlist_commentary_payload
 from ..utils import normalize_symbols, ok_json_response
 from ..validation import require_symbols
@@ -167,6 +168,71 @@ async def security_overview(
         include_intraday=include_intraday,
         include_market=include_market,
         include_qqq=include_qqq,
+    )
+    return ok_json_response(**payload)
+
+
+@router.post("/api/security-overview/{symbol}/clear-cache")
+async def clear_security_overview_cache(symbol: str, hub: HubDep) -> JSONResponse:
+    payload = await hub.clear_symbol_overview_cache(symbol)
+    return ok_json_response(**payload)
+
+
+@router.get("/api/fmp-reference/{symbol}")
+async def fmp_reference(
+    symbol: str,
+    hub: HubDep,
+    refresh: bool = False,
+    cache_only: bool = False,
+) -> JSONResponse:
+    payload = await hub.fmp_reference_payload(symbol, refresh=refresh, cache_only=cache_only)
+    return ok_json_response(**payload)
+
+
+@router.post("/api/fmp-reference/{symbol}/clear-cache")
+async def clear_fmp_reference_cache(symbol: str, hub: HubDep) -> JSONResponse:
+    payload = await hub.clear_fmp_reference_cache(symbol)
+    return ok_json_response(**payload)
+
+
+@router.get("/api/valuation/{symbol}")
+async def valuation(
+    symbol: str,
+    hub: HubDep,
+    refresh: bool = False,
+    cache_only: bool = True,
+    fair_per: float | None = None,
+    fair_pbr: float | None = None,
+    fair_psr: float | None = None,
+    fair_ev_sales: float | None = None,
+    fair_ev_ebitda: float | None = None,
+    fair_ev_fcf: float | None = None,
+    fair_p_fcf: float | None = None,
+    target_dividend_yield: float | None = None,
+    risk_free_rate: float | None = None,
+    equity_risk_premium: float = 0.055,
+    terminal_growth_rate: float = 0.01,
+    fcf_growth_rate: float = 0.02,
+    forecast_years: int = 5,
+) -> JSONResponse:
+    payload = await build_valuation_payload(
+        hub,
+        symbol,
+        refresh=refresh,
+        cache_only=cache_only,
+        fair_per=fair_per,
+        fair_pbr=fair_pbr,
+        fair_psr=fair_psr,
+        fair_ev_sales=fair_ev_sales,
+        fair_ev_ebitda=fair_ev_ebitda,
+        fair_ev_fcf=fair_ev_fcf,
+        fair_p_fcf=fair_p_fcf,
+        target_dividend_yield=target_dividend_yield,
+        risk_free_rate=risk_free_rate,
+        equity_risk_premium=equity_risk_premium,
+        terminal_growth_rate=terminal_growth_rate,
+        fcf_growth_rate=fcf_growth_rate,
+        forecast_years=forecast_years,
     )
     return ok_json_response(**payload)
 
