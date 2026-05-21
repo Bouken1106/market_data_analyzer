@@ -33,6 +33,25 @@ def clamp_int(value: int, *, minimum: int, maximum: int) -> int:
     return max(minimum, min(int(value), maximum))
 
 
+def _exception_detail(exc: Exception) -> str:
+    detail = getattr(exc, "detail", None)
+    return str(detail or exc)
+
+
+def _payload_points(payload: Any) -> list[Any] | None:
+    points = payload.get("points") if isinstance(payload, dict) else None
+    return points if isinstance(points, list) and points else None
+
+
+def _payload_source_detail(payload: Any) -> dict[str, Any] | None:
+    source_detail = payload.get("source_detail") if isinstance(payload, dict) else None
+    return source_detail if isinstance(source_detail, dict) else None
+
+
+def _dict_points(points: list[Any]) -> list[dict[str, Any]]:
+    return [dict(point) for point in points if isinstance(point, dict)]
+
+
 def build_relationship_request(
     *,
     symbols: str,
@@ -73,11 +92,10 @@ async def gather_relationship_points(
     skipped: list[dict[str, str]] = []
     for symbol, item in zip(request.symbols, responses):
         if isinstance(item, Exception):
-            detail = getattr(item, "detail", None)
-            skipped.append({"symbol": symbol, "reason": str(detail or item)})
+            skipped.append({"symbol": symbol, "reason": _exception_detail(item)})
             continue
-        points = item.get("points") if isinstance(item, dict) else None
-        if isinstance(points, list) and points:
+        points = _payload_points(item)
+        if points is not None:
             points_by_symbol[symbol] = points
             continue
         skipped.append({"symbol": symbol, "reason": "No historical points returned."})
@@ -183,18 +201,17 @@ async def gather_eod_sparkline_items(
     fallback_symbols: list[str] = []
     for symbol, response in zip(symbols, provider_responses):
         if isinstance(response, Exception):
-            detail = getattr(response, "detail", None)
-            LOGGER.warning("Provider EOD sparkline fetch failed for %s: %s", symbol, detail or response)
+            LOGGER.warning("Provider EOD sparkline fetch failed for %s: %s", symbol, _exception_detail(response))
             fallback_symbols.append(symbol)
             continue
-        points = response.get("points") if isinstance(response, dict) else None
-        if not isinstance(points, list) or not points:
+        points = _payload_points(response)
+        if points is None:
             fallback_symbols.append(symbol)
             continue
         item = build_eod_sparkline_item(
             symbol=symbol,
-            points=[dict(point) for point in points if isinstance(point, dict)],
-            source_detail=response.get("source_detail") if isinstance(response, dict) else None,
+            points=_dict_points(points),
+            source_detail=_payload_source_detail(response),
             default_provider=provider_name,
         )
         if item is None:
@@ -221,16 +238,15 @@ async def gather_eod_sparkline_items(
 
     for symbol, response in zip(fallback_symbols, stooq_responses):
         if isinstance(response, Exception):
-            detail = getattr(response, "detail", None)
-            LOGGER.warning("EOD sparkline fetch failed for %s: %s", symbol, detail or response)
+            LOGGER.warning("EOD sparkline fetch failed for %s: %s", symbol, _exception_detail(response))
             continue
-        points = response.get("points") if isinstance(response, dict) else None
-        if not isinstance(points, list) or not points:
+        points = _payload_points(response)
+        if points is None:
             continue
         item = build_eod_sparkline_item(
             symbol=symbol,
-            points=[dict(point) for point in points if isinstance(point, dict)],
-            source_detail=response.get("source_detail") if isinstance(response, dict) else None,
+            points=_dict_points(points),
+            source_detail=_payload_source_detail(response),
             default_provider="stooq",
         )
         if item is not None:

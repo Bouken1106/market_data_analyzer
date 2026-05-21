@@ -8,7 +8,8 @@ from typing import Any
 
 import numpy as np
 
-from ..utils import date_key_or_none, finite_float_or_none
+from ..ohlcv import close_values_by_date
+from ..utils import finite_float_or_none
 
 
 @dataclass(frozen=True)
@@ -23,37 +24,13 @@ class RelationshipDataset:
     symbol_indices: dict[str, int]
 
 
-def _extract_close(point: dict[str, Any]) -> float | None:
-    for key in ("c", "close", "price"):
-        parsed = finite_float_or_none(point.get(key), minimum=0.0, strict_minimum=True)
-        if parsed is not None:
-            return parsed
-    return None
-
-
-def _extract_time(point: dict[str, Any]) -> str:
-    for key in ("t", "date", "datetime", "timestamp"):
-        value = date_key_or_none(point.get(key))
-        if value:
-            return value
-    return ""
-
-
 def _build_price_matrix(points_by_symbol: dict[str, list[dict[str, Any]]]) -> tuple[list[str], np.ndarray, list[str]]:
     normalized: dict[str, dict[str, float]] = {}
     common_dates: set[str] | None = None
     ordered_symbols: list[str] = []
 
     for symbol, points in points_by_symbol.items():
-        series: dict[str, float] = {}
-        for point in points:
-            if not isinstance(point, dict):
-                continue
-            date = _extract_time(point)
-            close = _extract_close(point)
-            if not date or close is None:
-                continue
-            series[date] = close
+        series = close_values_by_date(points)
         if not series:
             continue
         normalized[symbol] = series

@@ -6,10 +6,9 @@ from pathlib import Path
 from typing import Any
 
 from ..config import settings
+from ..services.watchlist_state import DEFAULT_WATCHLIST_NAMESPACE, normalize_watchlist_namespace
 from ..utils import normalize_symbols
 from .json_state import JsonStateStore
-
-_DEFAULT_WATCHLIST_NAMESPACE = "us"
 
 
 class UiStateStore(JsonStateStore):
@@ -25,8 +24,7 @@ class UiStateStore(JsonStateStore):
 
     @staticmethod
     def _normalize_namespace(namespace: str | None) -> str:
-        normalized = str(namespace or "").strip().lower()
-        return normalized or _DEFAULT_WATCHLIST_NAMESPACE
+        return normalize_watchlist_namespace(namespace)
 
     def get_symbols(self, namespace: str | None = None) -> list[str]:
         normalized_namespace = self._normalize_namespace(namespace)
@@ -36,7 +34,7 @@ class UiStateStore(JsonStateStore):
             if isinstance(raw, list):
                 return normalize_symbols(raw, max_items=settings.provider.max_basic_symbols)
 
-        if normalized_namespace != _DEFAULT_WATCHLIST_NAMESPACE:
+        if normalized_namespace != DEFAULT_WATCHLIST_NAMESPACE:
             return []
 
         raw = self._state.get("symbols")
@@ -52,7 +50,7 @@ class UiStateStore(JsonStateStore):
             watchlists = {}
             self._state["watchlists"] = watchlists
         watchlists[normalized_namespace] = list(normalized_symbols)
-        if normalized_namespace == _DEFAULT_WATCHLIST_NAMESPACE:
+        if normalized_namespace == DEFAULT_WATCHLIST_NAMESPACE:
             self._state["symbols"] = list(normalized_symbols)
         self._touch_and_write()
 
@@ -87,9 +85,9 @@ class UiStateStore(JsonStateStore):
             self._state["watchlists"] = normalized_watchlists
         if (
             self._state["symbols"]
-            and _DEFAULT_WATCHLIST_NAMESPACE not in self._state["watchlists"]
+            and DEFAULT_WATCHLIST_NAMESPACE not in self._state["watchlists"]
         ):
-            self._state["watchlists"][_DEFAULT_WATCHLIST_NAMESPACE] = list(self._state["symbols"])
+            self._state["watchlists"][DEFAULT_WATCHLIST_NAMESPACE] = list(self._state["symbols"])
         if isinstance(commentary, dict):
             self._state["watchlist_commentary"] = commentary
         updated_at = payload.get("updated_at")

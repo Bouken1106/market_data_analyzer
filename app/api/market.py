@@ -19,22 +19,24 @@ from ..services.market_api_service import (
 )
 from ..services.valuation_service import build_valuation_payload
 from ..services.watchlist_commentary import build_watchlist_commentary_payload
+from ..services.watchlist_state import (
+    SUPPORTED_WATCHLIST_NAMESPACES,
+    UnsupportedWatchlistNamespace,
+    normalize_watchlist_namespace,
+)
 from ..utils import normalize_symbols, ok_json_response
 from ..validation import require_symbols
 from .deps import HubDep, SymbolCatalogStoreDep, UiStateStoreDep
 from .market_stream import build_market_stream_response
 
 router = APIRouter()
-_WATCHLIST_NAMESPACES = frozenset({"us", "jp"})
 
 
 def _normalize_watchlist_namespace(namespace: str | None) -> str:
-    normalized = str(namespace or "").strip().lower()
-    if not normalized:
-        return "us"
-    if normalized not in _WATCHLIST_NAMESPACES:
+    try:
+        return normalize_watchlist_namespace(namespace, allowed=SUPPORTED_WATCHLIST_NAMESPACES)
+    except UnsupportedWatchlistNamespace:
         raise HTTPException(status_code=400, detail="Unsupported watchlist namespace.")
-    return normalized
 
 
 @router.get("/api/snapshot")

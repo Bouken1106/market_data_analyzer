@@ -13,14 +13,14 @@ from typing import Any, Callable
 import numpy as np
 import pandas as pd
 
+from ..ohlcv import close_values_by_date
 from ..utils import (
-    date_key_or_none,
     date_or_none,
     finite_float_or_none,
     is_valid_symbol,
     normalize_symbol,
 )
-from .portfolio_common import apply_market_value_weights, positive_price_or_none, price_map_from_rows
+from .portfolio_common import apply_market_value_weights, price_map_from_rows
 
 DEFAULT_ANALYSIS_LOOKBACK_DAYS = 252
 MIN_ANALYSIS_LOOKBACK_DAYS = 63
@@ -290,10 +290,6 @@ def normalize_region_holdings(raw: Any, *, region: str) -> list[dict[str, float]
     )
 
 
-def _valid_price(value: Any) -> float | None:
-    return positive_price_or_none(value)
-
-
 def _historical_close_is_stale(last_close_date: str | None, *, today: date | None = None) -> bool:
     close_date = date_or_none(last_close_date)
     if close_date is None:
@@ -314,16 +310,7 @@ def _close_series_from_points(points: Any) -> pd.Series | None:
     if not isinstance(points, list):
         return None
 
-    values: dict[str, float] = {}
-    for item in points:
-        if not isinstance(item, dict):
-            continue
-        point_date = date_key_or_none(item.get("t"))
-        close = _valid_price(item.get("c"))
-        if not point_date or close is None:
-            continue
-        values[point_date] = close
-
+    values = close_values_by_date(points, close_keys=("c",))
     if not values:
         return None
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from app.ohlcv import close_values_by_date, point_date_key, point_positive_close
 from app.services.market_data_historical_jquants import JQuantsHistoricalClient
 from app.services.market_data_math import atr, beta_and_corr, daily_returns, intraday_vwap, moving_average
 from app.services.market_data_overview_ops import MarketDataOverviewOps
@@ -39,6 +40,7 @@ from app.services.valuation_numeric import (
 )
 from app.services.watchlist_commentary_parser import commentary_from_json, fallback_commentary
 from app.services.watchlist_commentary_prompt import build_watchlist_prompt
+from app.services.watchlist_state import normalize_watchlist_namespace
 
 
 class _OverviewOwner:
@@ -65,6 +67,25 @@ class _OverviewOwner:
 
 
 class RefactorHelperTest(unittest.TestCase):
+    def test_ohlcv_point_helpers_extract_common_shapes(self) -> None:
+        point = {"datetime": "2024-01-03 15:00:00", "price": "105.5"}
+        self.assertEqual(point_date_key(point), "2024-01-03")
+        self.assertEqual(point_positive_close(point), 105.5)
+        self.assertEqual(
+            close_values_by_date(
+                [
+                    {"date": "2024-01-02", "close": "100"},
+                    point,
+                    {"timestamp": "2024-01-04T00:00:00Z", "price": 0},
+                ]
+            ),
+            {"2024-01-02": 100.0, "2024-01-03": 105.5},
+        )
+
+    def test_watchlist_namespace_helper_defaults_and_normalizes(self) -> None:
+        self.assertEqual(normalize_watchlist_namespace(None), "us")
+        self.assertEqual(normalize_watchlist_namespace(" JP "), "jp")
+
     def test_market_data_math_helpers(self) -> None:
         points = [
             {"c": 10.0, "h": 11.0, "l": 9.0},

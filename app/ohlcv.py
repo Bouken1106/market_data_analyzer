@@ -6,6 +6,9 @@ from typing import Any, Iterable
 
 from .utils import date_key_or_none, first_finite_float
 
+DEFAULT_TIMESTAMP_KEYS = ("t", "datetime", "date", "timestamp")
+DEFAULT_CLOSE_KEYS = ("c", "close", "price")
+
 
 def _pick_text(payload: dict[str, Any], keys: tuple[str, ...]) -> str:
     for key in keys:
@@ -62,6 +65,56 @@ def normalize_ohlcv_point(
     if resolved_source:
         point["_src"] = resolved_source
     return point
+
+
+def point_timestamp_text(
+    payload: dict[str, Any],
+    *,
+    timestamp_keys: tuple[str, ...] = DEFAULT_TIMESTAMP_KEYS,
+) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    return _pick_text(payload, timestamp_keys)
+
+
+def point_date_key(
+    payload: dict[str, Any],
+    *,
+    timestamp_keys: tuple[str, ...] = DEFAULT_TIMESTAMP_KEYS,
+) -> str:
+    timestamp = point_timestamp_text(payload, timestamp_keys=timestamp_keys)
+    return date_key_or_none(timestamp) or ""
+
+
+def point_positive_close(
+    payload: dict[str, Any],
+    *,
+    close_keys: tuple[str, ...] = DEFAULT_CLOSE_KEYS,
+) -> float | None:
+    if not isinstance(payload, dict):
+        return None
+    return first_finite_float(
+        *(payload.get(key) for key in close_keys),
+        minimum=0.0,
+        strict_minimum=True,
+    )
+
+
+def close_values_by_date(
+    points: Iterable[dict[str, Any]],
+    *,
+    timestamp_keys: tuple[str, ...] = DEFAULT_TIMESTAMP_KEYS,
+    close_keys: tuple[str, ...] = DEFAULT_CLOSE_KEYS,
+) -> dict[str, float]:
+    values: dict[str, float] = {}
+    for point in points:
+        if not isinstance(point, dict):
+            continue
+        date_key = point_date_key(point, timestamp_keys=timestamp_keys)
+        close_value = point_positive_close(point, close_keys=close_keys)
+        if date_key and close_value is not None:
+            values[date_key] = close_value
+    return values
 
 
 def normalize_ohlcv_points(
