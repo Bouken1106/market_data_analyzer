@@ -6,7 +6,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from ..models import PortfolioAnalysisDraftRequest, PortfolioAnalysisRequest, SavedPortfolioRequest
-from ..services.portfolio_analysis import analyze_saved_portfolio, resolve_region_holdings
+from ..services.portfolio_analysis import analyze_saved_portfolio
+from ..services.portfolio_holdings import resolve_region_holdings
 from ..utils import ok_json_response
 from .deps import HubDep, PortfolioAnalysisStoreDep, SymbolCatalogStoreDep
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from ..services.portfolio_analysis import MAX_HOLDINGS_PER_REGION, normalize_region_holdings
+from ..services.portfolio_holdings import MAX_HOLDINGS_PER_REGION, normalize_region_holdings
 from ..utils import utc_now_iso
 from .json_state import JsonStateStore
 
