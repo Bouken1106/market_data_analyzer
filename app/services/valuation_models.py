@@ -12,6 +12,19 @@ from dataclasses import dataclass, field
 import math
 from typing import Any
 
+from .valuation_numeric import (
+    abs_div_optional as _rate,
+    add_optional as _add,
+    clean_finite_dict as _clean_dict,
+    div_optional as _div,
+    median_positive as _median_positive,
+    mul_optional as _mul,
+    non_negative_float as _non_negative,
+    parse_float as _finite,
+    positive_float as _positive,
+    sub_optional as _sub,
+)
+
 
 MARKET_JP = "JP"
 MARKET_US = "US"
@@ -1082,89 +1095,5 @@ def _norm_text(value: Any) -> str:
     return str(value or "").strip().lower()
 
 
-def _finite(value: Any) -> float | None:
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(numeric):
-        return None
-    return numeric
-
-
-def _positive(value: Any) -> float | None:
-    numeric = _finite(value)
-    if numeric is None or numeric <= 0:
-        return None
-    return numeric
-
-
-def _non_negative(value: Any) -> float | None:
-    numeric = _finite(value)
-    if numeric is None or numeric < 0:
-        return None
-    return numeric
-
-
-def _div(numerator: Any, denominator: Any) -> float | None:
-    top = _finite(numerator)
-    bottom = _finite(denominator)
-    if top is None or bottom is None or bottom == 0:
-        return None
-    return top / bottom
-
-
-def _mul(left: Any, right: Any) -> float | None:
-    left_value = _finite(left)
-    right_value = _finite(right)
-    if left_value is None or right_value is None:
-        return None
-    return left_value * right_value
-
-
-def _add(left: Any, right: Any) -> float | None:
-    left_value = _finite(left)
-    right_value = _finite(right)
-    if left_value is None and right_value is None:
-        return None
-    return (left_value or 0.0) + (right_value or 0.0)
-
-
-def _sub(left: Any, right: Any) -> float | None:
-    left_value = _finite(left)
-    right_value = _finite(right)
-    if left_value is None or right_value is None:
-        return None
-    return left_value - right_value
-
-
-def _rate(numerator: Any, denominator: Any) -> float | None:
-    value = _div(numerator, denominator)
-    if value is None:
-        return None
-    return abs(value)
-
-
 def _clamp(value: float, lower: float, upper: float) -> float:
     return max(lower, min(upper, value))
-
-
-def _clean_dict(payload: dict[str, Any]) -> dict[str, Any]:
-    cleaned: dict[str, Any] = {}
-    for key, value in payload.items():
-        if isinstance(value, float) and not math.isfinite(value):
-            continue
-        if value is None:
-            continue
-        cleaned[key] = value
-    return cleaned
-
-
-def _median_positive(values: list[float | None]) -> float | None:
-    cleaned = sorted(value for value in (_positive(item) for item in values) if value is not None)
-    if not cleaned:
-        return None
-    midpoint = len(cleaned) // 2
-    if len(cleaned) % 2:
-        return cleaned[midpoint]
-    return (cleaned[midpoint - 1] + cleaned[midpoint]) / 2.0

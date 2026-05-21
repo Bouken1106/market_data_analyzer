@@ -31,8 +31,12 @@ from app.services.valuation_payload_inputs import (
 from app.services.valuation_payload_metrics import financial_metrics_from_payloads
 from app.services.valuation_payload_summary import valuation_summary, valuations_with_upside
 from app.services.valuation_numeric import (
+    abs_div_optional,
+    add_optional,
+    clean_finite_dict,
     first_dict,
     first_present,
+    median_positive,
     parse_float,
     positive_div,
     positive_float,
@@ -401,8 +405,12 @@ class RefactorHelperTest(unittest.TestCase):
         self.assertEqual(parse_float("1,234.5"), 1234.5)
         self.assertIsNone(parse_float("NaN"))
         self.assertIsNone(positive_float("0"))
+        self.assertEqual(add_optional("1", None), 1.0)
+        self.assertEqual(abs_div_optional("-10", "2"), 5.0)
         self.assertEqual(positive_div("10", "2"), 5.0)
         self.assertEqual(sum_optional("1", None, "2.5"), 3.5)
+        self.assertEqual(clean_finite_dict({"a": 1.0, "b": float("nan"), "c": None}), {"a": 1.0})
+        self.assertEqual(median_positive([None, 5, 1, 3]), 3.0)
         self.assertEqual(first_present(None, "", {}, 0, "fallback"), 0)
         self.assertEqual(first_dict({"data": [{"value": 1}]}), {"value": 1})
 

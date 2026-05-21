@@ -50,6 +50,10 @@ def sum_optional(*values: Any) -> float | None:
     return sum(cleaned)
 
 
+def add_optional(left: Any, right: Any) -> float | None:
+    return sum_optional(left, right)
+
+
 def sub_optional(left: Any, right: Any) -> float | None:
     left_value = parse_float(left)
     right_value = parse_float(right)
@@ -69,6 +73,11 @@ def div_optional(left: Any, right: Any) -> float | None:
 def positive_div(left: Any, right: Any) -> float | None:
     value = div_optional(left, right)
     return value if value is not None and value > 0 else None
+
+
+def abs_div_optional(left: Any, right: Any) -> float | None:
+    value = div_optional(left, right)
+    return abs(value) if value is not None else None
 
 
 def mul_optional(left: Any, right: Any) -> float | None:
@@ -164,3 +173,24 @@ def payload_source(payload: dict[str, Any] | None) -> str | None:
     if not isinstance(payload, dict):
         return None
     return str(payload.get("source") or payload.get("_cache_source") or "payload").strip() or "payload"
+
+
+def clean_finite_dict(payload: dict[str, Any]) -> dict[str, Any]:
+    cleaned: dict[str, Any] = {}
+    for key, value in payload.items():
+        if value is None:
+            continue
+        if isinstance(value, float) and finite_float_or_none(value) is None:
+            continue
+        cleaned[key] = value
+    return cleaned
+
+
+def median_positive(values: list[Any]) -> float | None:
+    cleaned = sorted(value for value in (positive_float(item) for item in values) if value is not None)
+    if not cleaned:
+        return None
+    midpoint = len(cleaned) // 2
+    if len(cleaned) % 2:
+        return cleaned[midpoint]
+    return (cleaned[midpoint - 1] + cleaned[midpoint]) / 2.0
