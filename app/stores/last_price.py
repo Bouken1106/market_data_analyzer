@@ -7,13 +7,13 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ..config import LOGGER
-from ..utils import is_valid_symbol, normalize_symbol, read_json_file, to_iso8601, utc_now_iso, write_json_file
+from ..utils import is_valid_symbol, normalize_symbol, to_iso8601, utc_now_iso
+from .json_state import JsonStateStore
 
 
-class LastPriceStore:
+class LastPriceStore(JsonStateStore):
     def __init__(self, cache_path: Path, flush_interval_sec: int = 5) -> None:
-        self.cache_path = cache_path
+        super().__init__(cache_path, log_label="last price cache")
         self.flush_interval_sec = max(1, flush_interval_sec)
         self._data: dict[str, dict[str, Any]] = {}
         self._last_flush_at = 0.0
@@ -53,11 +53,11 @@ class LastPriceStore:
                 self._last_flush_at = now
 
     def _load_from_disk(self) -> None:
-        payload = read_json_file(self.cache_path)
-        if not isinstance(payload, dict):
+        payload = self._read_state_dict()
+        if payload is None:
             return
 
-        rows = payload.get("prices") if isinstance(payload, dict) else None
+        rows = payload.get("prices")
         if not isinstance(rows, list):
             return
 
@@ -83,11 +83,8 @@ class LastPriceStore:
         self._data = loaded
 
     def _write_no_lock(self) -> None:
-        try:
-            payload = {
-                "updated_at": utc_now_iso(),
-                "prices": sorted(self._data.values(), key=lambda item: item["symbol"]),
-            }
-            write_json_file(self.cache_path, payload)
-        except Exception as exc:
-            LOGGER.warning("Failed to write last price cache: %s", exc)
+        payload = {
+            "updated_at": utc_now_iso(),
+            "prices": sorted(self._data.values(), key=lambda item: item["symbol"]),
+        }
+        self._write_state(payload)

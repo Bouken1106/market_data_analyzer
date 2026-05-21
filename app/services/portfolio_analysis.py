@@ -8,7 +8,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -152,6 +152,21 @@ def _finalize_aggregated_holdings(aggregated: dict[str, float]) -> list[dict[str
     return holdings
 
 
+def _aggregate_region_holdings(
+    inputs: list[tuple[str, Any]],
+    *,
+    resolve_symbol: Callable[[str], str],
+) -> list[dict[str, float]]:
+    aggregated: dict[str, float] = {}
+    for raw_symbol, raw_quantity in inputs:
+        symbol = resolve_symbol(raw_symbol)
+        quantity = finite_float_or_none(raw_quantity, minimum=0.0, strict_minimum=True)
+        if quantity is None:
+            raise ValueError(f"Quantity must be greater than 0 for {symbol or raw_symbol or 'holding'}.")
+        aggregated[symbol] = aggregated.get(symbol, 0.0) + float(quantity)
+    return _finalize_aggregated_holdings(aggregated)
+
+
 def _normalize_search_text(raw: Any) -> str:
     text = unicodedata.normalize("NFKC", str(raw or ""))
     return " ".join(text.upper().strip().split())
@@ -250,34 +265,23 @@ async def resolve_region_holdings(
     symbol_catalog_store: Any | None = None,
 ) -> list[dict[str, float]]:
     normalized_region = normalize_region(region)
-    aggregated: dict[str, float] = {}
     catalog_rows = await _load_region_catalog(symbol_catalog_store, region=normalized_region)
 
-    for raw_symbol, raw_quantity in _iter_holding_inputs(raw):
-        quantity = finite_float_or_none(raw_quantity, minimum=0.0, strict_minimum=True)
-        if quantity is None:
-            raise ValueError(f"Quantity must be greater than 0 for {raw_symbol or 'holding'}.")
-
+    def resolve_symbol(raw_symbol: str) -> str:
         resolved_symbol = _resolve_catalog_symbol(raw_symbol, region=normalized_region, catalog_rows=catalog_rows)
         if resolved_symbol is None:
             resolved_symbol = normalize_region_symbol(raw_symbol, region=normalized_region)
-        aggregated[resolved_symbol] = aggregated.get(resolved_symbol, 0.0) + float(quantity)
+        return resolved_symbol
 
-    return _finalize_aggregated_holdings(aggregated)
+    return _aggregate_region_holdings(_iter_holding_inputs(raw), resolve_symbol=resolve_symbol)
 
 
 def normalize_region_holdings(raw: Any, *, region: str) -> list[dict[str, float]]:
     normalized_region = normalize_region(region)
-    aggregated: dict[str, float] = {}
-
-    for raw_symbol, raw_quantity in _iter_holding_inputs(raw):
-        symbol = normalize_region_symbol(raw_symbol, region=normalized_region)
-        quantity = finite_float_or_none(raw_quantity, minimum=0.0, strict_minimum=True)
-        if quantity is None:
-            raise ValueError(f"Quantity must be greater than 0 for {symbol}.")
-        aggregated[symbol] = aggregated.get(symbol, 0.0) + float(quantity)
-
-    return _finalize_aggregated_holdings(aggregated)
+    return _aggregate_region_holdings(
+        _iter_holding_inputs(raw),
+        resolve_symbol=lambda raw_symbol: normalize_region_symbol(raw_symbol, region=normalized_region),
+    )
 
 
 def _valid_price(value: Any) -> float | None:
@@ -607,7 +611,7 @@ def _build_priced_holdings_bundle(
             }
         )
 
-    _apply_holding_weights(rows, total_market_value)
+    apply_market_value_weights(rows, total_market_value)
     rows.sort(
         key=lambda item: (
             item.get("market_value") is None,
@@ -622,10 +626,6 @@ def _build_priced_holdings_bundle(
         analyzed_market_value=analyzed_market_value,
         stale_historical_symbols=stale_historical_symbols,
     )
-
-
-def _apply_holding_weights(rows: list[dict[str, Any]], total_market_value: float) -> None:
-    apply_market_value_weights(rows, total_market_value)
 
 
 def _append_stale_historical_warnings(

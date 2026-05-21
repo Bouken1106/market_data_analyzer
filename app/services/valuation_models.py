@@ -524,54 +524,51 @@ class ValuationCalculator:
         return results
 
     def actual_per(self) -> ValuationResult:
-        method = "実績PER法"
-        if self._blocked_for_sector("per"):
-            return self._unavailable(method, "sector rule excludes this method")
-        eps = self.derived.eps
-        fair_per = _positive(self.multiples.fair_per)
-        if eps is None or eps <= 0:
-            return self._unavailable(method, "actual EPS is missing or non-positive", {"eps": eps})
-        if fair_per is None:
-            return self._unavailable(method, "fair PER is missing", {"eps": eps})
-        return self._priced(method, eps * fair_per, {"eps": eps, "fair_per": fair_per})
+        return self._per_share_multiple_method(
+            "実績PER法",
+            base_value=self.derived.eps,
+            multiple=self.multiples.fair_per,
+            base_name="eps",
+            multiple_name="fair_per",
+            missing_base_reason="actual EPS is missing or non-positive",
+            missing_multiple_reason="fair PER is missing",
+            blocked_group="per",
+        )
 
     def forecast_per(self) -> ValuationResult:
-        method = "予想PER法"
-        if self._blocked_for_sector("per"):
-            return self._unavailable(method, "sector rule excludes this method")
-        forecast_eps = _positive(self.metrics.forecast_eps)
-        fair_per = _positive(self.multiples.fair_per)
-        if forecast_eps is None:
-            return self._unavailable(method, "forecast EPS is missing or non-positive")
-        if fair_per is None:
-            return self._unavailable(method, "fair PER is missing", {"forecast_eps": forecast_eps})
-        return self._priced(method, forecast_eps * fair_per, {"forecast_eps": forecast_eps, "fair_per": fair_per})
+        return self._per_share_multiple_method(
+            "予想PER法",
+            base_value=self.metrics.forecast_eps,
+            multiple=self.multiples.fair_per,
+            base_name="forecast_eps",
+            multiple_name="fair_per",
+            missing_base_reason="forecast EPS is missing or non-positive",
+            missing_multiple_reason="fair PER is missing",
+            blocked_group="per",
+        )
 
     def normalized_per(self) -> ValuationResult:
-        method = "正規化PER法"
-        if self._blocked_for_sector("per"):
-            return self._unavailable(method, "sector rule excludes this method")
-        normalized_eps = self.derived.normalized_eps
-        fair_per = _positive(self.multiples.fair_per)
-        if normalized_eps is None or normalized_eps <= 0:
-            return self._unavailable(method, "normalized EPS is missing or non-positive")
-        if fair_per is None:
-            return self._unavailable(method, "fair PER is missing", {"normalized_eps": normalized_eps})
-        return self._priced(
-            method,
-            normalized_eps * fair_per,
-            {"normalized_eps": normalized_eps, "fair_per": fair_per},
+        return self._per_share_multiple_method(
+            "正規化PER法",
+            base_value=self.derived.normalized_eps,
+            multiple=self.multiples.fair_per,
+            base_name="normalized_eps",
+            multiple_name="fair_per",
+            missing_base_reason="normalized EPS is missing or non-positive",
+            missing_multiple_reason="fair PER is missing",
+            blocked_group="per",
         )
 
     def pbr(self) -> ValuationResult:
-        method = "PBR法"
-        bps = _positive(self.derived.bps)
-        fair_pbr = _positive(self.multiples.fair_pbr)
-        if bps is None:
-            return self._unavailable(method, "BPS is missing or non-positive")
-        if fair_pbr is None:
-            return self._unavailable(method, "fair PBR is missing", {"bps": bps})
-        return self._priced(method, bps * fair_pbr, {"bps": bps, "fair_pbr": fair_pbr})
+        return self._per_share_multiple_method(
+            "PBR法",
+            base_value=self.derived.bps,
+            multiple=self.multiples.fair_pbr,
+            base_name="bps",
+            multiple_name="fair_pbr",
+            missing_base_reason="BPS is missing or non-positive",
+            missing_multiple_reason="fair PBR is missing",
+        )
 
     def roe_linked_pbr(self) -> ValuationResult:
         method = "ROE連動PBR法"
@@ -602,79 +599,63 @@ class ValuationCalculator:
         )
 
     def psr(self) -> ValuationResult:
-        method = "PSR法"
-        if self._blocked_for_sector("sales"):
-            return self._unavailable(method, "sector rule excludes this method")
-        revenue_per_share = _positive(self.derived.revenue_per_share)
-        fair_psr = _positive(self.multiples.fair_psr)
-        if revenue_per_share is None:
-            return self._unavailable(method, "revenue per share is missing or non-positive")
-        if fair_psr is None:
-            return self._unavailable(method, "fair PSR is missing", {"revenue_per_share": revenue_per_share})
-        return self._priced(
-            method,
-            revenue_per_share * fair_psr,
-            {"revenue_per_share": revenue_per_share, "fair_psr": fair_psr},
+        return self._per_share_multiple_method(
+            "PSR法",
+            base_value=self.derived.revenue_per_share,
+            multiple=self.multiples.fair_psr,
+            base_name="revenue_per_share",
+            multiple_name="fair_psr",
+            missing_base_reason="revenue per share is missing or non-positive",
+            missing_multiple_reason="fair PSR is missing",
+            blocked_group="sales",
         )
 
     def ev_sales(self) -> ValuationResult:
-        method = "EV/Sales法"
-        if self._blocked_for_sector("ev"):
-            return self._unavailable(method, "sector rule excludes this method")
-        revenue = _positive(self.metrics.revenue)
-        fair_multiple = _positive(self.multiples.fair_ev_sales)
-        if revenue is None:
-            return self._unavailable(method, "revenue is missing or non-positive")
-        if fair_multiple is None:
-            return self._unavailable(method, "fair EV/Sales is missing", {"revenue": revenue})
-        return self._enterprise_value_method(method, revenue * fair_multiple, {"revenue": revenue, "fair_ev_sales": fair_multiple})
+        return self._enterprise_multiple_method(
+            "EV/Sales法",
+            base_value=self.metrics.revenue,
+            multiple=self.multiples.fair_ev_sales,
+            base_name="revenue",
+            multiple_name="fair_ev_sales",
+            missing_base_reason="revenue is missing or non-positive",
+            missing_multiple_reason="fair EV/Sales is missing",
+            blocked_group="ev",
+        )
 
     def ev_ebitda(self) -> ValuationResult:
-        method = "EV/EBITDA法"
-        if self._blocked_for_sector("ev_ebitda"):
-            return self._unavailable(method, "sector rule excludes this method")
-        ebitda = self.derived.ebitda
-        fair_multiple = _positive(self.multiples.fair_ev_ebitda)
-        if ebitda is None or ebitda <= 0:
-            return self._unavailable(method, "EBITDA is missing or non-positive")
-        if fair_multiple is None:
-            return self._unavailable(method, "fair EV/EBITDA is missing", {"ebitda": ebitda})
-        return self._enterprise_value_method(
-            method,
-            ebitda * fair_multiple,
-            {"ebitda": ebitda, "fair_ev_ebitda": fair_multiple},
+        return self._enterprise_multiple_method(
+            "EV/EBITDA法",
+            base_value=self.derived.ebitda,
+            multiple=self.multiples.fair_ev_ebitda,
+            base_name="ebitda",
+            multiple_name="fair_ev_ebitda",
+            missing_base_reason="EBITDA is missing or non-positive",
+            missing_multiple_reason="fair EV/EBITDA is missing",
+            blocked_group="ev_ebitda",
         )
 
     def ev_fcf(self) -> ValuationResult:
-        method = "EV/FCF法"
-        if self._blocked_for_sector("fcf"):
-            return self._unavailable(method, "sector rule excludes this method")
-        fcf = self.derived.free_cash_flow
-        fair_multiple = _positive(self.multiples.fair_ev_fcf)
-        if fcf is None or fcf <= 0:
-            return self._unavailable(method, "FCF is missing or non-positive")
-        if fair_multiple is None:
-            return self._unavailable(method, "fair EV/FCF is missing", {"free_cash_flow": fcf})
-        return self._enterprise_value_method(
-            method,
-            fcf * fair_multiple,
-            {"free_cash_flow": fcf, "fair_ev_fcf": fair_multiple},
+        return self._enterprise_multiple_method(
+            "EV/FCF法",
+            base_value=self.derived.free_cash_flow,
+            multiple=self.multiples.fair_ev_fcf,
+            base_name="free_cash_flow",
+            multiple_name="fair_ev_fcf",
+            missing_base_reason="FCF is missing or non-positive",
+            missing_multiple_reason="fair EV/FCF is missing",
+            blocked_group="fcf",
         )
 
     def p_fcf(self) -> ValuationResult:
-        method = "P/FCF法"
-        if self._blocked_for_sector("fcf"):
-            return self._unavailable(method, "sector rule excludes this method")
-        fcf_per_share = _positive(self.derived.fcf_per_share)
-        fair_multiple = _positive(self.multiples.fair_p_fcf)
-        if fcf_per_share is None:
-            return self._unavailable(method, "FCF per share is missing or non-positive")
-        if fair_multiple is None:
-            return self._unavailable(method, "fair P/FCF is missing", {"fcf_per_share": fcf_per_share})
-        return self._priced(
-            method,
-            fcf_per_share * fair_multiple,
-            {"fcf_per_share": fcf_per_share, "fair_p_fcf": fair_multiple},
+        return self._per_share_multiple_method(
+            "P/FCF法",
+            base_value=self.derived.fcf_per_share,
+            multiple=self.multiples.fair_p_fcf,
+            base_name="fcf_per_share",
+            multiple_name="fair_p_fcf",
+            missing_base_reason="FCF per share is missing or non-positive",
+            missing_multiple_reason="fair P/FCF is missing",
+            blocked_group="fcf",
         )
 
     def dividend_yield(self) -> ValuationResult:
@@ -870,17 +851,14 @@ class ValuationCalculator:
         return self._priced(method, nav_per_share, {"nav_per_share": nav_per_share})
 
     def ffo_multiple(self) -> ValuationResult:
-        method = "FFO倍率法"
-        ffo_per_share = _positive(self.derived.ffo_per_share)
-        fair_multiple = _positive(self.multiples.fair_p_ffo)
-        if ffo_per_share is None:
-            return self._unavailable(method, "FFO per share is missing or non-positive")
-        if fair_multiple is None:
-            return self._unavailable(method, "fair P/FFO is missing", {"ffo_per_share": ffo_per_share})
-        return self._priced(
-            method,
-            ffo_per_share * fair_multiple,
-            {"ffo_per_share": ffo_per_share, "fair_p_ffo": fair_multiple},
+        return self._per_share_multiple_method(
+            "FFO倍率法",
+            base_value=self.derived.ffo_per_share,
+            multiple=self.multiples.fair_p_ffo,
+            base_name="ffo_per_share",
+            multiple_name="fair_p_ffo",
+            missing_base_reason="FFO per share is missing or non-positive",
+            missing_multiple_reason="fair P/FFO is missing",
         )
 
     def adjusted_net_asset(self) -> ValuationResult:
@@ -892,6 +870,54 @@ class ValuationCalculator:
         if shares is None:
             return self._unavailable(method, "shares outstanding is missing")
         return self._priced(method, adjusted_net_assets / shares, {"adjusted_net_assets": adjusted_net_assets})
+
+    def _per_share_multiple_method(
+        self,
+        method: str,
+        *,
+        base_value: float | None,
+        multiple: float | None,
+        base_name: str,
+        multiple_name: str,
+        missing_base_reason: str,
+        missing_multiple_reason: str,
+        blocked_group: str | None = None,
+    ) -> ValuationResult:
+        if blocked_group and self._blocked_for_sector(blocked_group):
+            return self._unavailable(method, "sector rule excludes this method")
+        base = _positive(base_value)
+        if base is None:
+            return self._unavailable(method, missing_base_reason, {base_name: base_value})
+        fair_multiple = _positive(multiple)
+        if fair_multiple is None:
+            return self._unavailable(method, missing_multiple_reason, {base_name: base})
+        return self._priced(method, base * fair_multiple, {base_name: base, multiple_name: fair_multiple})
+
+    def _enterprise_multiple_method(
+        self,
+        method: str,
+        *,
+        base_value: float | None,
+        multiple: float | None,
+        base_name: str,
+        multiple_name: str,
+        missing_base_reason: str,
+        missing_multiple_reason: str,
+        blocked_group: str,
+    ) -> ValuationResult:
+        if self._blocked_for_sector(blocked_group):
+            return self._unavailable(method, "sector rule excludes this method")
+        base = _positive(base_value)
+        if base is None:
+            return self._unavailable(method, missing_base_reason, {base_name: base_value})
+        fair_multiple = _positive(multiple)
+        if fair_multiple is None:
+            return self._unavailable(method, missing_multiple_reason, {base_name: base})
+        return self._enterprise_value_method(
+            method,
+            base * fair_multiple,
+            {base_name: base, multiple_name: fair_multiple},
+        )
 
     def _enterprise_value_method(
         self,

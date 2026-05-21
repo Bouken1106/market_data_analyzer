@@ -6,8 +6,8 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from ..config import LOGGER
-from ..utils import is_valid_symbol, normalize_symbol, read_json_file, utc_now_iso, write_json_file
+from ..utils import is_valid_symbol, normalize_symbol, utc_now_iso
+from .json_state import JsonStateStore
 from .paper_portfolio_engine import (
     SUPPORTED_TRADE_SIDES,
     apply_trade_to_portfolio_state,
@@ -17,9 +17,9 @@ from .paper_portfolio_engine import (
 _MAX_STORED_TRADES = 1000
 
 
-class PaperPortfolioStore:
+class PaperPortfolioStore(JsonStateStore):
     def __init__(self, cache_path: Path, default_initial_cash: float = 1_000_000.0) -> None:
-        self.cache_path = cache_path
+        super().__init__(cache_path, log_label="paper portfolio cache")
         self.default_initial_cash = float(default_initial_cash)
         self._lock = asyncio.Lock()
         self._state = self._load_from_disk()
@@ -50,11 +50,8 @@ class PaperPortfolioStore:
         }
 
     def _load_from_disk(self) -> dict[str, Any]:
-        payload = read_json_file(self.cache_path)
+        payload = self._read_state_dict()
         if payload is None:
-            return self._empty_state()
-
-        if not isinstance(payload, dict):
             return self._empty_state()
 
         initial_cash = self._to_positive_float(payload.get("initial_cash"), fallback=self.default_initial_cash)
@@ -155,10 +152,7 @@ class PaperPortfolioStore:
     def _write_no_lock(self) -> None:
         payload = self._snapshot_state_no_lock()
         payload["trades"] = payload["trades"][-_MAX_STORED_TRADES:]
-        try:
-            write_json_file(self.cache_path, payload)
-        except Exception as exc:
-            LOGGER.warning("Failed to write paper portfolio cache: %s", exc)
+        self._write_state(payload)
 
     async def get_state(self) -> dict[str, Any]:
         async with self._lock:

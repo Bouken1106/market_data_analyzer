@@ -9,7 +9,7 @@ from fastapi import HTTPException
 
 from ..config import SYMBOL_PATTERN
 
-PickFloat = Callable[[dict[str, Any], str], float | None]
+PickFloat = Callable[..., float | None]
 BuildMarketItem = Callable[[str, float | None, float | None], dict[str, Any]]
 BetaAndCorr = Callable[[list[dict[str, Any]], list[dict[str, Any]]], tuple[float | None, float | None]]
 LatestSessionPoints = Callable[[list[dict[str, Any]]], list[dict[str, Any]]]
@@ -24,6 +24,29 @@ _SUPPORT_STATUS = {
     "earnings_calendar": "not_supported_on_current_data_source",
     "news_headlines": "not_supported_on_current_data_source",
     "sector_etf": "not_supported_on_current_data_source",
+}
+
+_QUOTE_PRICE_KEYS = {
+    "current_price": ("close", "price"),
+    "previous_close": ("previous_close", "prev_close"),
+}
+
+_DAY_QUOTE_KEYS = {
+    "day_open": ("open",),
+    "day_high": ("high",),
+    "day_low": ("low",),
+    "day_volume": ("volume",),
+    "bid": ("bid",),
+    "ask": ("ask",),
+}
+
+_FIELD_SOURCE_KEYS = {
+    "day_open_source": ("open",),
+    "day_high_source": ("high",),
+    "day_low_source": ("low",),
+    "day_volume_source": ("volume",),
+    "current_price_source": _QUOTE_PRICE_KEYS["current_price"],
+    "previous_close_source": _QUOTE_PRICE_KEYS["previous_close"],
 }
 
 
@@ -82,6 +105,19 @@ def support_status_payload() -> dict[str, str]:
     return dict(_SUPPORT_STATUS)
 
 
+def quote_source_detail(quote: dict[str, Any]) -> dict[str, Any]:
+    source_detail = quote.get("_source_detail") if isinstance(quote, dict) else {}
+    return source_detail if isinstance(source_detail, dict) else {}
+
+
+def _source_value(source_detail: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = source_detail.get(key)
+        if value:
+            return str(value)
+    return None
+
+
 def build_overview_source_detail(
     *,
     quote: dict[str, Any],
@@ -93,9 +129,7 @@ def build_overview_source_detail(
     price_context: dict[str, Any],
     series_source_descriptor: SeriesSourceDescriptor,
 ) -> dict[str, Any]:
-    quote_source_detail = quote.get("_source_detail") if isinstance(quote, dict) else {}
-    if not isinstance(quote_source_detail, dict):
-        quote_source_detail = {}
+    source_detail = quote_source_detail(quote)
     return {
         "quote_provider": quote.get("_source_provider") if isinstance(quote, dict) else None,
         "chart_sources": {
@@ -112,8 +146,8 @@ def build_overview_source_detail(
             "price.day_high": price_context["day_high_source"] or "unknown",
             "price.day_low": price_context["day_low_source"] or "unknown",
             "volume.today": price_context["day_volume_source"] or "unknown",
-            "spread.bid": quote_source_detail.get("bid") or "unknown",
-            "spread.ask": quote_source_detail.get("ask") or "unknown",
+            "spread.bid": source_detail.get("bid") or "unknown",
+            "spread.ask": source_detail.get("ask") or "unknown",
         },
     }
 
@@ -187,32 +221,19 @@ def build_price_context(
     latest_day = day_points[-1]
     previous_day = day_points[-2] if len(day_points) >= 2 else None
     day_series_source = series_source_descriptor(day_points)
-    quote_source_detail = quote.get("_source_detail") if isinstance(quote, dict) else {}
-    if not isinstance(quote_source_detail, dict):
-        quote_source_detail = {}
+    source_detail = quote_source_detail(quote)
 
-    current_price = pick_float(quote, "close", "price")
+    current_price = pick_float(quote, *_QUOTE_PRICE_KEYS["current_price"])
     if current_price is None:
         current_price = latest_day["c"]
-    previous_close = pick_float(quote, "previous_close", "prev_close")
+    previous_close = pick_float(quote, *_QUOTE_PRICE_KEYS["previous_close"])
     if previous_close is None and previous_day:
         previous_close = previous_day["c"]
 
-    field_values = {
-        "day_open": pick_float(quote, "open"),
-        "day_high": pick_float(quote, "high"),
-        "day_low": pick_float(quote, "low"),
-        "day_volume": pick_float(quote, "volume"),
-        "bid": pick_float(quote, "bid"),
-        "ask": pick_float(quote, "ask"),
-    }
+    field_values = {key: pick_float(quote, *quote_keys) for key, quote_keys in _DAY_QUOTE_KEYS.items()}
     field_sources = {
-        "day_open_source": quote_source_detail.get("open"),
-        "day_high_source": quote_source_detail.get("high"),
-        "day_low_source": quote_source_detail.get("low"),
-        "day_volume_source": quote_source_detail.get("volume"),
-        "current_price_source": quote_source_detail.get("close") or quote_source_detail.get("price"),
-        "previous_close_source": quote_source_detail.get("previous_close") or quote_source_detail.get("prev_close"),
+        key: _source_value(source_detail, *source_keys)
+        for key, source_keys in _FIELD_SOURCE_KEYS.items()
     }
 
     fill_day_fields_from_intraday(
