@@ -90,6 +90,10 @@
     return `${sign}${formatPrice(Math.abs(numeric))}`;
   }
 
+  function sideLabel(side) {
+    return side === "long" ? "Long" : "Short";
+  }
+
   function formatDateRange(session) {
     if (!session) return "-";
     const start = session.start_date || session.date || "";
@@ -136,6 +140,12 @@
   function formatSessionIdentity(session) {
     if (!session) return "-";
     return `${formatSymbol(session)} ${formatDateRange(session)}`;
+  }
+
+  function positionPnl(position, price) {
+    return position.side === "long"
+      ? price - position.entryPrice
+      : position.entryPrice - price;
   }
 
   function setMessage(text, tone = "") {
@@ -199,10 +209,17 @@
   function openPosition(side) {
     const candle = currentCandle();
     const idx = currentIndex();
-    if (!candle || state.position || state.gameDone || state.actedIndexes.has(idx)) return;
+    if (!candle || state.gameDone || state.actedIndexes.has(idx)) return;
 
     const price = finiteNumber(candle.execution_price);
     if (price === null) return;
+
+    if (state.position) {
+      if (state.position.side === side) return;
+      reversePosition(side, candle, idx, price);
+      render();
+      return;
+    }
 
     state.position = {
       side,
@@ -213,12 +230,38 @@
     state.actedIndexes.add(idx);
     state.trades.unshift({
       time: formatCandleTime(candle),
-      action: side === "long" ? "Long" : "Short",
+      action: sideLabel(side),
       price,
       pnl: null,
     });
-    setMessage(`${side === "long" ? "Long" : "Short"} @ ${formatPrice(price)}`);
+    setMessage(`${sideLabel(side)} @ ${formatPrice(price)}`);
     render();
+  }
+
+  function reversePosition(nextSide, candle, idx, price) {
+    const previousPosition = state.position;
+    const pnl = positionPnl(previousPosition, price);
+    state.realized += pnl;
+    state.position = {
+      side: nextSide,
+      entryPrice: price,
+      entryTime: formatCandleTime(candle),
+      entryIndex: idx,
+    };
+    state.actedIndexes.add(idx);
+    state.trades.unshift({
+      time: formatCandleTime(candle),
+      action: `Close ${sideLabel(previousPosition.side)}`,
+      price,
+      pnl,
+    });
+    state.trades.unshift({
+      time: formatCandleTime(candle),
+      action: sideLabel(nextSide),
+      price,
+      pnl: null,
+    });
+    setMessage(`Reverse to ${sideLabel(nextSide)} @ ${formatPrice(price)} / ${formatPnL(pnl)}`);
   }
 
   function closePosition(action = "Close") {
@@ -229,9 +272,7 @@
     const price = finiteNumber(candle.execution_price);
     if (price === null) return;
 
-    const pnl = state.position.side === "long"
-      ? price - state.position.entryPrice
-      : state.position.entryPrice - price;
+    const pnl = positionPnl(state.position, price);
     state.realized += pnl;
     state.trades.unshift({
       time: formatCandleTime(candle),
@@ -271,8 +312,8 @@
       || state.gameDone
       || state.revealedCount >= (state.session?.candles.length || 0),
     );
-    el.long.disabled = !canAct || Boolean(state.position);
-    el.short.disabled = !canAct || Boolean(state.position);
+    el.long.disabled = !canAct || state.position?.side === "long";
+    el.short.disabled = !canAct || state.position?.side === "short";
     el.close.disabled = !canAct || !state.position;
   }
 
