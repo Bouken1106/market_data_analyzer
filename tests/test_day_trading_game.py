@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.application import create_app
 from app.bootstrap import AppServices
-from app.services.day_trading_game import build_day_trading_session
+from app.services.day_trading_game import build_day_trading_session, calculate_day_trading_scoring
 
 
 class _FakeHub:
@@ -91,6 +91,10 @@ class DayTradingGameServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["price_digits"], 2)
         self.assertEqual(payload["moving_averages"][0]["label"], "MA5")
         self.assertEqual(payload["moving_averages"][1]["label"], "MA20")
+        self.assertEqual(payload["trade_modes"][0]["key"], "long_only")
+        self.assertEqual(payload["trade_modes"][1]["key"], "long_short")
+        self.assertAlmostEqual(payload["scoring"]["long_only"]["max_return"], 35 / 100.5)
+        self.assertAlmostEqual(payload["scoring"]["long_short"]["max_return"], 35 / 100.5)
         self.assertEqual(payload["candles"][0]["execution_price"], 100.5)
         self.assertEqual(payload["candles"][0]["execution_price_method"], "close")
         self.assertEqual(payload["candles"][12]["date"], "2026-04-02")
@@ -193,6 +197,32 @@ class DayTradingGameServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["end_date"], index[-1].date().isoformat())
         self.assertEqual(payload["candles"][0]["moving_averages"]["short"], 123.5)
         self.assertEqual(payload["candles"][0]["moving_averages"]["mid"], 113.5)
+
+    async def test_calculate_scoring_uses_requested_long_only_and_long_short_formulas(self) -> None:
+        scoring = calculate_day_trading_scoring(
+            [
+                {"close": 100.0},
+                {"close": 110.0},
+                {"close": 100.0},
+                {"close": 90.0},
+            ]
+        )
+
+        self.assertAlmostEqual(scoring["buy_hold_return"], -0.1)
+        self.assertAlmostEqual(scoring["long_only"]["lower_return"], -0.1)
+        self.assertAlmostEqual(scoring["long_only"]["max_return"], 0.1)
+        self.assertAlmostEqual(scoring["long_only"]["denominator"], 0.2)
+        self.assertFalse(scoring["long_only"]["undefined"])
+        self.assertAlmostEqual(scoring["long_short"]["max_return"], 0.2)
+        self.assertFalse(scoring["long_short"]["undefined"])
+
+    async def test_calculate_scoring_marks_flat_session_as_undefined(self) -> None:
+        scoring = calculate_day_trading_scoring([{"close": 100.0}, {"close": 100.0}])
+
+        self.assertEqual(scoring["long_only"]["denominator"], 0.0)
+        self.assertTrue(scoring["long_only"]["undefined"])
+        self.assertEqual(scoring["long_short"]["max_return"], 0.0)
+        self.assertTrue(scoring["long_short"]["undefined"])
 
 
 class DayTradingGameApiTest(unittest.TestCase):

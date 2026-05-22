@@ -9,12 +9,14 @@
   const state = {
     selectedMarket: "us",
     selectedMode: "intraday",
+    selectedTradeMode: "long_only",
     loading: false,
     session: null,
     revealedCount: 0,
     position: null,
     realized: 0,
     trades: [],
+    closedPositions: [],
     actedIndexes: new Set(),
     gameDone: false,
   };
@@ -24,6 +26,8 @@
     marketJp: $("dtg-market-jp"),
     modeIntraday: $("dtg-mode-intraday"),
     modeDaily: $("dtg-mode-daily"),
+    tradeModeLongOnly: $("dtg-trade-mode-long-only"),
+    tradeModeLongShort: $("dtg-trade-mode-long-short"),
     newGame: $("dtg-new-game"),
     next: $("dtg-next"),
     long: $("dtg-long"),
@@ -55,6 +59,7 @@
     tradesBody: $("dtg-trades-body"),
     modeSubtitle: $("dtg-mode-subtitle"),
     chartTitle: $("dtg-chart-title"),
+    tradeSubtitle: $("dtg-trade-subtitle"),
   };
 
   function currentCandle() {
@@ -98,6 +103,32 @@
 
   function sideLabel(side) {
     return side === "long" ? "Long" : "Short";
+  }
+
+  function positionSign(side) {
+    if (side === "long") return 1;
+    if (side === "short") return -1;
+    return 0;
+  }
+
+  function isLongOnlyTradeMode() {
+    return state.selectedTradeMode === "long_only";
+  }
+
+  function tradeModeLabel(mode = state.selectedTradeMode) {
+    const tradeModes = Array.isArray(state.session?.trade_modes) ? state.session.trade_modes : [];
+    const match = tradeModes.find((item) => item?.key === mode);
+    if (match?.label) return String(match.label);
+    return mode === "long_short" ? "Long/Short" : "Long Only";
+  }
+
+  function formatScore(value) {
+    const numeric = finiteNumber(value);
+    if (numeric === null) return "undefined";
+    return numeric.toLocaleString(undefined, {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+    });
   }
 
   function formatDateRange(session) {
@@ -165,6 +196,7 @@
     state.position = null;
     state.realized = 0;
     state.trades = [];
+    state.closedPositions = [];
     state.actedIndexes = new Set();
     state.gameDone = false;
   }
@@ -207,7 +239,7 @@
         closePosition("Auto Close");
       }
       state.gameDone = true;
-      setMessage(`Game complete: ${formatSessionIdentity(state.session)}`);
+      setMessage(`Game complete: ${formatSessionIdentity(state.session)} / Score ${formatScore(finalScoreValue())}`);
     }
     render();
   }
@@ -216,13 +248,14 @@
     const candle = currentCandle();
     const idx = currentIndex();
     if (!candle || state.gameDone || state.actedIndexes.has(idx)) return;
+    if (side === "short" && isLongOnlyTradeMode()) return;
 
     const price = finiteNumber(candle.execution_price);
     if (price === null) return;
 
     if (state.position) {
       if (state.position.side === side) return;
-      reversePosition(side, candle, idx, price);
+      setMessage("Close first before switching sides.", "error");
       render();
       return;
     }
@@ -244,32 +277,6 @@
     render();
   }
 
-  function reversePosition(nextSide, candle, idx, price) {
-    const previousPosition = state.position;
-    const pnl = positionPnl(previousPosition, price);
-    state.realized += pnl;
-    state.position = {
-      side: nextSide,
-      entryPrice: price,
-      entryTime: formatCandleTime(candle),
-      entryIndex: idx,
-    };
-    state.actedIndexes.add(idx);
-    state.trades.unshift({
-      time: formatCandleTime(candle),
-      action: `Close ${sideLabel(previousPosition.side)}`,
-      price,
-      pnl,
-    });
-    state.trades.unshift({
-      time: formatCandleTime(candle),
-      action: sideLabel(nextSide),
-      price,
-      pnl: null,
-    });
-    setMessage(`Reverse to ${sideLabel(nextSide)} @ ${formatPrice(price)} / ${formatPnL(pnl)}`);
-  }
-
   function closePosition(action = "Close") {
     const candle = currentCandle();
     const idx = currentIndex();
@@ -278,8 +285,15 @@
     const price = finiteNumber(candle.execution_price);
     if (price === null) return;
 
-    const pnl = positionPnl(state.position, price);
+    const closingPosition = state.position;
+    const pnl = positionPnl(closingPosition, price);
     state.realized += pnl;
+    state.closedPositions.push({
+      side: closingPosition.side,
+      entryIndex: closingPosition.entryIndex,
+      exitIndex: idx,
+      pnl,
+    });
     state.trades.unshift({
       time: formatCandleTime(candle),
       action,
@@ -301,6 +315,103 @@
       : state.position.entryPrice - price;
   }
 
+  function sessionClosePrices() {
+    const candles = Array.isArray(state.session?.candles) ? state.session.candles : [];
+    const prices = candles.map((candle) => {
+      const close = finiteNumber(candle?.close);
+      return close === null ? finiteNumber(candle?.execution_price) : close;
+    });
+    return prices.every((price) => price !== null) ? prices : [];
+  }
+
+  function scoringMetadata() {
+    if (state.session?.scoring && typeof state.session.scoring === "object") {
+      return state.session.scoring;
+    }
+    return calculateScoringFromCandles();
+  }
+
+  function calculateScoringFromCandles() {
+    const prices = sessionClosePrices();
+    if (!prices.length || !(prices[0] > 0)) {
+      return {
+        long_only: { lower_return: null, max_return: null, denominator: null },
+        long_short: { max_return: null },
+      };
+    }
+    const base = prices[0];
+    const deltas = prices.slice(0, -1).map((price, index) => prices[index + 1] - price);
+    const buyHoldReturn = (prices[prices.length - 1] - prices[0]) / base;
+    const lowerReturn = Math.min(0, buyHoldReturn);
+    const maxLongReturn = deltas.reduce((sum, delta) => sum + Math.max(delta, 0), 0) / base;
+    const denominator = maxLongReturn - lowerReturn;
+    return {
+      base_price: base,
+      buy_hold_return: buyHoldReturn,
+      long_only: {
+        lower_return: lowerReturn,
+        max_return: maxLongReturn,
+        denominator,
+      },
+      long_short: {
+        max_return: longShortMaxReturn(prices),
+      },
+    };
+  }
+
+  function longShortMaxReturn(prices) {
+    if (!prices.length || !(prices[0] > 0)) return null;
+    let flat = 0;
+    let long = -prices[0];
+    let short = prices[0];
+    prices.slice(1).forEach((price) => {
+      const nextFlat = Math.max(flat, long + price, short - price);
+      const nextLong = Math.max(long, flat - price);
+      const nextShort = Math.max(short, flat + price);
+      flat = nextFlat;
+      long = nextLong;
+      short = nextShort;
+    });
+    return flat / prices[0];
+  }
+
+  function playerReturn() {
+    const prices = sessionClosePrices();
+    if (!prices.length || !(prices[0] > 0)) return null;
+    const intervalPositions = new Array(Math.max(0, prices.length - 1)).fill(0);
+    state.closedPositions.forEach((position) => {
+      const sign = positionSign(position.side);
+      const start = Math.max(0, Number(position.entryIndex));
+      const end = Math.min(intervalPositions.length, Number(position.exitIndex));
+      if (!sign || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) return;
+      for (let index = start; index < end; index += 1) {
+        intervalPositions[index] = sign;
+      }
+    });
+    const pnl = intervalPositions.reduce((sum, q, index) => (
+      sum + q * (prices[index + 1] - prices[index])
+    ), 0);
+    return pnl / prices[0];
+  }
+
+  function finalScoreValue() {
+    if (!state.gameDone || !state.session) return null;
+    const rPlayer = playerReturn();
+    if (rPlayer === null) return null;
+
+    const scoring = scoringMetadata();
+    if (state.selectedTradeMode === "long_short") {
+      const maxReturn = finiteNumber(scoring?.long_short?.max_return);
+      if (maxReturn === null || Math.abs(maxReturn) <= 1e-12) return null;
+      return 100 * rPlayer / maxReturn;
+    }
+
+    const lowerReturn = finiteNumber(scoring?.long_only?.lower_return);
+    const denominator = finiteNumber(scoring?.long_only?.denominator);
+    if (lowerReturn === null || denominator === null || Math.abs(denominator) <= 1e-12) return null;
+    return 100 * (rPlayer - lowerReturn) / denominator;
+  }
+
   function updateControls() {
     const candle = currentCandle();
     const idx = currentIndex();
@@ -318,8 +429,8 @@
       || state.gameDone
       || state.revealedCount >= (state.session?.candles.length || 0),
     );
-    el.long.disabled = !canAct || state.position?.side === "long";
-    el.short.disabled = !canAct || state.position?.side === "short";
+    el.long.disabled = !canAct || Boolean(state.position);
+    el.short.disabled = !canAct || isLongOnlyTradeMode() || Boolean(state.position);
     el.close.disabled = !canAct || !state.position;
   }
 
@@ -348,17 +459,21 @@
     el.progressLabel.classList.toggle("open", Boolean(state.session && !state.gameDone));
     el.progressLabel.classList.toggle("closed", Boolean(state.gameDone));
     el.next.textContent = session?.step_label || (state.selectedMode === "daily" ? "Next Day" : "Next 15m");
-    el.modeSubtitle.textContent = session?.mode_label
+    const replayLabel = session?.mode_label
       ? `${session.mode_label} Replay`
       : state.selectedMode === "daily" ? "Daily Replay" : "15m Replay";
+    el.modeSubtitle.textContent = `${replayLabel} / ${tradeModeLabel()}`;
     el.chartTitle.textContent = isDailySession(session) ? "Daily Chart" : "Intraday Chart";
+    if (el.tradeSubtitle) {
+      el.tradeSubtitle.textContent = tradeModeLabel();
+    }
   }
 
   function renderKpis() {
     const candle = currentCandle();
     const lastPrice = candle ? finiteNumber(candle.execution_price) : null;
     const unrealized = unrealizedPnL();
-    const totalScore = state.realized + (state.gameDone ? 0 : (unrealized || 0));
+    const finalScore = finalScoreValue();
 
     el.currentTime.textContent = formatCandleTime(candle);
     el.currentPrice.textContent = formatPrice(lastPrice);
@@ -371,13 +486,13 @@
       : "Flat";
     el.unrealized.textContent = formatPnL(unrealized);
     el.realized.textContent = formatPnL(state.realized);
-    el.score.textContent = formatPnL(totalScore);
+    el.score.textContent = state.gameDone ? formatScore(finalScore) : "-";
     el.unrealized.classList.toggle("up", Boolean(unrealized && unrealized > 0));
     el.unrealized.classList.toggle("down", Boolean(unrealized && unrealized < 0));
     el.realized.classList.toggle("up", state.realized > 0);
     el.realized.classList.toggle("down", state.realized < 0);
-    el.score.classList.toggle("up", totalScore > 0);
-    el.score.classList.toggle("down", totalScore < 0);
+    el.score.classList.toggle("up", Boolean(state.gameDone && finalScore !== null && finalScore > 0));
+    el.score.classList.toggle("down", Boolean(state.gameDone && finalScore !== null && finalScore < 0));
   }
 
   function renderTrades() {
@@ -736,10 +851,22 @@
     render();
   }
 
+  function setTradeMode(mode) {
+    if (state.selectedTradeMode === mode) return;
+    state.selectedTradeMode = mode;
+    el.tradeModeLongOnly.classList.toggle("active", mode === "long_only");
+    el.tradeModeLongShort.classList.toggle("active", mode === "long_short");
+    resetGame(null);
+    setMessage("No session");
+    render();
+  }
+
   el.marketUs.addEventListener("click", () => setMarket("us"));
   el.marketJp.addEventListener("click", () => setMarket("jp"));
   el.modeIntraday.addEventListener("click", () => setMode("intraday"));
   el.modeDaily.addEventListener("click", () => setMode("daily"));
+  el.tradeModeLongOnly.addEventListener("click", () => setTradeMode("long_only"));
+  el.tradeModeLongShort.addEventListener("click", () => setTradeMode("long_short"));
   el.newGame.addEventListener("click", loadNewGame);
   el.next.addEventListener("click", revealNext);
   el.long.addEventListener("click", () => openPosition("long"));

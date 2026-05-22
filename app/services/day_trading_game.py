@@ -18,6 +18,7 @@ from ..utils import finite_float_or_none, normalize_symbol
 
 DEFAULT_GAME_MODE = "intraday"
 MAX_PRICE_DISPLAY_DIGITS = 4
+SCORE_EPSILON = 1e-12
 
 GAME_MODE_PROFILES: dict[str, dict[str, Any]] = {
     "intraday": {
@@ -47,6 +48,17 @@ GAME_MODE_PROFILES: dict[str, dict[str, Any]] = {
         "step_label": "Next Day",
         "chart_label": "Daily OHLC chart",
         "data_error_label": "daily trading windows",
+    },
+}
+
+TRADE_MODE_PROFILES: dict[str, dict[str, str]] = {
+    "long_only": {
+        "label": "Long Only",
+        "score_label": "S_L",
+    },
+    "long_short": {
+        "label": "Long/Short",
+        "score_label": "S_LS",
     },
 }
 
@@ -648,6 +660,77 @@ def _symbol_label(symbol: str, symbol_name: str | None) -> str:
     return symbol
 
 
+def calculate_day_trading_scoring(candles: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    closes = [_positive_float(candle.get("close")) for candle in candles]
+    if not closes or any(close is None for close in closes):
+        return _empty_scoring_metadata()
+
+    prices = [float(close) for close in closes if close is not None]
+    base_price = prices[0]
+    deltas = [prices[index + 1] - prices[index] for index in range(len(prices) - 1)]
+
+    buy_hold_return = (prices[-1] - prices[0]) / base_price
+    long_lower_return = min(0.0, buy_hold_return)
+    long_max_return = sum(max(delta, 0.0) for delta in deltas) / base_price
+    long_denominator = long_max_return - long_lower_return
+    long_short_max_return = _long_short_max_profit(prices) / base_price
+
+    return {
+        "base_price": _clean_score_float(base_price),
+        "buy_hold_return": _clean_score_float(buy_hold_return),
+        "long_only": {
+            "lower_return": _clean_score_float(long_lower_return),
+            "max_return": _clean_score_float(long_max_return),
+            "denominator": _clean_score_float(long_denominator),
+            "undefined": math.isclose(long_denominator, 0.0, abs_tol=SCORE_EPSILON),
+        },
+        "long_short": {
+            "max_return": _clean_score_float(long_short_max_return),
+            "undefined": math.isclose(long_short_max_return, 0.0, abs_tol=SCORE_EPSILON),
+        },
+    }
+
+
+def _empty_scoring_metadata() -> dict[str, Any]:
+    return {
+        "base_price": None,
+        "buy_hold_return": None,
+        "long_only": {
+            "lower_return": None,
+            "max_return": None,
+            "denominator": None,
+            "undefined": True,
+        },
+        "long_short": {
+            "max_return": None,
+            "undefined": True,
+        },
+    }
+
+
+def _long_short_max_profit(prices: list[float]) -> float:
+    if not prices:
+        return 0.0
+
+    flat = 0.0
+    long = -prices[0]
+    short = prices[0]
+    for price in prices[1:]:
+        next_flat = max(flat, long + price, short - price)
+        next_long = max(long, flat - price)
+        next_short = max(short, flat + price)
+        flat, long, short = next_flat, next_long, next_short
+    return 0.0 if math.isclose(flat, 0.0, abs_tol=SCORE_EPSILON) else flat
+
+
+def _clean_score_float(value: float | None) -> float | None:
+    if value is None or not math.isfinite(value):
+        return None
+    if math.isclose(value, 0.0, abs_tol=SCORE_EPSILON):
+        return 0.0
+    return float(value)
+
+
 def _candles_by_session_date(history: Any, *, timezone_name: str) -> dict[str, list[dict[str, Any]]]:
     if not isinstance(history, pd.DataFrame) or history.empty:
         raise DayTradingGameDataError("Empty yfinance history.")
@@ -989,6 +1072,11 @@ def _build_session_payload(
         "step_label": profile["step_label"],
         "chart_label": profile["chart_label"],
         "moving_averages": list(profile["moving_averages"]),
+        "trade_modes": [
+            {"key": key, **value}
+            for key, value in TRADE_MODE_PROFILES.items()
+        ],
+        "scoring": calculate_day_trading_scoring(candles),
         "candle_count": len(candles),
         "session_start": first["date"] if mode_key == "daily" else first["time"],
         "session_end": last["date"] if mode_key == "daily" else last["time"],
