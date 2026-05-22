@@ -17,6 +17,7 @@ from ..utils import finite_float_or_none, normalize_symbol
 
 YFINANCE_INTERVAL = "15m"
 YFINANCE_PERIOD = "60d"
+GAME_SESSION_DAYS = 3
 
 US_GAME_SYMBOLS: tuple[str, ...] = (
     "AAPL",
@@ -48,6 +49,21 @@ JP_GAME_SYMBOLS: tuple[str, ...] = (
     "7974.T",
 )
 
+JP_GAME_SYMBOL_NAMES: dict[str, str] = {
+    "7203.T": "Toyota Motor",
+    "6758.T": "Sony Group",
+    "9984.T": "SoftBank Group",
+    "8306.T": "Mitsubishi UFJ Financial Group",
+    "9432.T": "NTT",
+    "6861.T": "Keyence",
+    "6098.T": "Recruit Holdings",
+    "8035.T": "Tokyo Electron",
+    "4063.T": "Shin-Etsu Chemical",
+    "8058.T": "Mitsubishi Corp.",
+    "6501.T": "Hitachi",
+    "7974.T": "Nintendo",
+}
+
 MARKET_CONFIGS: dict[str, dict[str, Any]] = {
     "us": {
         "label": "US",
@@ -65,6 +81,7 @@ MARKET_CONFIGS: dict[str, dict[str, Any]] = {
         "currency_symbol": "¥",
         "currency_digits": 0,
         "symbols": JP_GAME_SYMBOLS,
+        "symbol_names": JP_GAME_SYMBOL_NAMES,
         "min_candles": 8,
     },
 }
@@ -95,7 +112,7 @@ async def build_day_trading_session(
     rng: random.Random | None = None,
     fetch_history: HistoryFetcher | None = None,
 ) -> dict[str, Any]:
-    """Build one randomly selected replay session from 15-minute yfinance bars."""
+    """Build one randomly selected multi-day replay session from 15-minute yfinance bars."""
 
     market_key = str(market or "us").strip().lower()
     config = MARKET_CONFIGS.get(market_key)
@@ -113,20 +130,28 @@ async def build_day_trading_session(
         try:
             history = await _maybe_await(fetcher(candidate))
             candles_by_date = _candles_by_session_date(history, timezone_name=str(config["timezone"]))
-            eligible = _eligible_session_dates(
+            eligible = _eligible_session_date_windows(
                 candles_by_date,
                 timezone_name=str(config["timezone"]),
                 min_candles=int(config["min_candles"]),
+                session_days=GAME_SESSION_DAYS,
             )
             if not eligible:
-                raise DayTradingGameDataError("No complete 15-minute trading days were available.")
-            date_key = chooser.choice(eligible)
-            candles = candles_by_date[date_key]
+                raise DayTradingGameDataError(
+                    f"No complete {GAME_SESSION_DAYS}-day 15-minute trading windows were available."
+                )
+            date_keys = chooser.choice(eligible)
+            candles = [
+                candle
+                for date_key in date_keys
+                for candle in candles_by_date[date_key]
+            ]
             return _build_session_payload(
                 market_key=market_key,
                 config=config,
                 symbol=candidate,
-                date_key=date_key,
+                symbol_name=_symbol_name(config, candidate),
+                date_keys=date_keys,
                 candles=candles,
             )
         except DayTradingGameDependencyError:
@@ -188,6 +213,22 @@ def _candidate_symbols(config: dict[str, Any], *, symbol: str | None) -> list[st
             raise DayTradingGameRequestError("Invalid symbol.")
         return [normalized]
     return list(config["symbols"])
+
+
+def _symbol_name(config: dict[str, Any], symbol: str) -> str | None:
+    symbol_names = config.get("symbol_names")
+    if not isinstance(symbol_names, dict):
+        return None
+    name = symbol_names.get(symbol.upper())
+    if not name:
+        return None
+    return str(name)
+
+
+def _symbol_label(symbol: str, symbol_name: str | None) -> str:
+    if symbol_name:
+        return f"{symbol_name} ({symbol})"
+    return symbol
 
 
 def _candles_by_session_date(history: Any, *, timezone_name: str) -> dict[str, list[dict[str, Any]]]:
@@ -372,22 +413,72 @@ def _eligible_session_dates(
     return sorted(date_key for date_key, candles in candles_by_date.items() if len(candles) >= min_candles)
 
 
+def _eligible_session_date_windows(
+    candles_by_date: dict[str, list[dict[str, Any]]],
+    *,
+    timezone_name: str,
+    min_candles: int,
+    session_days: int,
+) -> list[tuple[str, ...]]:
+    if session_days <= 1:
+        return [
+            (date_key,)
+            for date_key in _eligible_session_dates(
+                candles_by_date,
+                timezone_name=timezone_name,
+                min_candles=min_candles,
+            )
+        ]
+
+    today = datetime.now(ZoneInfo(timezone_name)).date().isoformat()
+    eligible_dates = sorted(
+        date_key
+        for date_key, candles in candles_by_date.items()
+        if len(candles) >= min_candles
+    )
+    complete_dates = [date_key for date_key in eligible_dates if date_key < today]
+    complete_windows = _session_date_windows(complete_dates, session_days=session_days)
+    if complete_windows:
+        return complete_windows
+    return _session_date_windows(eligible_dates, session_days=session_days)
+
+
+def _session_date_windows(date_keys: list[str], *, session_days: int) -> list[tuple[str, ...]]:
+    if len(date_keys) < session_days:
+        return []
+    return [
+        tuple(date_keys[start:start + session_days])
+        for start in range(0, len(date_keys) - session_days + 1)
+    ]
+
+
 def _build_session_payload(
     *,
     market_key: str,
     config: dict[str, Any],
     symbol: str,
-    date_key: str,
+    symbol_name: str | None,
+    date_keys: tuple[str, ...],
     candles: list[dict[str, Any]],
 ) -> dict[str, Any]:
     first = candles[0]
     last = candles[-1]
+    start_date = date_keys[0]
+    end_date = date_keys[-1]
+    date_range_label = start_date if start_date == end_date else f"{start_date} to {end_date}"
     return {
         "game_id": uuid.uuid4().hex,
         "market": market_key,
         "market_label": config["label"],
         "symbol": symbol,
-        "date": date_key,
+        "symbol_name": symbol_name,
+        "symbol_label": _symbol_label(symbol, symbol_name),
+        "date": start_date,
+        "start_date": start_date,
+        "end_date": end_date,
+        "date_range": date_range_label,
+        "session_dates": list(date_keys),
+        "session_day_count": len(date_keys),
         "timezone": config["timezone"],
         "currency": config["currency"],
         "currency_symbol": config["currency_symbol"],

@@ -20,21 +20,39 @@ class _FakeHub:
         return None
 
 
+def _intraday_index(
+    dates: tuple[str, ...],
+    *,
+    periods_per_day: int = 12,
+    timezone: str = "America/New_York",
+) -> pd.DatetimeIndex:
+    indexes = [
+        pd.date_range(
+            f"{date_key} 09:30",
+            periods=periods_per_day,
+            freq="15min",
+            tz=timezone,
+        )
+        for date_key in dates
+    ]
+    combined = indexes[0]
+    for extra in indexes[1:]:
+        combined = combined.append(extra)
+    return combined
+
+
 class DayTradingGameServiceTest(unittest.IsolatedAsyncioTestCase):
     async def test_build_session_uses_yfinance_close_as_execution_price(self) -> None:
-        index = pd.date_range(
-            "2026-04-01 09:30",
-            periods=12,
-            freq="15min",
-            tz="America/New_York",
-        )
+        dates = ("2026-04-01", "2026-04-02", "2026-04-03")
+        index = _intraday_index(dates)
+        steps = range(len(index))
         frame = pd.DataFrame(
             {
-                "Open": [100 + step for step in range(12)],
-                "High": [101 + step for step in range(12)],
-                "Low": [99 + step for step in range(12)],
-                "Close": [100.5 + step for step in range(12)],
-                "Volume": [1000 + step for step in range(12)],
+                "Open": [100 + step for step in steps],
+                "High": [101 + step for step in steps],
+                "Low": [99 + step for step in steps],
+                "Close": [100.5 + step for step in steps],
+                "Volume": [1000 + step for step in steps],
             },
             index=index,
         )
@@ -52,25 +70,29 @@ class DayTradingGameServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(payload["market"], "us")
         self.assertEqual(payload["symbol"], "AAPL")
+        self.assertIsNone(payload["symbol_name"])
+        self.assertEqual(payload["symbol_label"], "AAPL")
         self.assertEqual(payload["date"], "2026-04-01")
-        self.assertEqual(payload["candle_count"], 12)
+        self.assertEqual(payload["start_date"], "2026-04-01")
+        self.assertEqual(payload["end_date"], "2026-04-03")
+        self.assertEqual(payload["date_range"], "2026-04-01 to 2026-04-03")
+        self.assertEqual(payload["session_dates"], list(dates))
+        self.assertEqual(payload["session_day_count"], 3)
+        self.assertEqual(payload["candle_count"], 36)
         self.assertEqual(payload["candles"][0]["execution_price"], 100.5)
         self.assertEqual(payload["candles"][0]["execution_price_method"], "close")
+        self.assertEqual(payload["candles"][12]["date"], "2026-04-02")
+        self.assertEqual(payload["candles"][-1]["date"], "2026-04-03")
 
     async def test_build_session_falls_back_to_iqr_midpoint_when_close_is_missing(self) -> None:
-        index = pd.date_range(
-            "2026-04-02 09:30",
-            periods=12,
-            freq="15min",
-            tz="America/New_York",
-        )
+        index = _intraday_index(("2026-04-02", "2026-04-03", "2026-04-06"))
         frame = pd.DataFrame(
             {
-                "Open": [100.0] * 12,
-                "High": [104.0] * 12,
-                "Low": [96.0] * 12,
-                "Q1": [98.0] * 12,
-                "Q3": [102.0] * 12,
+                "Open": [100.0] * len(index),
+                "High": [104.0] * len(index),
+                "Low": [96.0] * len(index),
+                "Q1": [98.0] * len(index),
+                "Q3": [102.0] * len(index),
             },
             index=index,
         )
@@ -88,6 +110,34 @@ class DayTradingGameServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["candles"][0]["execution_price"], 100.0)
         self.assertEqual(payload["candles"][0]["execution_price_method"], "iqr_midpoint")
 
+    async def test_build_session_adds_japanese_symbol_label(self) -> None:
+        dates = ("2026-04-01", "2026-04-02", "2026-04-03")
+        index = _intraday_index(dates, timezone="Asia/Tokyo")
+        frame = pd.DataFrame(
+            {
+                "Open": [100.0] * len(index),
+                "High": [101.0] * len(index),
+                "Low": [99.0] * len(index),
+                "Close": [100.5] * len(index),
+            },
+            index=index,
+        )
+
+        async def fake_fetch(symbol: str) -> pd.DataFrame:
+            self.assertEqual(symbol, "7974.T")
+            return frame
+
+        payload = await build_day_trading_session(
+            market="jp",
+            symbol="7974.T",
+            rng=random.Random(1),
+            fetch_history=fake_fetch,
+        )
+
+        self.assertEqual(payload["symbol"], "7974.T")
+        self.assertEqual(payload["symbol_name"], "Nintendo")
+        self.assertEqual(payload["symbol_label"], "Nintendo (7974.T)")
+
 
 class DayTradingGameApiTest(unittest.TestCase):
     def test_day_trading_game_session_route_returns_payload(self) -> None:
@@ -104,6 +154,8 @@ class DayTradingGameApiTest(unittest.TestCase):
             "market": "jp",
             "market_label": "Japan",
             "symbol": "7203.T",
+            "symbol_name": "Toyota Motor",
+            "symbol_label": "Toyota Motor (7203.T)",
             "date": "2026-04-01",
             "timezone": "Asia/Tokyo",
             "currency": "JPY",

@@ -81,6 +81,48 @@
     return `${sign}${formatPrice(Math.abs(numeric))}`;
   }
 
+  function formatDateRange(session) {
+    if (!session) return "-";
+    const start = session.start_date || session.date || "";
+    const end = session.end_date || start;
+    if (!start) return "-";
+    return end && end !== start ? `${start} to ${end}` : start;
+  }
+
+  function formatSymbol(session) {
+    if (!session) return "-";
+    return session.symbol_label || session.symbol || "-";
+  }
+
+  function isMultiDaySession(session) {
+    if (!session) return false;
+    if (Array.isArray(session.session_dates)) {
+      return new Set(session.session_dates).size > 1;
+    }
+    return Boolean(session.start_date && session.end_date && session.start_date !== session.end_date);
+  }
+
+  function formatCandleTime(candle) {
+    if (!candle) return "-";
+    const time = candle.time || "-";
+    if (!isMultiDaySession(state.session)) return time;
+    return candle.date ? `${candle.date} ${time}` : time;
+  }
+
+  function formatAxisTime(candle) {
+    if (!candle) return "";
+    const time = candle.time || "";
+    if (!isMultiDaySession(state.session)) return time;
+    const date = String(candle.date || "");
+    const shortDate = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date.slice(5) : date;
+    return shortDate ? `${shortDate} ${time}` : time;
+  }
+
+  function formatSessionIdentity(session) {
+    if (!session) return "-";
+    return `${formatSymbol(session)} ${formatDateRange(session)}`;
+  }
+
   function setMessage(text, tone = "") {
     el.message.textContent = text;
     el.message.classList.toggle("error", tone === "error");
@@ -133,7 +175,7 @@
         closePosition("Auto Close");
       }
       state.gameDone = true;
-      setMessage("Game complete");
+      setMessage(`Game complete: ${formatSessionIdentity(state.session)}`);
     }
     render();
   }
@@ -149,12 +191,12 @@
     state.position = {
       side,
       entryPrice: price,
-      entryTime: candle.time,
+      entryTime: formatCandleTime(candle),
       entryIndex: idx,
     };
     state.actedIndexes.add(idx);
     state.trades.unshift({
-      time: candle.time,
+      time: formatCandleTime(candle),
       action: side === "long" ? "Long" : "Short",
       price,
       pnl: null,
@@ -176,7 +218,7 @@
       : state.position.entryPrice - price;
     state.realized += pnl;
     state.trades.unshift({
-      time: candle.time,
+      time: formatCandleTime(candle),
       action,
       price,
       pnl,
@@ -228,8 +270,8 @@
 
   function renderSessionMeta() {
     const session = state.session;
-    el.symbol.textContent = session?.symbol || "-";
-    el.date.textContent = session?.date || "-";
+    el.symbol.textContent = formatSymbol(session);
+    el.date.textContent = formatDateRange(session);
     el.market.textContent = session?.market_label || "-";
     el.bars.textContent = session ? String(session.candle_count) : "-";
     el.interval.textContent = session?.interval || "-";
@@ -250,7 +292,7 @@
     const unrealized = unrealizedPnL();
     const totalScore = state.realized + (state.gameDone ? 0 : (unrealized || 0));
 
-    el.currentTime.textContent = candle?.time || "-";
+    el.currentTime.textContent = formatCandleTime(candle);
     el.currentPrice.textContent = formatPrice(lastPrice);
     el.last.textContent = formatPrice(lastPrice);
     el.entry.textContent = state.position ? formatPrice(state.position.entryPrice) : "-";
@@ -377,6 +419,23 @@
     });
 
     visible.forEach((item, index) => {
+      if (index === 0 || !item.date || item.date === visible[index - 1]?.date) return;
+      const x = xFor(index);
+      appendSvg("line", {
+        x1: x,
+        x2: x,
+        y1: pad.top,
+        y2: pad.top + plotH,
+        class: "day-game-day-divider",
+      });
+      appendSvg("text", {
+        x: x + 6,
+        y: pad.top + 14,
+        class: "day-game-day-label",
+      }, String(item.date).slice(5));
+    });
+
+    visible.forEach((item, index) => {
       const open = finiteNumber(item.open);
       const high = finiteNumber(item.high);
       const low = finiteNumber(item.low);
@@ -424,7 +483,7 @@
         y: height - 14,
         "text-anchor": "middle",
         class: "symbol-chart-axis-label",
-      }, item.time);
+      }, formatAxisTime(item));
     });
   }
 

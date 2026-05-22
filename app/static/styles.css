@@ -3299,6 +3299,10 @@ body.chart-panning {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.day-game-page .day-game-session-grid .status-box span:not(.label) {
+  overflow-wrap: anywhere;
+}
+
 .day-game-page .day-game-mini-panel {
   margin-top: 8px;
   display: grid;
@@ -3393,6 +3397,18 @@ body.chart-panning {
   stroke-width: 1.5;
 }
 
+.day-game-page .day-game-day-divider {
+  stroke: rgba(148, 163, 184, 0.36);
+  stroke-dasharray: 4 6;
+  stroke-width: 1;
+}
+
+.day-game-page .day-game-day-label {
+  fill: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+
 .day-game-page .day-game-step-row {
   display: flex;
   justify-content: flex-end;
@@ -3400,6 +3416,10 @@ body.chart-panning {
 
 .day-game-page .day-game-step-row button {
   min-width: 128px;
+}
+
+.day-game-page #dtg-current-time {
+  overflow-wrap: anywhere;
 }
 
 .day-game-page .day-game-kpi-grid #dtg-unrealized.up,
