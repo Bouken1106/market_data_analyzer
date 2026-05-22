@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="ja">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Day Trading Game</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="/static/styles.css?v=20260522a" />
+</head>
+
+<body class="monitor-page terminal-page day-game-page">
+  <nav class="nav-tabs" aria-label="Main navigation">
+    <a href="/" class="nav-tab" data-path="/">
+      <span class="nav-tab-icon">📊</span> US Monitor
+    </a>
+    <a href="/jp-monitor" class="nav-tab" data-path="/jp-monitor">
+      <span class="nav-tab-icon">🇯🇵</span> JP Monitor
+    </a>
+    <a href="/valuation" class="nav-tab" data-path="/valuation">
+      <span class="nav-tab-icon">FV</span> 理論株価
+    </a>
+    <a href="/portfolio-analysis" class="nav-tab" data-path="/portfolio-analysis">
+      <span class="nav-tab-icon">🧾</span> Portfolio Risk
+    </a>
+    <a href="/relationship-lab" class="nav-tab" data-path="/relationship-lab">
+      <span class="nav-tab-icon">🕸️</span> Relationship
+    </a>
+    <a href="/leadlag-lab" class="nav-tab" data-path="/leadlag-lab">
+      <span class="nav-tab-icon">🧩</span> Lead-Lag Lab
+    </a>
+    <a href="/day-trading-game" class="nav-tab active" data-path="/day-trading-game">
+      <span class="nav-tab-icon">DT</span> Day Trading
+    </a>
+  </nav>
+
+  <main class="terminal-layout day-game-layout">
+    <section class="terminal-pane watch-pane day-game-setup-pane" aria-label="ゲーム設定">
+      <header class="pane-head">
+        <h1>デイトレード</h1>
+        <span class="pane-sub">15m Replay</span>
+      </header>
+
+      <div class="day-game-market-switch" role="group" aria-label="Market">
+        <button id="dtg-market-us" type="button" class="day-game-market-btn active" data-market="us">US</button>
+        <button id="dtg-market-jp" type="button" class="day-game-market-btn" data-market="jp">JP</button>
+      </div>
+
+      <button id="dtg-new-game" type="button" class="primary-action day-game-new-btn">New Game</button>
+      <p id="dtg-message" class="hint day-game-message">No session</p>
+
+      <div class="portfolio-metrics terminal-portfolio-metrics day-game-session-grid">
+        <div class="status-box">
+          <span class="label">Symbol</span>
+          <span id="dtg-symbol">-</span>
+        </div>
+        <div class="status-box">
+          <span class="label">Date</span>
+          <span id="dtg-date">-</span>
+        </div>
+        <div class="status-box">
+          <span class="label">Market</span>
+          <span id="dtg-market">-</span>
+        </div>
+        <div class="status-box">
+          <span class="label">Bars</span>
+          <span id="dtg-bars">-</span>
+        </div>
+      </div>
+
+      <div class="day-game-mini-panel">
+        <div class="day-game-mini-row">
+          <span>Interval</span>
+          <strong id="dtg-interval">-</strong>
+        </div>
+        <div class="day-game-mini-row">
+          <span>Source</span>
+          <strong id="dtg-source">-</strong>
+        </div>
+        <div class="day-game-mini-row">
+          <span>Execution</span>
+          <strong id="dtg-rule">-</strong>
+        </div>
+      </div>
+    </section>
+
+    <section class="terminal-pane center-pane day-game-chart-pane" aria-label="リプレイチャート">
+      <header class="pane-head center-head">
+        <h2>Intraday Chart</h2>
+        <div class="market-time-inline">
+          <span id="dtg-clock">-</span>
+          <span id="dtg-progress-label" class="market-state">Waiting</span>
+        </div>
+      </header>
+
+      <div class="symbol-tabs day-game-progress-strip" aria-label="Replay progress">
+        <span id="dtg-progress-strip-text">0 / 0</span>
+      </div>
+
+      <article class="symbol-panel day-game-chart-panel">
+        <div id="dtg-chart-wrap" class="chart-wrap day-game-chart-wrap">
+          <svg id="dtg-chart" class="day-game-chart" viewBox="0 0 920 420" role="img"
+            aria-label="15-minute OHLC chart"></svg>
+          <div id="dtg-chart-empty" class="chart-empty day-game-chart-empty">No candles revealed</div>
+        </div>
+
+        <div class="day-game-step-row">
+          <button id="dtg-next" type="button" class="primary-action">Next 15m</button>
+        </div>
+
+        <div class="symbol-kpi-grid day-game-kpi-grid">
+          <div class="kpi-item">
+            <span class="label">Time</span>
+            <span id="dtg-current-time">-</span>
+          </div>
+          <div class="kpi-item">
+            <span class="label">Price</span>
+            <span id="dtg-current-price">-</span>
+          </div>
+          <div class="kpi-item">
+            <span class="label">Position</span>
+            <span id="dtg-position">Flat</span>
+          </div>
+          <div class="kpi-item">
+            <span class="label">Unrealized</span>
+            <span id="dtg-unrealized">-</span>
+          </div>
+          <div class="kpi-item">
+            <span class="label">Realized</span>
+            <span id="dtg-realized">-</span>
+          </div>
+          <div class="kpi-item">
+            <span class="label">Score</span>
+            <span id="dtg-score">-</span>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <div class="trade-column">
+      <section class="terminal-pane trade-pane day-game-trade-pane" aria-label="ゲーム取引">
+        <header class="pane-head">
+          <h2>Trade</h2>
+          <p class="pane-sub">1 Unit</p>
+        </header>
+
+        <div class="day-game-action-grid">
+          <button id="dtg-long" type="button" class="day-game-long-btn">Long</button>
+          <button id="dtg-short" type="button" class="day-game-short-btn">Short</button>
+          <button id="dtg-close" type="button" class="secondary day-game-close-btn">Close</button>
+        </div>
+
+        <div class="portfolio-metrics terminal-portfolio-metrics">
+          <div class="status-box">
+            <span class="label">Entry</span>
+            <span id="dtg-entry">-</span>
+          </div>
+          <div class="status-box">
+            <span class="label">Last</span>
+            <span id="dtg-last">-</span>
+          </div>
+          <div class="status-box">
+            <span class="label">Side</span>
+            <span id="dtg-side">-</span>
+          </div>
+          <div class="status-box">
+            <span class="label">Trades</span>
+            <span id="dtg-trade-count">0</span>
+          </div>
+        </div>
+
+        <div class="portfolio-table compact-table day-game-trades">
+          <h3>Trade Log</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Action</th>
+                  <th>Price</th>
+                  <th>PnL</th>
+                </tr>
+              </thead>
+              <tbody id="dtg-trades-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script src="/static/day_trading_game.js?v=20260522a" defer></script>
+  <script src="/static/page_menu.js?v=20260321a" defer></script>
+</body>
+
+</html>

@@ -212,10 +212,11 @@ async def valuation(
     fair_p_fcf: float | None = None,
     target_dividend_yield: float | None = None,
     risk_free_rate: float | None = None,
-    equity_risk_premium: float = 0.055,
+    equity_risk_premium: float = 0.047,
     terminal_growth_rate: float = 0.01,
     fcf_growth_rate: float = 0.02,
     forecast_years: int = 5,
+    peer_quality_adjustment_k: float = 0.20,
 ) -> JSONResponse:
     payload = await build_valuation_payload(
         hub,
@@ -235,6 +236,7 @@ async def valuation(
         terminal_growth_rate=terminal_growth_rate,
         fcf_growth_rate=fcf_growth_rate,
         forecast_years=forecast_years,
+        peer_quality_adjustment_k=peer_quality_adjustment_k,
     )
     return ok_json_response(**payload)
 

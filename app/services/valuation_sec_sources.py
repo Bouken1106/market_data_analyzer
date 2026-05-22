@@ -52,6 +52,7 @@ def normalize_sec_company_facts(symbol: str, cik: int, payload: dict[str, Any]) 
         "SalesRevenueNet",
         unit="USD",
     )
+    gross_profit = latest_annual.value("GrossProfit", unit="USD")
     operating_income = latest_annual.value("OperatingIncomeLoss", unit="USD")
     ebit = operating_income or latest_annual.value(
         "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
@@ -70,6 +71,9 @@ def normalize_sec_company_facts(symbol: str, cik: int, payload: dict[str, Any]) 
     dividends_paid = _abs_or_none(
         latest_annual.value("PaymentsOfDividends", "PaymentsOfOrdinaryDividends", unit="USD")
     )
+    share_repurchases = _abs_or_none(
+        latest_annual.value("PaymentsForRepurchaseOfCommonStock", "PaymentsForRepurchaseOfEquity", unit="USD")
+    )
     proceeds = latest_annual.value(
         "ProceedsFromIssuanceOfLongTermDebt",
         "ProceedsFromBorrowings",
@@ -79,7 +83,6 @@ def normalize_sec_company_facts(symbol: str, cik: int, payload: dict[str, Any]) 
     repayments = latest_annual.value(
         "RepaymentsOfLongTermDebt",
         "RepaymentsOfDebt",
-        "PaymentsForRepurchaseOfCommonStock",
         unit="USD",
     )
     net_borrowing = _sub_optional(proceeds, repayments)
@@ -122,6 +125,18 @@ def normalize_sec_company_facts(symbol: str, cik: int, payload: dict[str, Any]) 
         unit="USD",
     )
     net_income_history = tuple(latest_annual.history("NetIncomeLoss", "ProfitLoss", unit="USD", max_items=5))
+    revenue_history = tuple(
+        latest_annual.history(
+            "RevenueFromContractWithCustomerExcludingAssessedTax",
+            "Revenues",
+            "SalesRevenueNet",
+            unit="USD",
+            max_items=5,
+        )
+    )
+    eps_history = tuple(
+        latest_annual.history("EarningsPerShareDiluted", "EarningsPerShareBasic", unit="USD/shares", max_items=5)
+    )
 
     return FinancialMetrics(
         symbol=normalize_symbol(symbol),
@@ -130,6 +145,7 @@ def normalize_sec_company_facts(symbol: str, cik: int, payload: dict[str, Any]) 
         company_name=str(entity_name or "") or None,
         fiscal_date=latest_annual.latest_end_date(),
         revenue=revenue,
+        gross_profit=gross_profit,
         operating_income=operating_income,
         ebit=ebit,
         depreciation_and_amortization=depreciation,
@@ -150,11 +166,14 @@ def normalize_sec_company_facts(symbol: str, cik: int, payload: dict[str, Any]) 
         shareholders_equity=equity,
         shares_outstanding=shares,
         dividends_paid=dividends_paid,
+        share_repurchases=share_repurchases,
         dividend_per_share=_div_optional(dividends_paid, shares),
         interest_expense=interest_expense,
         income_tax_expense=tax_expense,
         income_before_tax=pretax_income,
         net_income_history=net_income_history,
+        revenue_history=revenue_history,
+        eps_history=eps_history,
         data_sources=(f"SEC:companyfacts:CIK{cik:010d}",),
         raw={"cik": cik},
     )

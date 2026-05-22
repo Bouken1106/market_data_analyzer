@@ -48,13 +48,16 @@ def normalize_edinet_metrics(symbol: str, facts: dict[str, float], *, doc_id: st
         )
     )
     cash = picker.value("CashAndCashEquivalents", "CashAndCashEquivalentsIFRS", "CashAndDeposits")
+    short_term_investments = picker.value("ShortTermInvestments", "SecuritiesCurrent", "MarketableSecurities")
     debt = _sum_optional(
         picker.value("BondsAndBorrowingsCurrent", "ShortTermBorrowings", "CurrentPortionOfLongTermBorrowings"),
         picker.value("BondsAndBorrowingsNonCurrent", "LongTermBorrowings", "LongTermDebt"),
     )
     revenue = picker.value("NetSales", "Revenue", "RevenueIFRS")
+    gross_profit = picker.value("GrossProfit", "GrossOperatingRevenue")
     operating_income = picker.value("OperatingIncome", "OperatingProfitLoss", "OperatingProfitIFRS")
     net_income = picker.value("ProfitLossAttributableToOwnersOfParent", "NetIncome", "ProfitLoss")
+    depreciation = picker.value("DepreciationAndAmortization", "Depreciation")
     equity = picker.value("EquityAttributableToOwnersOfParent", "NetAssets", "Equity")
     total_assets = picker.value("Assets", "TotalAssets")
     total_liabilities = picker.value("Liabilities", "TotalLiabilities")
@@ -69,13 +72,17 @@ def normalize_edinet_metrics(symbol: str, facts: dict[str, float], *, doc_id: st
         market=MARKET_JP,
         currency="JPY",
         revenue=revenue,
+        gross_profit=gross_profit,
         operating_income=operating_income,
         ebit=operating_income,
+        depreciation_and_amortization=depreciation,
+        ebitda=_sum_optional(operating_income, depreciation),
         net_income=net_income,
         operating_cash_flow=operating_cf,
         capital_expenditure=capex,
         free_cash_flow=_sub_optional(operating_cf, capex),
         cash_and_equivalents=cash,
+        short_term_investments=short_term_investments,
         interest_bearing_debt=debt,
         total_liabilities=total_liabilities,
         current_assets=current_assets,

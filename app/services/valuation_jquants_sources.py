@@ -91,11 +91,30 @@ def normalize_jquants_metrics(
         _parse_float(latest.get("NextYearForecastEarningsPerShare")),
         _parse_float(latest.get("ForecastEarningsPerShare")),
     )
+    fy_rows = sorted(statements, key=lambda item: str(item.get("CurrentPeriodEndDate") or ""), reverse=True)
     net_income_history = tuple(
         value
         for value in (
             _parse_float(row.get("Profit"))
-            for row in sorted(statements, key=lambda item: str(item.get("CurrentPeriodEndDate") or ""), reverse=True)
+            for row in fy_rows
+            if str(row.get("TypeOfCurrentPeriod") or "").upper() == "FY"
+        )
+        if value is not None
+    )[:5]
+    revenue_history = tuple(
+        value
+        for value in (
+            _parse_float(row.get("NetSales"))
+            for row in fy_rows
+            if str(row.get("TypeOfCurrentPeriod") or "").upper() == "FY"
+        )
+        if value is not None
+    )[:5]
+    eps_history = tuple(
+        value
+        for value in (
+            _parse_float(row.get("EarningsPerShare"))
+            for row in fy_rows
             if str(row.get("TypeOfCurrentPeriod") or "").upper() == "FY"
         )
         if value is not None
@@ -131,6 +150,8 @@ def normalize_jquants_metrics(
         forecast_dividend_per_share=forecast_dividend,
         payout_ratio=_parse_float(latest.get("ResultPayoutRatioAnnual")),
         net_income_history=net_income_history,
+        revenue_history=revenue_history,
+        eps_history=eps_history,
         data_sources=("J-Quants:listed/info", "J-Quants:fins/statements"),
         raw={"jquants_latest_statement": latest, "jquants_listed_info": info},
     )

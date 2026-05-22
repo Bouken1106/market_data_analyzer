@@ -439,8 +439,13 @@ class RefactorHelperTest(unittest.TestCase):
                     "ratios_ttm": {"pe_ratio_ttm": 20.0},
                     "key_metrics_ttm": {"eps_ttm": 5.0, "dividend_yield_ttm": 0.01},
                     "income_statement_latest": {"revenue": 1_000.0, "net_income": 500.0},
+                    "income_statement_history": [
+                        {"revenue": 1_000.0, "net_income": 500.0, "eps": 5.0},
+                        {"revenue": 900.0, "net_income": 450.0, "eps": 4.5},
+                    ],
                     "balance_sheet_latest": {"cash_and_short_term_investments": 1_000.0, "total_debt": 500.0},
                     "cash_flow_latest": {"capital_expenditure": -200.0, "free_cash_flow": 600.0},
+                    "cash_flow_history": [{"free_cash_flow": 600.0}, {"free_cash_flow": 540.0}],
                 },
             },
             risk_free_rate=resolve_risk_free_rate("US", None),
@@ -448,10 +453,37 @@ class RefactorHelperTest(unittest.TestCase):
 
         self.assertEqual(multiples.fair_per, 12.0)
         self.assertEqual(multiples.fair_pbr, 2.0)
+        self.assertEqual(multiples.assumptions["fair_per_source"], "request")
+        self.assertEqual(multiples.assumptions["fair_pbr_source"], "market_default")
         self.assertEqual(assumptions.forecast_years, 20)
+        self.assertEqual(resolve_risk_free_rate("US", None), 0.0457)
+        self.assertEqual(resolve_risk_free_rate("JP", None), 0.02748)
         self.assertEqual(metrics.shares_outstanding, 100.0)
         self.assertEqual(metrics.dividend_per_share, 1.0)
         self.assertEqual(metrics.beta, 1.1)
+        self.assertEqual(metrics.revenue_history, (1000.0, 900.0))
+        self.assertEqual(metrics.free_cash_flow_history, (600.0, 540.0))
+
+    def test_valuation_metrics_prefer_reported_dividend_per_share_over_yield_estimate(self) -> None:
+        metrics = financial_metrics_from_payloads(
+            "AAPL",
+            market="US",
+            overview_payload={"source": "overview", "price": {"current": 100.0}},
+            fmp_payload={
+                "source": "fmp",
+                "profile": {"company_name": "Example Inc.", "market_cap": 10_000.0},
+                "financials": {
+                    "ratios_ttm": {},
+                    "key_metrics_ttm": {"dividend_per_share_ttm": 3.0, "dividend_yield_ttm": 0.01},
+                    "income_statement_latest": {},
+                    "balance_sheet_latest": {},
+                    "cash_flow_latest": {},
+                },
+            },
+            risk_free_rate=resolve_risk_free_rate("US", None),
+        )
+
+        self.assertEqual(metrics.dividend_per_share, 3.0)
 
     def test_valuation_metrics_align_market_cap_to_current_price_and_reference_shares(self) -> None:
         metrics = financial_metrics_from_payloads(
@@ -551,7 +583,12 @@ class RefactorHelperTest(unittest.TestCase):
                 "beta": "1.25",
             },
             ratios={"peRatioTTM": "20.5", "returnOnEquityTTM": "0.31"},
-            metrics={"marketCapTTM": "123456", "epsTTM": "5.25", "dividendYieldTTM": "0.01"},
+            metrics={
+                "marketCapTTM": "123456",
+                "epsTTM": "5.25",
+                "dividendPerShareTTM": "2.50",
+                "dividendYieldTTM": "0.01",
+            },
             income={
                 "date": "2025-12-31",
                 "revenue": "1000",
@@ -586,6 +623,7 @@ class RefactorHelperTest(unittest.TestCase):
         self.assertEqual(payload["financials"]["ratios_ttm"]["pe_ratio_ttm"], 20.5)
         self.assertEqual(payload["financials"]["key_metrics_ttm"]["market_cap_ttm"], 123456.0)
         self.assertEqual(payload["financials"]["key_metrics_ttm"]["eps_ttm"], 5.25)
+        self.assertEqual(payload["financials"]["key_metrics_ttm"]["dividend_per_share_ttm"], 2.5)
         self.assertEqual(payload["financials"]["income_statement_latest"]["net_income"], 200.0)
         self.assertEqual(payload["financials"]["income_statement_latest"]["ebitda"], 260.0)
         self.assertEqual(payload["financials"]["income_statement_latest"]["weighted_average_shares_diluted"], 38.1)

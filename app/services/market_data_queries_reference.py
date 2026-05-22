@@ -52,6 +52,8 @@ class FmpReferenceData:
     historical: list[dict[str, Any]]
     dividends: list[dict[str, Any]]
     splits: list[dict[str, Any]]
+    income_history: list[dict[str, Any]] | None = None
+    cash_flow_history: list[dict[str, Any]] | None = None
 
 
 FMP_RATIO_FIELDS = (
@@ -72,6 +74,7 @@ FMP_KEY_METRIC_FIELDS = (
     ("revenue_per_share_ttm", "revenuePerShareTTM"),
     ("free_cash_flow_per_share_ttm", "freeCashFlowPerShareTTM"),
     ("book_value_per_share_ttm", "bookValuePerShareTTM"),
+    ("dividend_per_share_ttm", "dividendPerShareTTM"),
     ("dividend_yield_ttm", "dividendYieldTTM"),
 )
 
@@ -108,7 +111,11 @@ FMP_CASH_FLOW_FIELDS = (
     ("operating_cash_flow", "operatingCashFlow"),
     ("capital_expenditure", "capitalExpenditure"),
     ("free_cash_flow", "freeCashFlow"),
+    ("depreciation_and_amortization", "depreciationAndAmortization"),
+    ("change_in_working_capital", "changeInWorkingCapital"),
     ("dividends_paid", "dividendsPaid"),
+    ("common_stock_repurchased", "commonStockRepurchased"),
+    ("repurchases_of_stock", "repurchasesOfStock"),
 )
 
 
@@ -203,9 +210,9 @@ class MarketDataReferenceMixin:
             profile_task = self._fmp_get_json(client, FMP_PROFILE_URL, params={"symbol": symbol})
             ratios_task = self._fmp_get_json(client, FMP_RATIOS_TTM_URL, params={"symbol": symbol})
             metrics_task = self._fmp_get_json(client, FMP_KEY_METRICS_TTM_URL, params={"symbol": symbol})
-            income_task = self._fmp_get_json(client, FMP_INCOME_STATEMENT_URL, params={"symbol": symbol, "limit": 1})
+            income_task = self._fmp_get_json(client, FMP_INCOME_STATEMENT_URL, params={"symbol": symbol, "limit": 5})
             bs_task = self._fmp_get_json(client, FMP_BALANCE_SHEET_URL, params={"symbol": symbol, "limit": 1})
-            cf_task = self._fmp_get_json(client, FMP_CASH_FLOW_URL, params={"symbol": symbol, "limit": 1})
+            cf_task = self._fmp_get_json(client, FMP_CASH_FLOW_URL, params={"symbol": symbol, "limit": 5})
             hist_task = self._fmp_get_json(
                 client,
                 FMP_DIVIDEND_ADJUSTED_PRICE_URL,
@@ -261,8 +268,10 @@ class MarketDataReferenceMixin:
             ratios=self._first_dict(raw.ratios),
             metrics=self._first_dict(raw.metrics),
             income=self._first_dict(raw.income),
+            income_history=payload_rows(raw.income, "data"),
             balance_sheet=self._first_dict(raw.balance_sheet),
             cash_flow=self._first_dict(raw.cash_flow),
+            cash_flow_history=payload_rows(raw.cash_flow, "data"),
             historical=self._extract_historical_rows(raw.historical),
             dividends=self._extract_historical_rows(raw.dividends),
             splits=self._extract_historical_rows(raw.splits),
@@ -323,8 +332,16 @@ class MarketDataReferenceMixin:
             "ratios_ttm": self._build_ratios_payload(data.ratios),
             "key_metrics_ttm": self._build_key_metrics_payload(data.metrics),
             "income_statement_latest": self._build_income_statement_payload(data.income),
+            "income_statement_history": [
+                self._build_income_statement_payload(row)
+                for row in (data.income_history or [])[:5]
+            ],
             "balance_sheet_latest": self._build_balance_sheet_payload(data.balance_sheet),
             "cash_flow_latest": self._build_cash_flow_payload(data.cash_flow),
+            "cash_flow_history": [
+                self._build_cash_flow_payload(row)
+                for row in (data.cash_flow_history or [])[:5]
+            ],
         }
 
     def _build_ratios_payload(self, ratios: dict[str, Any]) -> dict[str, Any]:

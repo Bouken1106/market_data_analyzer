@@ -104,6 +104,66 @@ class _FakeRefreshAwareHub(_FakeValuationHub):
         return payload
 
 
+def _sec_duration_fact(value: float) -> dict[str, object]:
+    return {
+        "val": value,
+        "start": "2025-01-01",
+        "end": "2025-12-31",
+        "form": "10-K",
+        "fp": "FY",
+        "fy": 2025,
+        "filed": "2026-02-01",
+    }
+
+
+def _sec_instant_fact(value: float) -> dict[str, object]:
+    return {
+        "val": value,
+        "end": "2025-12-31",
+        "form": "10-K",
+        "fp": "FY",
+        "fy": 2025,
+        "filed": "2026-02-01",
+    }
+
+
+def _peer_metrics(
+    symbol: str,
+    *,
+    price: float,
+    revenue: float,
+    operating_income: float,
+    net_income: float,
+    eps: float,
+) -> FinancialMetrics:
+    operating_cash_flow = operating_income * 0.8
+    capex = 250.0
+    return FinancialMetrics(
+        symbol=symbol,
+        market="US",
+        price=price,
+        shares_outstanding=100.0,
+        revenue=revenue,
+        gross_profit=revenue * 0.35,
+        operating_income=operating_income,
+        ebit=operating_income,
+        ebitda=operating_income + 100.0,
+        depreciation_and_amortization=100.0,
+        net_income=net_income,
+        eps=eps,
+        operating_cash_flow=operating_cash_flow,
+        capital_expenditure=capex,
+        free_cash_flow=operating_cash_flow - capex,
+        cash_and_equivalents=300.0,
+        interest_bearing_debt=1_300.0,
+        equity=3_500.0,
+        beta=1.0,
+        risk_free_rate=0.02,
+        revenue_history=(revenue, revenue * 0.99, revenue * 0.98, revenue * 0.97),
+        eps_history=(eps, eps * 0.98, eps * 0.97, eps * 0.96),
+    )
+
+
 class ValuationServiceTest(unittest.TestCase):
     def test_calculates_supported_operating_company_methods(self) -> None:
         metrics = FinancialMetrics(
@@ -149,10 +209,140 @@ class ValuationServiceTest(unittest.TestCase):
         self.assertEqual(by_method["実績PER法"].theoretical_price, 75.0)
         self.assertEqual(by_method["PBR法"].theoretical_price, 40.0)
         self.assertEqual(by_method["PSR法"].theoretical_price, 150.0)
+        self.assertEqual(by_method["成長・収益性補正PER法"].theoretical_price, 75.0)
+        self.assertAlmostEqual(by_method["成長・収益性補正EV/EBITDA法"].theoretical_price or 0, 86.0)
+        self.assertAlmostEqual(by_method["成長・収益性補正EV/Sales法"].theoretical_price or 0, 126.0)
+        self.assertEqual(
+            by_method["成長・収益性補正PER法"].assumptions["quality_adjustment_source"],
+            "neutral_fallback_no_peer_quality",
+        )
+        self.assertFalse(by_method["成長・収益性補正PER法"].is_standard_candidate)
         self.assertAlmostEqual(by_method["EV/EBITDA法"].theoretical_price or 0, 86.0)
         self.assertIsNone(by_method["予想PER法"].theoretical_price)
         self.assertEqual(by_method["予想PER法"].unavailable_reason, "forecast EPS is missing or non-positive")
         self.assertIsNotNone(by_method["簡易DCF法"].theoretical_price)
+
+    def test_gordon_growth_uses_forecast_dividend_as_next_dividend(self) -> None:
+        metrics = FinancialMetrics(
+            symbol="DIV",
+            market="US",
+            price=100.0,
+            dividend_per_share=1.0,
+            forecast_dividend_per_share=2.0,
+            beta=1.0,
+            risk_free_rate=0.02,
+        )
+        assumptions = ValuationAssumptions(dividend_growth_rate=0.03)
+
+        report = calculate_valuation_report(metrics, assumptions=assumptions)
+        by_method = {item.method_name: item for item in report.valuations}
+
+        gordon = by_method["ゴードン成長モデル"]
+        self.assertAlmostEqual(gordon.theoretical_price or 0, 2.0 / (0.067 - 0.03))
+        self.assertEqual(gordon.used_data["next_dividend"], 2.0)
+        self.assertEqual(gordon.used_data["dividend_source"], "forecast")
+
+    def test_standard_intrinsic_value_methods_use_quality_growth_roic_and_reverse_dcf(self) -> None:
+        metrics = FinancialMetrics(
+            symbol="TGT",
+            market="US",
+            currency="USD",
+            price=100.0,
+            shares_outstanding=100.0,
+            revenue=10_000.0,
+            gross_profit=4_500.0,
+            operating_income=1_300.0,
+            ebit=1_300.0,
+            ebitda=1_500.0,
+            depreciation_and_amortization=200.0,
+            net_income=800.0,
+            eps=8.0,
+            operating_cash_flow=1_100.0,
+            capital_expenditure=300.0,
+            free_cash_flow=800.0,
+            cash_and_equivalents=500.0,
+            short_term_investments=100.0,
+            interest_bearing_debt=1_000.0,
+            equity=4_200.0,
+            total_assets=7_000.0,
+            dividends_paid=200.0,
+            share_repurchases=100.0,
+            beta=1.0,
+            risk_free_rate=0.02,
+            revenue_history=(10_000.0, 9_800.0, 9_600.0, 9_400.0),
+            eps_history=(8.0, 7.8, 7.6, 7.4),
+            free_cash_flow_history=(800.0, 760.0, 730.0, 700.0),
+            data_sources=("unit",),
+        )
+        peers = [
+            _peer_metrics("P1", price=85.0, revenue=9_000.0, operating_income=900.0, net_income=500.0, eps=5.0),
+            _peer_metrics("P2", price=90.0, revenue=9_500.0, operating_income=950.0, net_income=550.0, eps=5.5),
+            _peer_metrics("P3", price=95.0, revenue=9_200.0, operating_income=850.0, net_income=480.0, eps=4.8),
+        ]
+
+        report = calculate_valuation_report(metrics, peers=peers)
+        by_method = {item.method_name: item for item in report.valuations}
+
+        self.assertIsNotNone(by_method["成長・収益性補正PER法"].theoretical_price)
+        self.assertIsNotNone(by_method["成長・収益性補正EV/EBITDA法"].theoretical_price)
+        self.assertIsNotNone(by_method["成長・収益性補正EV/Sales法"].theoretical_price)
+        self.assertIsNotNone(by_method["Justified PER法"].theoretical_price)
+        self.assertIsNotNone(by_method["Justified PBR法"].theoretical_price)
+        self.assertIsNotNone(by_method["ROIC・再投資率DCF法"].theoretical_price)
+        self.assertGreater(by_method["成長・収益性補正PER法"].used_data["adjusted_fair_per"], 0)
+        self.assertTrue(by_method["ROIC・再投資率DCF法"].is_standard_candidate)
+        self.assertIsNotNone(report.diagnostics["standard_valuation"]["standard_theoretical_price"])
+        self.assertTrue(report.diagnostics["reverse_dcf"]["is_calculated"])
+        self.assertIn("current_price_implied_fcff_growth_rate", report.diagnostics["reverse_dcf"])
+
+    def test_negative_working_capital_release_does_not_force_decline_growth(self) -> None:
+        metrics = FinancialMetrics(
+            symbol="WC",
+            market="US",
+            price=100.0,
+            shares_outstanding=100.0,
+            revenue=10_000.0,
+            operating_income=1_200.0,
+            ebit=1_200.0,
+            depreciation_and_amortization=200.0,
+            net_income=800.0,
+            eps=8.0,
+            operating_cash_flow=1_200.0,
+            capital_expenditure=220.0,
+            working_capital_change=-1_000.0,
+            cash_and_equivalents=500.0,
+            interest_bearing_debt=800.0,
+            equity=4_000.0,
+            dividends_paid=200.0,
+            share_repurchases=200.0,
+            beta=1.0,
+            risk_free_rate=0.04,
+        )
+
+        report = calculate_valuation_report(metrics)
+        by_method = {item.method_name: item for item in report.valuations}
+
+        self.assertIsNone(report.metrics["sustainable_growth_rate"])
+        self.assertEqual(by_method["Justified PER法"].used_data["growth_rate"], 0.02)
+        self.assertEqual(by_method["ROIC・再投資率DCF法"].unavailable_reason, "reinvestment amount or reinvestment rate is missing")
+
+    def test_reverse_dcf_can_solve_forecast_growth_above_wacc(self) -> None:
+        metrics = FinancialMetrics(
+            symbol="HIGH",
+            market="US",
+            price=200.0,
+            shares_outstanding=100.0,
+            free_cash_flow=1_000.0,
+            wacc=0.10,
+            data_sources=("unit",),
+        )
+
+        report = calculate_valuation_report(metrics)
+        reverse = report.diagnostics["reverse_dcf"]
+
+        self.assertTrue(reverse["is_calculated"])
+        self.assertGreater(reverse["current_price_implied_fcff_growth_rate"], 0.10)
+        self.assertEqual(reverse["growth_search_high"], 1.0)
 
     def test_sector_rules_exclude_bank_ev_and_fcf_methods(self) -> None:
         metrics = FinancialMetrics(
@@ -181,6 +371,28 @@ class ValuationServiceTest(unittest.TestCase):
         self.assertIsNotNone(by_method["PBR法"].theoretical_price)
         self.assertEqual(by_method["EV/EBITDA法"].unavailable_reason, "sector rule excludes this method")
         self.assertEqual(by_method["P/FCF法"].unavailable_reason, "sector rule excludes this method")
+
+    def test_sec_net_borrowing_does_not_treat_stock_buybacks_as_debt_repayment(self) -> None:
+        payload = {
+            "entityName": "Example Inc.",
+            "facts": {
+                "dei": {
+                    "EntityCommonStockSharesOutstanding": {
+                        "units": {"shares": [_sec_instant_fact(100.0)]},
+                    },
+                },
+                "us-gaap": {
+                    "NetIncomeLoss": {"units": {"USD": [_sec_duration_fact(1000.0)]}},
+                    "ProceedsFromIssuanceOfLongTermDebt": {"units": {"USD": [_sec_duration_fact(300.0)]}},
+                    "RepaymentsOfLongTermDebt": {"units": {"USD": [_sec_duration_fact(100.0)]}},
+                    "PaymentsForRepurchaseOfCommonStock": {"units": {"USD": [_sec_duration_fact(900.0)]}},
+                },
+            },
+        }
+
+        metrics = normalize_sec_company_facts("EXM", 123, payload)
+
+        self.assertEqual(metrics.net_borrowing, 200.0)
 
     def test_jquants_summary_normalizes_japan_metrics(self) -> None:
         info_rows = [
@@ -342,6 +554,9 @@ class ValuationServiceTest(unittest.TestCase):
         payload = asyncio.run(build_valuation_payload(hub, "aapl", cache_only=False))
 
         self.assertEqual(payload["company_name"], "Fresh Inc.")
+        self.assertEqual(payload["assumptions"]["risk_free_rate"], 0.0457)
+        self.assertEqual(payload["assumptions"]["equity_risk_premium"], 0.047)
+        self.assertEqual(payload["input_status"]["risk_free_rate_source"], "market_default:2026-05-22")
         self.assertEqual(hub.calls[0], {"symbol": "AAPL", "refresh": False, "cache_only": False})
 
 

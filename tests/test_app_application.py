@@ -35,8 +35,10 @@ class ApplicationRoutesTest(unittest.TestCase):
             "/portfolio-analysis",
             "/relationship-lab",
             "/leadlag-lab",
+            "/day-trading-game",
             "/historical/{symbol}",
             "/api/relationships",
+            "/api/day-trading-game/session",
         }
         self.assertTrue(expected_paths.issubset(route_paths))
 
@@ -46,8 +48,10 @@ class ApplicationRoutesTest(unittest.TestCase):
             portfolio_analysis_response = client.get("/portfolio-analysis")
             relationship_response = client.get("/relationship-lab")
             leadlag_response = client.get("/leadlag-lab")
+            day_game_response = client.get("/day-trading-game")
             historical_response = client.get("/historical/AAPL")
             valuation_js_response = client.get("/static/valuation.js")
+            day_game_js_response = client.get("/static/day_trading_game.js")
             static_js_response = client.get("/static/app.terminal.js")
 
         self.assertEqual(jp_monitor_response.status_code, 200)
@@ -55,8 +59,10 @@ class ApplicationRoutesTest(unittest.TestCase):
         self.assertEqual(portfolio_analysis_response.status_code, 200)
         self.assertEqual(relationship_response.status_code, 200)
         self.assertEqual(leadlag_response.status_code, 200)
+        self.assertEqual(day_game_response.status_code, 200)
         self.assertEqual(historical_response.status_code, 200)
         self.assertEqual(valuation_js_response.status_code, 200)
+        self.assertEqual(day_game_js_response.status_code, 200)
         self.assertEqual(static_js_response.status_code, 200)
         self.assertEqual(
             jp_monitor_response.headers.get("Cache-Control"),
@@ -75,11 +81,19 @@ class ApplicationRoutesTest(unittest.TestCase):
             "no-store, no-cache, must-revalidate, max-age=0",
         )
         self.assertEqual(
+            day_game_response.headers.get("Cache-Control"),
+            "no-store, no-cache, must-revalidate, max-age=0",
+        )
+        self.assertEqual(
             historical_response.headers.get("Cache-Control"),
             "no-store, no-cache, must-revalidate, max-age=0",
         )
         self.assertEqual(
             valuation_js_response.headers.get("Cache-Control"),
+            "no-store, no-cache, must-revalidate, max-age=0",
+        )
+        self.assertEqual(
+            day_game_js_response.headers.get("Cache-Control"),
             "no-store, no-cache, must-revalidate, max-age=0",
         )
         self.assertEqual(

@@ -12,6 +12,8 @@ from .valuation_payload_inputs import (
     DEFAULT_EQUITY_RISK_PREMIUM,
     DEFAULT_FCF_GROWTH_RATE,
     DEFAULT_FORECAST_YEARS,
+    DEFAULT_MARKET_ASSUMPTION_DATE,
+    DEFAULT_PEER_QUALITY_ADJUSTMENT_K,
     DEFAULT_TERMINAL_GROWTH_RATE,
     ValuationPayloadOptions,
     build_comparable_multiples,
@@ -43,6 +45,7 @@ async def build_valuation_payload(
     terminal_growth_rate: float = DEFAULT_TERMINAL_GROWTH_RATE,
     fcf_growth_rate: float = DEFAULT_FCF_GROWTH_RATE,
     forecast_years: int = DEFAULT_FORECAST_YEARS,
+    peer_quality_adjustment_k: float = DEFAULT_PEER_QUALITY_ADJUSTMENT_K,
 ) -> dict[str, Any]:
     """Build a UI-friendly valuation payload for one symbol."""
 
@@ -64,6 +67,7 @@ async def build_valuation_payload(
         terminal_growth_rate=terminal_growth_rate,
         fcf_growth_rate=fcf_growth_rate,
         forecast_years=forecast_years,
+        peer_quality_adjustment_k=peer_quality_adjustment_k,
     )
     overview_payload, overview_error = await _safe_overview_payload(hub, normalized, refresh=refresh)
     fmp_payload, fmp_error = await _safe_fmp_reference_payload(
@@ -103,7 +107,7 @@ async def build_valuation_payload(
             "overview_error": overview_error,
             "cache_only": cache_only,
             "refresh": refresh,
-            "risk_free_rate_source": "request" if risk_free_rate is not None else "static_default",
+            "risk_free_rate_source": "request" if risk_free_rate is not None else f"market_default:{DEFAULT_MARKET_ASSUMPTION_DATE}",
         },
         "assumptions": valuation_assumptions_payload(
             multiples=multiples,
@@ -111,6 +115,7 @@ async def build_valuation_payload(
             risk_free_rate=resolved_risk_free_rate,
         ),
         "metrics": report.metrics,
+        "diagnostics": report.to_dict()["diagnostics"],
         "summary": summary,
         "valuations": valuations,
     }

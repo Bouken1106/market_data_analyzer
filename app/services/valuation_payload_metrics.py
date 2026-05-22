@@ -35,6 +35,8 @@ def financial_metrics_from_payloads(
     income = _dict_at(financials, "income_statement_latest")
     balance_sheet = _dict_at(financials, "balance_sheet_latest")
     cash_flow = _dict_at(financials, "cash_flow_latest")
+    income_history = _dict_rows(financials.get("income_statement_history"))
+    cash_flow_history = _dict_rows(financials.get("cash_flow_history"))
     adjusted_prices = _dict_at(fmp_payload, "adjusted_prices")
 
     overview_price = _path_float(overview_payload, "price", "current")
@@ -67,6 +69,7 @@ def financial_metrics_from_payloads(
     )
     dividend_yield = positive_float(key_metrics.get("dividend_yield_ttm"))
     dividend_per_share = first_positive(
+        key_metrics.get("dividend_per_share_ttm"),
         _positive_mul(price, dividend_yield),
         _dividend_per_share_from_actions(fmp_payload),
     )
@@ -96,14 +99,17 @@ def financial_metrics_from_payloads(
         shares_outstanding=shares,
         market_cap=market_cap,
         revenue=_float(income.get("revenue")),
+        gross_profit=_float(income.get("gross_profit")),
         operating_income=_float(income.get("operating_income")),
         ebit=_float(income.get("ebit")) or _float(income.get("operating_income")),
         ebitda=_float(income.get("ebitda")),
+        depreciation_and_amortization=_float(cash_flow.get("depreciation_and_amortization")),
         net_income=_float(income.get("net_income")),
         eps=eps,
         operating_cash_flow=_float(cash_flow.get("operating_cash_flow")),
         capital_expenditure=capex,
         free_cash_flow=_float(cash_flow.get("free_cash_flow")),
+        working_capital_change=_float(cash_flow.get("change_in_working_capital")),
         cash_and_equivalents=cash_and_equivalents,
         short_term_investments=short_term_investments,
         long_term_investments=long_term_investments,
@@ -114,6 +120,12 @@ def financial_metrics_from_payloads(
         shareholders_equity=_float(balance_sheet.get("total_equity")),
         bps=positive_float(key_metrics.get("book_value_per_share_ttm")),
         dividend_per_share=dividend_per_share,
+        dividends_paid=_positive_abs(cash_flow.get("dividends_paid")),
+        share_repurchases=_positive_abs(
+            cash_flow.get("common_stock_repurchased")
+            or cash_flow.get("repurchases_of_stock")
+            or cash_flow.get("stock_repurchased")
+        ),
         roe=_float(ratios.get("roe_ttm")),
         per=positive_float(ratios.get("pe_ratio_ttm")),
         pbr=positive_float(ratios.get("pb_ratio_ttm")),
@@ -124,6 +136,10 @@ def financial_metrics_from_payloads(
         income_before_tax=_float(income.get("income_before_tax")),
         beta=beta,
         risk_free_rate=risk_free_rate,
+        net_income_history=_history_tuple(income_history, "net_income"),
+        revenue_history=_history_tuple(income_history, "revenue"),
+        eps_history=_history_tuple(income_history, "eps"),
+        free_cash_flow_history=_history_tuple(cash_flow_history, "free_cash_flow"),
         data_sources=data_sources,
     )
 
@@ -165,3 +181,17 @@ def _cash_and_investments(balance_sheet: dict[str, Any]) -> tuple[float | None, 
         return total_investments, None, None
 
     return None, None, None
+
+
+def _dict_rows(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
+
+
+def _history_tuple(rows: list[dict[str, Any]], key: str) -> tuple[float, ...]:
+    return tuple(
+        value
+        for value in (_float(row.get(key)) for row in rows[:5])
+        if value is not None
+    )

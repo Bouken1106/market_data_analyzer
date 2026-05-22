@@ -16,12 +16,14 @@ DEFAULT_FAIR_EV_EBITDA = 10.0
 DEFAULT_FAIR_EV_FCF = 15.0
 DEFAULT_FAIR_P_FCF = 15.0
 DEFAULT_TARGET_DIVIDEND_YIELD = 0.02
-DEFAULT_US_RISK_FREE_RATE = 0.04
-DEFAULT_JP_RISK_FREE_RATE = 0.01
-DEFAULT_EQUITY_RISK_PREMIUM = 0.055
+DEFAULT_US_RISK_FREE_RATE = 0.0457
+DEFAULT_JP_RISK_FREE_RATE = 0.02748
+DEFAULT_EQUITY_RISK_PREMIUM = 0.047
 DEFAULT_TERMINAL_GROWTH_RATE = 0.01
 DEFAULT_FCF_GROWTH_RATE = 0.02
 DEFAULT_FORECAST_YEARS = 5
+DEFAULT_PEER_QUALITY_ADJUSTMENT_K = 0.20
+DEFAULT_MARKET_ASSUMPTION_DATE = "2026-05-22"
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,7 @@ class ValuationPayloadOptions:
     terminal_growth_rate: float = DEFAULT_TERMINAL_GROWTH_RATE
     fcf_growth_rate: float = DEFAULT_FCF_GROWTH_RATE
     forecast_years: int = DEFAULT_FORECAST_YEARS
+    peer_quality_adjustment_k: float = DEFAULT_PEER_QUALITY_ADJUSTMENT_K
 
 
 def market_for_symbol(symbol: str) -> str:
@@ -71,6 +74,14 @@ def build_comparable_multiples(options: ValuationPayloadOptions) -> ComparableMu
             "fair_ev_fcf_default": DEFAULT_FAIR_EV_FCF,
             "fair_p_fcf_default": DEFAULT_FAIR_P_FCF,
             "target_dividend_yield_default": DEFAULT_TARGET_DIVIDEND_YIELD,
+            "fair_per_source": _request_or_default(options.fair_per),
+            "fair_pbr_source": _request_or_default(options.fair_pbr),
+            "fair_psr_source": _request_or_default(options.fair_psr),
+            "fair_ev_sales_source": _request_or_default(options.fair_ev_sales),
+            "fair_ev_ebitda_source": _request_or_default(options.fair_ev_ebitda),
+            "fair_ev_fcf_source": _request_or_default(options.fair_ev_fcf),
+            "fair_p_fcf_source": _request_or_default(options.fair_p_fcf),
+            "target_dividend_yield_source": _request_or_default(options.target_dividend_yield),
         },
     )
 
@@ -86,6 +97,10 @@ def build_valuation_assumptions(options: ValuationPayloadOptions) -> ValuationAs
         roe_model_growth_rate=_rate_or_default(options.terminal_growth_rate, DEFAULT_TERMINAL_GROWTH_RATE),
         residual_income_growth_rate=_rate_or_default(options.terminal_growth_rate, DEFAULT_TERMINAL_GROWTH_RATE),
         allow_default_beta=True,
+        peer_quality_adjustment_k=_rate_or_default(
+            options.peer_quality_adjustment_k,
+            DEFAULT_PEER_QUALITY_ADJUSTMENT_K,
+        ),
     )
 
 
@@ -105,15 +120,21 @@ def valuation_assumptions_payload(
         "fair_p_fcf": multiples.fair_p_fcf,
         "target_dividend_yield": multiples.target_dividend_yield,
         "risk_free_rate": risk_free_rate,
+        "market_assumption_date": DEFAULT_MARKET_ASSUMPTION_DATE,
         "equity_risk_premium": assumptions.equity_risk_premium,
         "fcf_growth_rate": assumptions.fcf_growth_rate,
         "terminal_growth_rate": assumptions.terminal_growth_rate,
         "forecast_years": assumptions.forecast_years,
+        "peer_quality_adjustment_k": assumptions.peer_quality_adjustment_k,
     }
 
 
 def _positive_or_default(value: Any, default: float) -> float:
     return positive_float(value) or default
+
+
+def _request_or_default(value: Any) -> str:
+    return "request" if positive_float(value) is not None else "market_default"
 
 
 def _rate_or_default(value: Any, default: float) -> float:

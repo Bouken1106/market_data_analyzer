@@ -22,6 +22,7 @@ STATIC_PAGES: tuple[StaticPage, ...] = (
     StaticPage("/portfolio-analysis", "portfolio_analysis.html"),
     StaticPage("/relationship-lab", "relationship_lab.html"),
     StaticPage("/leadlag-lab", "leadlag_lab.html"),
+    StaticPage("/day-trading-game", "day_trading_game.html"),
 )
 
 HISTORICAL_PAGE_FILE = "historical.html"
@@ -31,6 +32,7 @@ STATIC_ASSET_NO_CACHE_PATHS = frozenset(
     {
         "/static/app.terminal.js",
         "/static/portfolio_analysis.js",
+        "/static/day_trading_game.js",
         "/static/valuation.js",
         "/static/styles.css",
         "/static/index.html",

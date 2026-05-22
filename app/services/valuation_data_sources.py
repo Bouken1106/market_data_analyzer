@@ -349,8 +349,26 @@ def normalize_fmp_metrics(
         for value in (_parse_float(row.get("netIncome")) for row in income_rows[:5])
         if value is not None
     )
+    revenue_history = tuple(
+        value
+        for value in (_parse_float(row.get("revenue")) for row in income_rows[:5])
+        if value is not None
+    )
+    eps_history = tuple(
+        value
+        for value in (_parse_float(row.get("epsdiluted") or row.get("eps")) for row in income_rows[:5])
+        if value is not None
+    )
     capex = _abs_or_none(_parse_float(cash_flow.get("capitalExpenditure")))
     operating_cf = _parse_float(cash_flow.get("operatingCashFlow"))
+    free_cash_flow_history = tuple(
+        value
+        for value in (
+            _parse_float(row.get("freeCashFlow"))
+            for row in payload_rows(cash_flow_payload, "data")[:5]
+        )
+        if value is not None
+    )
     cash = first_present(
         _parse_float(balance.get("cashAndCashEquivalents")),
         _parse_float(balance.get("cashAndShortTermInvestments")),
@@ -368,14 +386,17 @@ def normalize_fmp_metrics(
         price=_parse_float(profile.get("price")),
         market_cap=_parse_float(profile.get("mktCap") or profile.get("marketCap")),
         revenue=_parse_float(income.get("revenue")),
+        gross_profit=_parse_float(income.get("grossProfit")),
         operating_income=_parse_float(income.get("operatingIncome")),
         ebit=_parse_float(income.get("ebit")) or _parse_float(income.get("operatingIncome")),
         ebitda=_parse_float(income.get("ebitda")),
+        depreciation_and_amortization=_parse_float(cash_flow.get("depreciationAndAmortization")),
         net_income=_parse_float(income.get("netIncome")),
         eps=_parse_float(key_metrics.get("epsTTM")) or _parse_float(income.get("eps")),
         operating_cash_flow=operating_cf,
         capital_expenditure=capex,
         free_cash_flow=_parse_float(cash_flow.get("freeCashFlow")) or _sub_optional(operating_cf, capex),
+        working_capital_change=_parse_float(cash_flow.get("changeInWorkingCapital")),
         cash_and_equivalents=cash,
         short_term_investments=short_term,
         interest_bearing_debt=_parse_float(balance.get("totalDebt")),
@@ -387,6 +408,13 @@ def normalize_fmp_metrics(
         shares_outstanding=_parse_float(income.get("weightedAverageShsOutDil")) or _parse_float(income.get("weightedAverageShsOut")),
         bps=_parse_float(key_metrics.get("bookValuePerShareTTM")),
         dividends_paid=_abs_or_none(_parse_float(cash_flow.get("dividendsPaid"))),
+        share_repurchases=_abs_or_none(
+            _parse_float(
+                cash_flow.get("commonStockRepurchased")
+                or cash_flow.get("repurchasesOfStock")
+                or cash_flow.get("stockRepurchased")
+            )
+        ),
         dividend_per_share=_parse_float(key_metrics.get("dividendPerShareTTM")),
         roe=_parse_float(ratios.get("returnOnEquityTTM")),
         roa=_parse_float(ratios.get("returnOnAssetsTTM")),
@@ -395,6 +423,9 @@ def normalize_fmp_metrics(
         psr=_parse_float(ratios.get("priceToSalesRatioTTM")),
         beta=_parse_float(profile.get("beta")),
         net_income_history=net_income_history,
+        revenue_history=revenue_history,
+        eps_history=eps_history,
+        free_cash_flow_history=free_cash_flow_history,
         data_sources=("FMP:profile", "FMP:income-statement", "FMP:balance-sheet-statement", "FMP:cash-flow-statement"),
         raw={"fmp_profile": profile},
     )
@@ -419,12 +450,32 @@ async def alpha_vantage_get_json(
 
 def normalize_alpha_vantage_metrics(symbol: str, overview: Any, income: Any, balance: Any, cash_flow: Any) -> FinancialMetrics:
     overview_dict = overview if isinstance(overview, dict) else {}
+    annual_income_rows = payload_rows(income, "annualReports")
+    annual_cash_flow_rows = payload_rows(cash_flow, "annualReports")
     annual_income = _first_report(income, "annualReports")
     annual_balance = _first_report(balance, "annualReports")
     annual_cash_flow = _first_report(cash_flow, "annualReports")
     capex = _abs_or_none(_parse_float(annual_cash_flow.get("capitalExpenditures")))
     operating_cf = _parse_float(annual_cash_flow.get("operatingCashflow"))
     dividend_per_share = _parse_float(overview_dict.get("DividendPerShare"))
+    revenue_history = tuple(
+        value
+        for value in (_parse_float(row.get("totalRevenue")) for row in annual_income_rows[:5])
+        if value is not None
+    )
+    eps_history = tuple(
+        value
+        for value in (_parse_float(row.get("reportedEPS")) for row in annual_income_rows[:5])
+        if value is not None
+    )
+    free_cash_flow_history = tuple(
+        value
+        for value in (
+            _sub_optional(row.get("operatingCashflow"), _abs_or_none(_parse_float(row.get("capitalExpenditures"))))
+            for row in annual_cash_flow_rows[:5]
+        )
+        if value is not None
+    )
 
     return FinancialMetrics(
         symbol=normalize_symbol(symbol),
@@ -435,13 +486,16 @@ def normalize_alpha_vantage_metrics(symbol: str, overview: Any, income: Any, bal
         industry=str(overview_dict.get("Industry") or "") or None,
         fiscal_date=str(annual_income.get("fiscalDateEnding") or "") or None,
         revenue=_parse_float(annual_income.get("totalRevenue")),
+        gross_profit=_parse_float(annual_income.get("grossProfit")),
         operating_income=_parse_float(annual_income.get("operatingIncome")),
         ebit=_parse_float(annual_income.get("ebit")) or _parse_float(annual_income.get("operatingIncome")),
+        depreciation_and_amortization=_parse_float(annual_cash_flow.get("depreciationDepletionAndAmortization")),
         net_income=_parse_float(annual_income.get("netIncome")),
         eps=_parse_float(overview_dict.get("EPS")),
         operating_cash_flow=operating_cf,
         capital_expenditure=capex,
         free_cash_flow=_sub_optional(operating_cf, capex),
+        working_capital_change=_parse_float(annual_cash_flow.get("changeInOperatingAssetsAndLiabilities")),
         cash_and_equivalents=_parse_float(annual_balance.get("cashAndCashEquivalentsAtCarryingValue")),
         short_term_investments=_parse_float(annual_balance.get("shortTermInvestments")),
         interest_bearing_debt=_sum_optional(
@@ -455,10 +509,14 @@ def normalize_alpha_vantage_metrics(symbol: str, overview: Any, income: Any, bal
         shareholders_equity=_parse_float(annual_balance.get("totalShareholderEquity")),
         shares_outstanding=_parse_float(overview_dict.get("SharesOutstanding")),
         dividend_per_share=dividend_per_share,
+        share_repurchases=_abs_or_none(_parse_float(annual_cash_flow.get("paymentsForRepurchaseOfCommonStock"))),
         per=_parse_float(overview_dict.get("PERatio")),
         pbr=_parse_float(overview_dict.get("PriceToBookRatio")),
         psr=_parse_float(overview_dict.get("PriceToSalesRatioTTM")),
         beta=_parse_float(overview_dict.get("Beta")),
+        revenue_history=revenue_history,
+        eps_history=eps_history,
+        free_cash_flow_history=free_cash_flow_history,
         data_sources=("AlphaVantage:OVERVIEW", "AlphaVantage:INCOME_STATEMENT", "AlphaVantage:BALANCE_SHEET", "AlphaVantage:CASH_FLOW"),
         raw={"alpha_vantage_overview": overview_dict},
     )
