@@ -78,8 +78,8 @@ class DayTradingGameServiceTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(payload["market"], "us")
         self.assertEqual(payload["symbol"], "AAPL")
-        self.assertIsNone(payload["symbol_name"])
-        self.assertEqual(payload["symbol_label"], "AAPL")
+        self.assertEqual(payload["symbol_name"], "Apple")
+        self.assertEqual(payload["symbol_label"], "Apple (AAPL)")
         self.assertEqual(payload["date"], "2026-04-01")
         self.assertEqual(payload["start_date"], "2026-04-01")
         self.assertEqual(payload["end_date"], "2026-04-03")
