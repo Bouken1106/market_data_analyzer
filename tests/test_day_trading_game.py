@@ -88,6 +88,7 @@ class DayTradingGameServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["session_day_count"], 3)
         self.assertEqual(payload["candle_count"], 36)
         self.assertEqual(payload["mode"], "intraday")
+        self.assertEqual(payload["price_digits"], 2)
         self.assertEqual(payload["moving_averages"][0]["label"], "MA5")
         self.assertEqual(payload["moving_averages"][1]["label"], "MA20")
         self.assertEqual(payload["candles"][0]["execution_price"], 100.5)
@@ -150,6 +151,8 @@ class DayTradingGameServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["symbol"], "7974.T")
         self.assertEqual(payload["symbol_name"], "Nintendo")
         self.assertEqual(payload["symbol_label"], "Nintendo (7974.T)")
+        self.assertEqual(payload["currency_digits"], 0)
+        self.assertEqual(payload["price_digits"], 1)
 
     async def test_daily_session_uses_prior_history_for_moving_averages(self) -> None:
         index = pd.date_range("2026-01-02", periods=55, freq="B", tz="America/New_York")
@@ -214,6 +217,7 @@ class DayTradingGameApiTest(unittest.TestCase):
             "currency": "JPY",
             "currency_symbol": "¥",
             "currency_digits": 0,
+            "price_digits": 1,
             "interval": "15m",
             "period": "60d",
             "source": "yfinance",
@@ -234,6 +238,7 @@ class DayTradingGameApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["ok"])
         self.assertEqual(response.json()["symbol"], "7203.T")
+        self.assertEqual(response.json()["price_digits"], 1)
         build_mock.assert_awaited_once_with(market="jp", mode="intraday", symbol=None)
 
 

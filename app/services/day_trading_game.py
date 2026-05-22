@@ -17,6 +17,7 @@ import pandas as pd
 from ..utils import finite_float_or_none, normalize_symbol
 
 DEFAULT_GAME_MODE = "intraday"
+MAX_PRICE_DISPLAY_DIGITS = 4
 
 GAME_MODE_PROFILES: dict[str, dict[str, Any]] = {
     "intraday": {
@@ -960,6 +961,7 @@ def _build_session_payload(
     start_date = date_keys[0]
     end_date = date_keys[-1]
     date_range_label = start_date if start_date == end_date else f"{start_date} to {end_date}"
+    currency_digits = int(config["currency_digits"])
     return {
         "game_id": uuid.uuid4().hex,
         "market": market_key,
@@ -978,7 +980,8 @@ def _build_session_payload(
         "timezone": config["timezone"],
         "currency": config["currency"],
         "currency_symbol": config["currency_symbol"],
-        "currency_digits": config["currency_digits"],
+        "currency_digits": currency_digits,
+        "price_digits": _price_display_digits(candles, fallback_digits=currency_digits),
         "interval": profile["interval"],
         "period": profile["period"],
         "source": "yfinance",
@@ -991,3 +994,27 @@ def _build_session_payload(
         "session_end": last["date"] if mode_key == "daily" else last["time"],
         "candles": candles,
     }
+
+
+def _price_display_digits(candles: Iterable[dict[str, Any]], *, fallback_digits: int) -> int:
+    fallback = max(0, min(MAX_PRICE_DISPLAY_DIGITS, int(fallback_digits)))
+    observed = fallback
+    for candle in candles:
+        for key in ("open", "high", "low", "close", "execution_price"):
+            observed = max(observed, _decimal_places(candle.get(key)))
+            if observed >= MAX_PRICE_DISPLAY_DIGITS:
+                return MAX_PRICE_DISPLAY_DIGITS
+    return observed
+
+
+def _decimal_places(value: Any) -> int:
+    numeric = finite_float_or_none(value)
+    if numeric is None:
+        return 0
+    rounded = round(numeric, 6)
+    if math.isclose(rounded, round(rounded), abs_tol=1e-9):
+        return 0
+    text = f"{rounded:.6f}".rstrip("0").rstrip(".")
+    if "." not in text:
+        return 0
+    return min(MAX_PRICE_DISPLAY_DIGITS, len(text.rsplit(".", 1)[1]))

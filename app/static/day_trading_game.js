@@ -75,12 +75,18 @@
   function formatPrice(value) {
     const numeric = finiteNumber(value);
     if (numeric === null) return "-";
-    const digits = Number(state.session?.currency_digits ?? 2);
+    const digits = priceDigits();
     const symbol = state.session?.currency_symbol || "";
     return `${symbol}${numeric.toLocaleString(undefined, {
       minimumFractionDigits: digits,
       maximumFractionDigits: digits,
     })}`;
+  }
+
+  function priceDigits() {
+    const digits = Number(state.session?.price_digits ?? state.session?.currency_digits ?? 2);
+    if (!Number.isFinite(digits)) return 2;
+    return Math.max(0, Math.min(4, Math.trunc(digits)));
   }
 
   function formatPnL(value) {
@@ -687,7 +693,7 @@
   }
 
   function compactNumber(value) {
-    const digits = Number(state.session?.currency_digits ?? 2);
+    const digits = priceDigits();
     return Number(value).toLocaleString(undefined, {
       minimumFractionDigits: digits,
       maximumFractionDigits: digits,
