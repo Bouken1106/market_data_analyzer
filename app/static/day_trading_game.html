@@ -7,7 +7,7 @@
   <title>Day Trading Game</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="/static/styles.css?v=20260522c" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260522e" />
 </head>
 
 <body class="monitor-page terminal-page day-game-page">
@@ -39,12 +39,17 @@
     <section class="terminal-pane watch-pane day-game-setup-pane" aria-label="ゲーム設定">
       <header class="pane-head">
         <h1>デイトレード</h1>
-        <span class="pane-sub">15m Replay</span>
+        <span id="dtg-mode-subtitle" class="pane-sub">15m Replay</span>
       </header>
 
       <div class="day-game-market-switch" role="group" aria-label="Market">
         <button id="dtg-market-us" type="button" class="day-game-market-btn active" data-market="us">US</button>
         <button id="dtg-market-jp" type="button" class="day-game-market-btn" data-market="jp">JP</button>
+      </div>
+
+      <div class="day-game-mode-switch" role="group" aria-label="Chart mode">
+        <button id="dtg-mode-intraday" type="button" class="day-game-mode-btn active" data-mode="intraday">15m</button>
+        <button id="dtg-mode-daily" type="button" class="day-game-mode-btn" data-mode="daily">日足</button>
       </div>
 
       <button id="dtg-new-game" type="button" class="primary-action day-game-new-btn">New Game</button>
@@ -87,7 +92,7 @@
 
     <section class="terminal-pane center-pane day-game-chart-pane" aria-label="リプレイチャート">
       <header class="pane-head center-head">
-        <h2>Intraday Chart</h2>
+        <h2 id="dtg-chart-title">Intraday Chart</h2>
         <div class="market-time-inline">
           <span id="dtg-clock">-</span>
           <span id="dtg-progress-label" class="market-state">Waiting</span>
@@ -190,7 +195,7 @@
     </div>
   </main>
 
-  <script src="/static/day_trading_game.js?v=20260522c" defer></script>
+  <script src="/static/day_trading_game.js?v=20260522e" defer></script>
   <script src="/static/page_menu.js?v=20260321a" defer></script>
 </body>
 

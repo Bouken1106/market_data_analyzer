@@ -19,10 +19,11 @@ router = APIRouter()
 @router.get("/api/day-trading-game/session")
 async def day_trading_game_session(
     market: str = "us",
+    mode: str = "intraday",
     symbol: str | None = None,
 ) -> JSONResponse:
     try:
-        payload = await build_day_trading_session(market=market, symbol=symbol)
+        payload = await build_day_trading_session(market=market, mode=mode, symbol=symbol)
     except DayTradingGameRequestError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     except DayTradingGameDependencyError as exc:

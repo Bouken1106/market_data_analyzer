@@ -1,9 +1,14 @@
 (() => {
   const SVG_NS = "http://www.w3.org/2000/svg";
   const $ = (id) => document.getElementById(id);
+  const DEFAULT_MOVING_AVERAGES = [
+    { key: "short", label: "MA5", window: 5 },
+    { key: "mid", label: "MA20", window: 20 },
+  ];
 
   const state = {
     selectedMarket: "us",
+    selectedMode: "intraday",
     loading: false,
     session: null,
     revealedCount: 0,
@@ -17,6 +22,8 @@
   const el = {
     marketUs: $("dtg-market-us"),
     marketJp: $("dtg-market-jp"),
+    modeIntraday: $("dtg-mode-intraday"),
+    modeDaily: $("dtg-mode-daily"),
     newGame: $("dtg-new-game"),
     next: $("dtg-next"),
     long: $("dtg-long"),
@@ -46,6 +53,8 @@
     side: $("dtg-side"),
     tradeCount: $("dtg-trade-count"),
     tradesBody: $("dtg-trades-body"),
+    modeSubtitle: $("dtg-mode-subtitle"),
+    chartTitle: $("dtg-chart-title"),
   };
 
   function currentCandle() {
@@ -102,8 +111,13 @@
     return Boolean(session.start_date && session.end_date && session.start_date !== session.end_date);
   }
 
+  function isDailySession(session) {
+    return Boolean(session && (session.mode === "daily" || session.interval === "1d"));
+  }
+
   function formatCandleTime(candle) {
     if (!candle) return "-";
+    if (isDailySession(state.session)) return candle.date || "-";
     const time = candle.time || "-";
     if (!isMultiDaySession(state.session)) return time;
     return candle.date ? `${candle.date} ${time}` : time;
@@ -111,10 +125,11 @@
 
   function formatAxisTime(candle) {
     if (!candle) return "";
-    const time = candle.time || "";
-    if (!isMultiDaySession(state.session)) return time;
     const date = String(candle.date || "");
     const shortDate = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date.slice(5) : date;
+    if (isDailySession(state.session)) return shortDate || date;
+    const time = candle.time || "";
+    if (!isMultiDaySession(state.session)) return time;
     return shortDate ? `${shortDate} ${time}` : time;
   }
 
@@ -146,6 +161,7 @@
     try {
       const url = new URL("/api/day-trading-game/session", window.location.origin);
       url.searchParams.set("market", state.selectedMarket);
+      url.searchParams.set("mode", state.selectedMode);
       url.searchParams.set("_", Date.now().toString());
       const response = await fetch(url);
       const payload = await response.json().catch(() => ({}));
@@ -284,6 +300,11 @@
     el.progressLabel.textContent = state.gameDone ? "Closed" : state.session ? "Replay" : "Waiting";
     el.progressLabel.classList.toggle("open", Boolean(state.session && !state.gameDone));
     el.progressLabel.classList.toggle("closed", Boolean(state.gameDone));
+    el.next.textContent = session?.step_label || (state.selectedMode === "daily" ? "Next Day" : "Next 15m");
+    el.modeSubtitle.textContent = session?.mode_label
+      ? `${session.mode_label} Replay`
+      : state.selectedMode === "daily" ? "Daily Replay" : "15m Replay";
+    el.chartTitle.textContent = isDailySession(session) ? "Daily Chart" : "Intraday Chart";
   }
 
   function renderKpis() {
@@ -357,12 +378,18 @@
     const pad = { top: 18, right: 64, bottom: 42, left: 58 };
     const plotW = width - pad.left - pad.right;
     const plotH = height - pad.top - pad.bottom;
+    const movingAverageConfigs = sessionMovingAverages(session);
     const highs = visible.map((item) => finiteNumber(item.high)).filter((value) => value !== null);
     const lows = visible.map((item) => finiteNumber(item.low)).filter((value) => value !== null);
+    const maValues = visible.flatMap((item) => (
+      movingAverageConfigs
+        .map((config) => movingAverageValue(item, config))
+        .filter((value) => value !== null)
+    ));
     if (!highs.length || !lows.length) return;
 
-    let minPrice = Math.min(...lows);
-    let maxPrice = Math.max(...highs);
+    let minPrice = Math.min(...lows, ...maValues);
+    let maxPrice = Math.max(...highs, ...maValues);
     if (maxPrice === minPrice) {
       maxPrice += 1;
       minPrice -= 1;
@@ -418,22 +445,24 @@
       class: "symbol-chart-axis-line",
     });
 
-    visible.forEach((item, index) => {
-      if (index === 0 || !item.date || item.date === visible[index - 1]?.date) return;
-      const x = xFor(index);
-      appendSvg("line", {
-        x1: x,
-        x2: x,
-        y1: pad.top,
-        y2: pad.top + plotH,
-        class: "day-game-day-divider",
+    if (!isDailySession(session)) {
+      visible.forEach((item, index) => {
+        if (index === 0 || !item.date || item.date === visible[index - 1]?.date) return;
+        const x = xFor(index);
+        appendSvg("line", {
+          x1: x,
+          x2: x,
+          y1: pad.top,
+          y2: pad.top + plotH,
+          class: "day-game-day-divider",
+        });
+        appendSvg("text", {
+          x: x + 6,
+          y: pad.top + 14,
+          class: "day-game-day-label",
+        }, String(item.date).slice(5));
       });
-      appendSvg("text", {
-        x: x + 6,
-        y: pad.top + 14,
-        class: "day-game-day-label",
-      }, String(item.date).slice(5));
-    });
+    }
 
     visible.forEach((item, index) => {
       const open = finiteNumber(item.open);
@@ -474,6 +503,8 @@
       }
     });
 
+    drawMovingAverageLines(visible, { xFor, yFor, configs: movingAverageConfigs });
+
     const labelEvery = Math.max(1, Math.ceil(session.candles.length / 6));
     visible.forEach((item, index) => {
       if (index !== 0 && index !== visible.length - 1 && index % labelEvery !== 0) return;
@@ -485,6 +516,133 @@
         class: "symbol-chart-axis-label",
       }, formatAxisTime(item));
     });
+  }
+
+  function sessionMovingAverages(session) {
+    if (!Array.isArray(session?.moving_averages) || !session.moving_averages.length) {
+      return DEFAULT_MOVING_AVERAGES;
+    }
+    return session.moving_averages
+      .map((config) => ({
+        key: String(config.key || ""),
+        label: String(config.label || config.key || ""),
+        window: Number(config.window),
+      }))
+      .filter((config) => config.key && config.label && Number.isFinite(config.window) && config.window > 0);
+  }
+
+  function drawMovingAverageLines(visible, { xFor, yFor, configs }) {
+    const series = configs.map((config) => ({
+      ...config,
+      segments: movingAverageSegments(visible, config),
+    }));
+
+    series.forEach((config) => {
+      config.segments.forEach((segment) => {
+        if (segment.length < 2) return;
+        appendSvg("polyline", {
+          points: segment.map((point) => `${xFor(point.index).toFixed(2)},${yFor(point.value).toFixed(2)}`).join(" "),
+          class: `day-game-ma-line ${config.key}`,
+        });
+      });
+    });
+
+    const available = series.filter((config) => config.segments.some((segment) => segment.length > 0));
+    if (!available.length) return;
+
+    const legend = appendSvg("g", {
+      class: "day-game-ma-legend",
+      transform: "translate(72 30)",
+    });
+    available.forEach((config, index) => {
+      const x = index * 58;
+      const swatch = document.createElementNS(SVG_NS, "line");
+      swatch.setAttribute("x1", String(x));
+      swatch.setAttribute("x2", String(x + 18));
+      swatch.setAttribute("y1", "0");
+      swatch.setAttribute("y2", "0");
+      swatch.setAttribute("class", `day-game-ma-legend-line ${config.key}`);
+      legend.appendChild(swatch);
+
+      const label = document.createElementNS(SVG_NS, "text");
+      label.setAttribute("x", String(x + 24));
+      label.setAttribute("y", "4");
+      label.setAttribute("class", "day-game-ma-legend-label");
+      label.textContent = config.label;
+      legend.appendChild(label);
+    });
+  }
+
+  function movingAverageValue(candle, config) {
+    const values = candle?.moving_averages;
+    if (!values || !Object.prototype.hasOwnProperty.call(values, config.key)) return null;
+    return finiteNumber(values[config.key]);
+  }
+
+  function movingAverageSegments(candles, config) {
+    const hasPayloadValues = candles.some((item) => (
+      item?.moving_averages
+      && Object.prototype.hasOwnProperty.call(item.moving_averages, config.key)
+    ));
+    if (hasPayloadValues) {
+      return movingAveragePayloadSegments(candles, config);
+    }
+    return rollingMovingAverageSegments(candles, config.window);
+  }
+
+  function movingAveragePayloadSegments(candles, config) {
+    const segments = [];
+    let currentSegment = [];
+    candles.forEach((item, index) => {
+      const value = movingAverageValue(item, config);
+      if (value === null) {
+        if (currentSegment.length) {
+          segments.push(currentSegment);
+          currentSegment = [];
+        }
+        return;
+      }
+      currentSegment.push({ index, value });
+    });
+    if (currentSegment.length) {
+      segments.push(currentSegment);
+    }
+    return segments;
+  }
+
+  function rollingMovingAverageSegments(candles, windowSize) {
+    if (windowSize <= 0 || candles.length < windowSize) return [];
+    const segments = [];
+    let currentSegment = [];
+    let sum = 0;
+    const queue = [];
+    candles.forEach((item, index) => {
+      const close = finiteNumber(item.close);
+      if (close === null) {
+        sum = 0;
+        queue.length = 0;
+        if (currentSegment.length) {
+          segments.push(currentSegment);
+          currentSegment = [];
+        }
+        return;
+      }
+      queue.push(close);
+      sum += close;
+      if (queue.length > windowSize) {
+        sum -= queue.shift();
+      }
+      if (queue.length === windowSize) {
+        currentSegment.push({
+          index,
+          value: sum / windowSize,
+        });
+      }
+    });
+    if (currentSegment.length) {
+      segments.push(currentSegment);
+    }
+    return segments;
   }
 
   function compactNumber(value) {
@@ -512,13 +670,29 @@
   }
 
   function setMarket(market) {
+    if (state.selectedMarket === market) return;
     state.selectedMarket = market;
     el.marketUs.classList.toggle("active", market === "us");
     el.marketJp.classList.toggle("active", market === "jp");
+    resetGame(null);
+    setMessage("No session");
+    render();
+  }
+
+  function setMode(mode) {
+    if (state.selectedMode === mode) return;
+    state.selectedMode = mode;
+    el.modeIntraday.classList.toggle("active", mode === "intraday");
+    el.modeDaily.classList.toggle("active", mode === "daily");
+    resetGame(null);
+    setMessage("No session");
+    render();
   }
 
   el.marketUs.addEventListener("click", () => setMarket("us"));
   el.marketJp.addEventListener("click", () => setMarket("jp"));
+  el.modeIntraday.addEventListener("click", () => setMode("intraday"));
+  el.modeDaily.addEventListener("click", () => setMode("daily"));
   el.newGame.addEventListener("click", loadNewGame);
   el.next.addEventListener("click", revealNext);
   el.long.addEventListener("click", () => openPosition("long"));

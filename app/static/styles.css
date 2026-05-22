@@ -3284,6 +3284,26 @@ body.chart-panning {
   background: rgba(57, 210, 192, 0.13);
 }
 
+.day-game-page .day-game-mode-switch {
+  margin-top: 6px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.day-game-page .day-game-mode-btn {
+  min-height: 34px;
+  background: rgba(18, 28, 38, 0.72);
+  border-color: rgba(68, 99, 130, 0.62);
+  color: var(--text-muted);
+}
+
+.day-game-page .day-game-mode-btn.active {
+  color: #d7e6ff;
+  border-color: rgba(126, 164, 255, 0.76);
+  background: rgba(126, 164, 255, 0.13);
+}
+
 .day-game-page .day-game-new-btn {
   margin-top: 6px;
   min-height: 36px;
@@ -3395,6 +3415,35 @@ body.chart-panning {
   fill: #f5d06f;
   stroke: rgba(8, 14, 22, 0.95);
   stroke-width: 1.5;
+}
+
+.day-game-page .day-game-ma-line {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.day-game-page .day-game-ma-line.short,
+.day-game-page .day-game-ma-legend-line.short {
+  stroke: #66d9ff;
+}
+
+.day-game-page .day-game-ma-line.mid,
+.day-game-page .day-game-ma-legend-line.mid {
+  stroke: #f6c85f;
+}
+
+.day-game-page .day-game-ma-legend-line {
+  stroke-width: 2.4;
+  stroke-linecap: round;
+}
+
+.day-game-page .day-game-ma-legend-label {
+  fill: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
 }
 
 .day-game-page .day-game-day-divider {

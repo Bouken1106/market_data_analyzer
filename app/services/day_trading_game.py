@@ -1,8 +1,9 @@
-"""Day-trading game data assembly backed by yfinance intraday history."""
+"""Day-trading game data assembly backed by yfinance history."""
 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import math
 import random
 import uuid
@@ -15,9 +16,42 @@ import pandas as pd
 
 from ..utils import finite_float_or_none, normalize_symbol
 
-YFINANCE_INTERVAL = "15m"
-YFINANCE_PERIOD = "60d"
-GAME_SESSION_DAYS = 3
+DEFAULT_GAME_MODE = "intraday"
+
+GAME_MODE_PROFILES: dict[str, dict[str, Any]] = {
+    "intraday": {
+        "label": "15m",
+        "interval": "15m",
+        "period": "60d",
+        "session_days": 3,
+        "min_candles": None,
+        "moving_averages": (
+            {"key": "short", "label": "MA5", "window": 5},
+            {"key": "mid", "label": "MA20", "window": 20},
+        ),
+        "step_label": "Next 15m",
+        "chart_label": "15-minute OHLC chart",
+        "data_error_label": "15-minute trading windows",
+    },
+    "daily": {
+        "label": "Daily",
+        "interval": "1d",
+        "period": "2y",
+        "session_days": 30,
+        "min_candles": 1,
+        "moving_averages": (
+            {"key": "short", "label": "MA5", "window": 5},
+            {"key": "mid", "label": "MA25", "window": 25},
+        ),
+        "step_label": "Next Day",
+        "chart_label": "Daily OHLC chart",
+        "data_error_label": "daily trading windows",
+    },
+}
+
+YFINANCE_INTERVAL = GAME_MODE_PROFILES[DEFAULT_GAME_MODE]["interval"]
+YFINANCE_PERIOD = GAME_MODE_PROFILES[DEFAULT_GAME_MODE]["period"]
+GAME_SESSION_DAYS = GAME_MODE_PROFILES[DEFAULT_GAME_MODE]["session_days"]
 
 US_GAME_SYMBOLS: tuple[str, ...] = (
     "AAPL",
@@ -86,7 +120,7 @@ MARKET_CONFIGS: dict[str, dict[str, Any]] = {
     },
 }
 
-HistoryFetcher = Callable[[str], Any]
+HistoryFetcher = Callable[..., Any]
 
 
 class DayTradingGameError(Exception):
@@ -108,17 +142,19 @@ class DayTradingGameRequestError(DayTradingGameError):
 async def build_day_trading_session(
     *,
     market: str = "us",
+    mode: str = DEFAULT_GAME_MODE,
     symbol: str | None = None,
     rng: random.Random | None = None,
     fetch_history: HistoryFetcher | None = None,
 ) -> dict[str, Any]:
-    """Build one randomly selected multi-day replay session from 15-minute yfinance bars."""
+    """Build one randomly selected replay session from yfinance bars."""
 
     market_key = str(market or "us").strip().lower()
     config = MARKET_CONFIGS.get(market_key)
     if config is None:
         supported = ", ".join(sorted(MARKET_CONFIGS))
         raise DayTradingGameRequestError(f"Unsupported market. Choose one of: {supported}.")
+    mode_key, profile = _mode_profile(mode)
 
     selected_symbols = _candidate_symbols(config, symbol=symbol)
     chooser = rng or random.SystemRandom()
@@ -128,18 +164,27 @@ async def build_day_trading_session(
     failures: list[str] = []
     for candidate in selected_symbols:
         try:
-            history = await _maybe_await(fetcher(candidate))
+            history = await _call_history_fetcher(fetcher, candidate, profile=profile)
             candles_by_date = _candles_by_session_date(history, timezone_name=str(config["timezone"]))
+            _apply_moving_averages(candles_by_date, moving_averages=profile["moving_averages"])
+            min_candles = profile["min_candles"]
+            if min_candles is None:
+                min_candles = int(config["min_candles"])
             eligible = _eligible_session_date_windows(
                 candles_by_date,
                 timezone_name=str(config["timezone"]),
-                min_candles=int(config["min_candles"]),
-                session_days=GAME_SESSION_DAYS,
+                min_candles=int(min_candles),
+                session_days=int(profile["session_days"]),
             )
             if not eligible:
                 raise DayTradingGameDataError(
-                    f"No complete {GAME_SESSION_DAYS}-day 15-minute trading windows were available."
+                    f"No complete {profile['session_days']}-day {profile['data_error_label']} were available."
                 )
+            eligible = _prefer_windows_with_initial_moving_averages(
+                eligible,
+                candles_by_date,
+                moving_averages=profile["moving_averages"],
+            )
             date_keys = chooser.choice(eligible)
             candles = [
                 candle
@@ -148,6 +193,8 @@ async def build_day_trading_session(
             ]
             return _build_session_payload(
                 market_key=market_key,
+                mode_key=mode_key,
+                profile=profile,
                 config=config,
                 symbol=candidate,
                 symbol_name=_symbol_name(config, candidate),
@@ -161,19 +208,24 @@ async def build_day_trading_session(
         except Exception as exc:  # pragma: no cover - defensive around provider internals
             failures.append(f"{candidate}: {exc}")
 
-    detail = "No usable yfinance 15-minute data was available."
+    detail = f"No usable yfinance {profile['label']} data was available."
     if failures:
         detail = f"{detail} Last errors: {'; '.join(failures[-3:])}"
     raise DayTradingGameDataError(detail)
 
 
-async def fetch_yfinance_history(symbol: str) -> pd.DataFrame:
-    """Fetch 15-minute bars for a symbol via yfinance without blocking the event loop."""
+async def fetch_yfinance_history(
+    symbol: str,
+    *,
+    interval: str = YFINANCE_INTERVAL,
+    period: str = YFINANCE_PERIOD,
+) -> pd.DataFrame:
+    """Fetch bars for a symbol via yfinance without blocking the event loop."""
 
-    return await asyncio.to_thread(_fetch_yfinance_history_sync, symbol)
+    return await asyncio.to_thread(_fetch_yfinance_history_sync, symbol, interval=interval, period=period)
 
 
-def _fetch_yfinance_history_sync(symbol: str) -> pd.DataFrame:
+def _fetch_yfinance_history_sync(symbol: str, *, interval: str, period: str) -> pd.DataFrame:
     try:
         import yfinance as yf
     except ModuleNotFoundError as exc:  # pragma: no cover - exercised in integration environments
@@ -182,8 +234,8 @@ def _fetch_yfinance_history_sync(symbol: str) -> pd.DataFrame:
     try:
         ticker = yf.Ticker(symbol)
         return ticker.history(
-            period=YFINANCE_PERIOD,
-            interval=YFINANCE_INTERVAL,
+            period=period,
+            interval=interval,
             auto_adjust=False,
             prepost=False,
             actions=False,
@@ -192,12 +244,58 @@ def _fetch_yfinance_history_sync(symbol: str) -> pd.DataFrame:
     except TypeError:
         ticker = yf.Ticker(symbol)
         return ticker.history(
-            period=YFINANCE_PERIOD,
-            interval=YFINANCE_INTERVAL,
+            period=period,
+            interval=interval,
             auto_adjust=False,
             prepost=False,
             actions=False,
         )
+
+
+def _mode_profile(mode: str) -> tuple[str, dict[str, Any]]:
+    normalized = str(mode or DEFAULT_GAME_MODE).strip().lower().replace("-", "_")
+    aliases = {
+        "15m": "intraday",
+        "intraday": "intraday",
+        "day": "daily",
+        "daily": "daily",
+        "1d": "daily",
+    }
+    mode_key = aliases.get(normalized)
+    if mode_key is None:
+        supported = ", ".join(sorted(GAME_MODE_PROFILES))
+        raise DayTradingGameRequestError(f"Unsupported mode. Choose one of: {supported}.")
+    return mode_key, GAME_MODE_PROFILES[mode_key]
+
+
+async def _call_history_fetcher(fetcher: HistoryFetcher, symbol: str, *, profile: dict[str, Any]) -> Any:
+    if fetcher is fetch_yfinance_history:
+        return await fetch_yfinance_history(
+            symbol,
+            interval=str(profile["interval"]),
+            period=str(profile["period"]),
+        )
+
+    if _accepts_fetcher_options(fetcher):
+        return await _maybe_await(
+            fetcher(
+                symbol,
+                interval=str(profile["interval"]),
+                period=str(profile["period"]),
+            )
+        )
+    return await _maybe_await(fetcher(symbol))
+
+
+def _accepts_fetcher_options(fetcher: HistoryFetcher) -> bool:
+    try:
+        signature = inspect.signature(fetcher)
+    except (TypeError, ValueError):
+        return False
+    parameters = signature.parameters.values()
+    return any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters) or all(
+        key in signature.parameters for key in ("interval", "period")
+    )
 
 
 async def _maybe_await(value: Any) -> Any:
@@ -396,6 +494,47 @@ def _median(values: Iterable[float]) -> float | None:
     return (sorted_values[midpoint - 1] + sorted_values[midpoint]) / 2.0
 
 
+def _apply_moving_averages(
+    candles_by_date: dict[str, list[dict[str, Any]]],
+    *,
+    moving_averages: Iterable[dict[str, Any]],
+) -> None:
+    definitions = [
+        (str(config["key"]), int(config["window"]))
+        for config in moving_averages
+        if int(config.get("window", 0)) > 0
+    ]
+    if not definitions:
+        return
+
+    ordered = [
+        candle
+        for date_key in sorted(candles_by_date)
+        for candle in candles_by_date[date_key]
+    ]
+    sums = {key: 0.0 for key, _window in definitions}
+    queues = {key: [] for key, _window in definitions}
+    for candle in ordered:
+        close = finite_float_or_none(candle.get("close"), minimum=0.0, strict_minimum=True)
+        values: dict[str, float | None] = {}
+        if close is None:
+            for key, _window in definitions:
+                sums[key] = 0.0
+                queues[key].clear()
+                values[key] = None
+            candle["moving_averages"] = values
+            continue
+
+        for key, window in definitions:
+            queue = queues[key]
+            queue.append(close)
+            sums[key] += close
+            if len(queue) > window:
+                sums[key] -= queue.pop(0)
+            values[key] = round(sums[key] / window, 6) if len(queue) == window else None
+        candle["moving_averages"] = values
+
+
 def _eligible_session_dates(
     candles_by_date: dict[str, list[dict[str, Any]]],
     *,
@@ -452,9 +591,46 @@ def _session_date_windows(date_keys: list[str], *, session_days: int) -> list[tu
     ]
 
 
+def _prefer_windows_with_initial_moving_averages(
+    windows: list[tuple[str, ...]],
+    candles_by_date: dict[str, list[dict[str, Any]]],
+    *,
+    moving_averages: Iterable[dict[str, Any]],
+) -> list[tuple[str, ...]]:
+    required_keys = [str(config["key"]) for config in moving_averages if config.get("key")]
+    if not required_keys:
+        return windows
+
+    preferred = [
+        window
+        for window in windows
+        if _window_starts_with_moving_averages(window, candles_by_date, required_keys=required_keys)
+    ]
+    return preferred or windows
+
+
+def _window_starts_with_moving_averages(
+    window: tuple[str, ...],
+    candles_by_date: dict[str, list[dict[str, Any]]],
+    *,
+    required_keys: list[str],
+) -> bool:
+    if not window:
+        return False
+    first_date_candles = candles_by_date.get(window[0]) or []
+    if not first_date_candles:
+        return False
+    values = first_date_candles[0].get("moving_averages")
+    if not isinstance(values, dict):
+        return False
+    return all(finite_float_or_none(values.get(key)) is not None for key in required_keys)
+
+
 def _build_session_payload(
     *,
     market_key: str,
+    mode_key: str,
+    profile: dict[str, Any],
     config: dict[str, Any],
     symbol: str,
     symbol_name: str | None,
@@ -470,6 +646,8 @@ def _build_session_payload(
         "game_id": uuid.uuid4().hex,
         "market": market_key,
         "market_label": config["label"],
+        "mode": mode_key,
+        "mode_label": profile["label"],
         "symbol": symbol,
         "symbol_name": symbol_name,
         "symbol_label": _symbol_label(symbol, symbol_name),
@@ -483,12 +661,15 @@ def _build_session_payload(
         "currency": config["currency"],
         "currency_symbol": config["currency_symbol"],
         "currency_digits": config["currency_digits"],
-        "interval": YFINANCE_INTERVAL,
-        "period": YFINANCE_PERIOD,
+        "interval": profile["interval"],
+        "period": profile["period"],
         "source": "yfinance",
         "execution_price_rule": "close, then median, then IQR midpoint, then OHLC median",
+        "step_label": profile["step_label"],
+        "chart_label": profile["chart_label"],
+        "moving_averages": list(profile["moving_averages"]),
         "candle_count": len(candles),
-        "session_start": first["time"],
-        "session_end": last["time"],
+        "session_start": first["date"] if mode_key == "daily" else first["time"],
+        "session_end": last["date"] if mode_key == "daily" else last["time"],
         "candles": candles,
     }
