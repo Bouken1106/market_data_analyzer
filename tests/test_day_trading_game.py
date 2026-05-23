@@ -258,6 +258,8 @@ class DayTradingGameServiceTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertAlmostEqual(scoring["buy_hold_return"], -0.1)
+        self.assertAlmostEqual(scoring["buy_hold_max_drawdown"], 0.2)
+        self.assertAlmostEqual(scoring["buy_hold_risk_return_ratio"], -0.5)
         self.assertAlmostEqual(scoring["long_only"]["lower_return"], -0.1)
         self.assertAlmostEqual(scoring["long_only"]["max_return"], 0.1)
         self.assertAlmostEqual(scoring["long_only"]["denominator"], 0.2)
@@ -272,6 +274,8 @@ class DayTradingGameServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(scoring["long_only"]["undefined"])
         self.assertEqual(scoring["long_short"]["max_return"], 0.0)
         self.assertTrue(scoring["long_short"]["undefined"])
+        self.assertEqual(scoring["buy_hold_max_drawdown"], 0.0)
+        self.assertIsNone(scoring["buy_hold_risk_return_ratio"])
 
 
 class DayTradingGameApiTest(unittest.TestCase):

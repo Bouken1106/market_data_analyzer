@@ -738,10 +738,17 @@ def calculate_day_trading_scoring(candles: Iterable[dict[str, Any]]) -> dict[str
     long_max_return = sum(max(delta, 0.0) for delta in deltas) / base_price
     long_denominator = long_max_return - long_lower_return
     long_short_max_return = _long_short_max_profit(prices) / base_price
+    buy_hold_max_drawdown = _max_drawdown_from_return_series(
+        [(price - base_price) / base_price for price in prices]
+    )
 
     return {
         "base_price": _clean_score_float(base_price),
         "buy_hold_return": _clean_score_float(buy_hold_return),
+        "buy_hold_max_drawdown": _clean_score_float(buy_hold_max_drawdown),
+        "buy_hold_risk_return_ratio": _clean_score_float(
+            _risk_return_ratio(buy_hold_return, buy_hold_max_drawdown)
+        ),
         "long_only": {
             "lower_return": _clean_score_float(long_lower_return),
             "max_return": _clean_score_float(long_max_return),
@@ -759,6 +766,8 @@ def _empty_scoring_metadata() -> dict[str, Any]:
     return {
         "base_price": None,
         "buy_hold_return": None,
+        "buy_hold_max_drawdown": None,
+        "buy_hold_risk_return_ratio": None,
         "long_only": {
             "lower_return": None,
             "max_return": None,
@@ -785,6 +794,28 @@ def _long_short_max_profit(prices: list[float]) -> float:
         next_short = max(short, flat + price)
         flat, long, short = next_flat, next_long, next_short
     return 0.0 if math.isclose(flat, 0.0, abs_tol=SCORE_EPSILON) else flat
+
+
+def _max_drawdown_from_return_series(returns: Iterable[float]) -> float:
+    peak: float | None = None
+    max_drawdown = 0.0
+    for value in returns:
+        if not math.isfinite(value):
+            continue
+        if peak is None or value > peak:
+            peak = value
+        max_drawdown = max(max_drawdown, peak - value)
+    return 0.0 if math.isclose(max_drawdown, 0.0, abs_tol=SCORE_EPSILON) else max_drawdown
+
+
+def _risk_return_ratio(total_return: float | None, max_drawdown: float | None) -> float | None:
+    if total_return is None or max_drawdown is None:
+        return None
+    if not math.isfinite(total_return) or not math.isfinite(max_drawdown):
+        return None
+    if math.isclose(max_drawdown, 0.0, abs_tol=SCORE_EPSILON):
+        return None
+    return total_return / max_drawdown
 
 
 def _clean_score_float(value: float | None) -> float | None:

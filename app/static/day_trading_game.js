@@ -6,6 +6,7 @@
     { key: "mid", label: "MA20", window: 20 },
   ];
   const DETAIL_CHART_INTERVAL = "5m";
+  const RISK_EPSILON = 1e-12;
 
   const state = {
     selectedMarket: "us",
@@ -25,6 +26,8 @@
       completedGames: 0,
       returnTotal: 0,
       returnCount: 0,
+      drawdownTotal: 0,
+      drawdownCount: 0,
       scoreTotal: 0,
       scoreCount: 0,
     },
@@ -63,9 +66,14 @@
     position: $("dtg-position"),
     unrealized: $("dtg-unrealized"),
     realized: $("dtg-realized"),
+    return: $("dtg-return"),
+    drawdown: $("dtg-drawdown"),
+    riskReturn: $("dtg-risk-return"),
     score: $("dtg-score"),
     statGames: $("dtg-stat-games"),
     statReturn: $("dtg-stat-return"),
+    statDrawdown: $("dtg-stat-drawdown"),
+    statRiskReturn: $("dtg-stat-risk-return"),
     statScore: $("dtg-stat-score"),
     entry: $("dtg-entry"),
     last: $("dtg-last"),
@@ -154,6 +162,26 @@
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}%`;
+  }
+
+  function formatDrawdown(value) {
+    const numeric = finiteNumber(value);
+    if (numeric === null) return "-";
+    if (Math.abs(numeric) <= RISK_EPSILON) return "0.00%";
+    return `-${(Math.abs(numeric) * 100).toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}%`;
+  }
+
+  function formatRiskReturnRatio(value) {
+    if (value === Infinity) return "∞";
+    const numeric = finiteNumber(value);
+    if (numeric === null) return "-";
+    return `${numeric.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}x`;
   }
 
   function formatDateRange(session) {
@@ -395,8 +423,10 @@
       }
       state.gameDone = true;
       const finalScore = finalScoreValue();
+      const finalMetrics = playerRiskMetrics({ includeOpen: false });
       recordCompletedGame({
-        playerReturnValue: playerReturn(),
+        playerReturnValue: finalMetrics.returnValue,
+        maxDrawdownValue: finalMetrics.maxDrawdown,
         finalScore,
       });
       setMessage(`Game complete: ${formatSessionIdentity(state.session)} / Score ${formatScore(finalScore)}`);
@@ -404,13 +434,19 @@
     render();
   }
 
-  function recordCompletedGame({ playerReturnValue, finalScore }) {
+  function recordCompletedGame({ playerReturnValue, maxDrawdownValue, finalScore }) {
     state.stats.completedGames += 1;
 
     const returnValue = finiteNumber(playerReturnValue);
     if (returnValue !== null) {
       state.stats.returnTotal += returnValue;
       state.stats.returnCount += 1;
+    }
+
+    const drawdownValue = finiteNumber(maxDrawdownValue);
+    if (drawdownValue !== null) {
+      state.stats.drawdownTotal += drawdownValue;
+      state.stats.drawdownCount += 1;
     }
 
     const scoreValue = finiteNumber(finalScore);
@@ -521,9 +557,14 @@
     const lowerReturn = Math.min(0, buyHoldReturn);
     const maxLongReturn = deltas.reduce((sum, delta) => sum + Math.max(delta, 0), 0) / base;
     const denominator = maxLongReturn - lowerReturn;
+    const buyHoldMaxDrawdown = maxDrawdownFromReturnSeries(
+      prices.map((price) => (price - base) / base),
+    );
     return {
       base_price: base,
       buy_hold_return: buyHoldReturn,
+      buy_hold_max_drawdown: buyHoldMaxDrawdown,
+      buy_hold_risk_return_ratio: riskReturnRatio(buyHoldReturn, buyHoldMaxDrawdown),
       long_only: {
         lower_return: lowerReturn,
         max_return: maxLongReturn,
@@ -551,23 +592,76 @@
     return flat / prices[0];
   }
 
-  function playerReturn() {
+  function fillPositionIntervals(intervalPositions, position, fallbackExitIndex) {
+    const sign = positionSign(position?.side);
+    const start = Math.max(0, Math.trunc(Number(position?.entryIndex)));
+    const rawEnd = position?.exitIndex === undefined ? fallbackExitIndex : position.exitIndex;
+    const end = Math.min(intervalPositions.length, Math.trunc(Number(rawEnd)));
+    if (!sign || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) return;
+    for (let index = start; index < end; index += 1) {
+      intervalPositions[index] = sign;
+    }
+  }
+
+  function playerReturnSeries({ includeOpen = true } = {}) {
     const prices = sessionClosePrices();
-    if (!prices.length || !(prices[0] > 0)) return null;
-    const intervalPositions = new Array(Math.max(0, prices.length - 1)).fill(0);
-    state.closedPositions.forEach((position) => {
-      const sign = positionSign(position.side);
-      const start = Math.max(0, Number(position.entryIndex));
-      const end = Math.min(intervalPositions.length, Number(position.exitIndex));
-      if (!sign || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) return;
-      for (let index = start; index < end; index += 1) {
-        intervalPositions[index] = sign;
-      }
+    const limit = Math.min(prices.length, Math.max(0, state.revealedCount));
+    if (!prices.length || !(prices[0] > 0) || limit <= 0) return [];
+
+    const intervalPositions = new Array(Math.max(0, limit - 1)).fill(0);
+    state.closedPositions.forEach((position) => fillPositionIntervals(intervalPositions, position));
+    if (includeOpen && state.position) {
+      fillPositionIntervals(intervalPositions, state.position, limit - 1);
+    }
+
+    const base = prices[0];
+    const series = [0];
+    let pnl = 0;
+    for (let index = 0; index < limit - 1; index += 1) {
+      pnl += intervalPositions[index] * (prices[index + 1] - prices[index]);
+      series.push(pnl / base);
+    }
+    return series;
+  }
+
+  function maxDrawdownFromReturnSeries(series) {
+    let peak = null;
+    let maxDrawdown = 0;
+    series.forEach((value) => {
+      const numeric = finiteNumber(value);
+      if (numeric === null) return;
+      if (peak === null || numeric > peak) peak = numeric;
+      maxDrawdown = Math.max(maxDrawdown, peak - numeric);
     });
-    const pnl = intervalPositions.reduce((sum, q, index) => (
-      sum + q * (prices[index + 1] - prices[index])
-    ), 0);
-    return pnl / prices[0];
+    return Math.abs(maxDrawdown) <= RISK_EPSILON ? 0 : maxDrawdown;
+  }
+
+  function riskReturnRatio(returnValue, maxDrawdown) {
+    const numericReturn = finiteNumber(returnValue);
+    const numericDrawdown = finiteNumber(maxDrawdown);
+    if (numericReturn === null || numericDrawdown === null) return null;
+    if (Math.abs(numericDrawdown) <= RISK_EPSILON) {
+      return numericReturn > RISK_EPSILON ? Infinity : null;
+    }
+    return numericReturn / numericDrawdown;
+  }
+
+  function playerRiskMetrics({ includeOpen = true } = {}) {
+    const series = playerReturnSeries({ includeOpen });
+    if (!series.length) {
+      return { returnValue: null, maxDrawdown: null, riskReturnRatio: null };
+    }
+    const returnValue = series[series.length - 1];
+    const maxDrawdown = maxDrawdownFromReturnSeries(series);
+    return {
+      returnValue,
+      maxDrawdown,
+      riskReturnRatio: riskReturnRatio(returnValue, maxDrawdown),
+    };
+  }
+
+  function playerReturn() {
+    return playerRiskMetrics({ includeOpen: false }).returnValue;
   }
 
   function finalScoreValue() {
@@ -677,6 +771,7 @@
     const lastPrice = candle ? finiteNumber(candle.execution_price) : null;
     const unrealized = unrealizedPnL();
     const finalScore = finalScoreValue();
+    const metrics = playerRiskMetrics({ includeOpen: true });
 
     el.currentTime.textContent = formatCandleTime(candle);
     el.currentPrice.textContent = formatPrice(lastPrice);
@@ -689,20 +784,40 @@
       : "Flat";
     el.unrealized.textContent = formatPnL(unrealized);
     el.realized.textContent = formatPnL(state.realized);
+    el.return.textContent = formatPercent(metrics.returnValue);
+    el.drawdown.textContent = formatDrawdown(metrics.maxDrawdown);
+    el.riskReturn.textContent = formatRiskReturnRatio(metrics.riskReturnRatio);
     el.score.textContent = state.gameDone ? formatScore(finalScore) : "-";
     el.unrealized.classList.toggle("up", Boolean(unrealized && unrealized > 0));
     el.unrealized.classList.toggle("down", Boolean(unrealized && unrealized < 0));
     el.realized.classList.toggle("up", state.realized > 0);
     el.realized.classList.toggle("down", state.realized < 0);
+    el.return.classList.toggle("up", Boolean(metrics.returnValue !== null && metrics.returnValue > 0));
+    el.return.classList.toggle("down", Boolean(metrics.returnValue !== null && metrics.returnValue < 0));
+    el.drawdown.classList.toggle("down", Boolean(metrics.maxDrawdown !== null && metrics.maxDrawdown > RISK_EPSILON));
+    el.riskReturn.classList.toggle("up", metrics.riskReturnRatio === Infinity || Boolean(
+      metrics.riskReturnRatio !== null && metrics.riskReturnRatio > 0,
+    ));
+    el.riskReturn.classList.toggle("down", Boolean(
+      metrics.riskReturnRatio !== null
+      && metrics.riskReturnRatio !== Infinity
+      && metrics.riskReturnRatio < 0,
+    ));
     el.score.classList.toggle("up", Boolean(state.gameDone && finalScore !== null && finalScore > 0));
     el.score.classList.toggle("down", Boolean(state.gameDone && finalScore !== null && finalScore < 0));
   }
 
   function renderStats() {
-    if (!el.statGames || !el.statReturn || !el.statScore) return;
+    if (!el.statGames || !el.statReturn || !el.statDrawdown || !el.statRiskReturn || !el.statScore) return;
 
     const avgReturn = state.stats.returnCount > 0
       ? state.stats.returnTotal / state.stats.returnCount
+      : null;
+    const avgDrawdown = state.stats.drawdownCount > 0
+      ? state.stats.drawdownTotal / state.stats.drawdownCount
+      : null;
+    const avgRiskReturn = avgReturn !== null && avgDrawdown !== null
+      ? riskReturnRatio(avgReturn, avgDrawdown)
       : null;
     const avgScore = state.stats.scoreCount > 0
       ? state.stats.scoreTotal / state.stats.scoreCount
@@ -710,10 +825,21 @@
 
     el.statGames.textContent = String(state.stats.completedGames);
     el.statReturn.textContent = state.stats.returnCount > 0 ? formatPercent(avgReturn) : "-";
+    el.statDrawdown.textContent = state.stats.drawdownCount > 0 ? formatDrawdown(avgDrawdown) : "-";
+    el.statRiskReturn.textContent = avgRiskReturn !== null ? formatRiskReturnRatio(avgRiskReturn) : "-";
     el.statScore.textContent = state.stats.scoreCount > 0 ? formatScore(avgScore) : "-";
 
     el.statReturn.classList.toggle("up", Boolean(avgReturn !== null && avgReturn > 0));
     el.statReturn.classList.toggle("down", Boolean(avgReturn !== null && avgReturn < 0));
+    el.statDrawdown.classList.toggle("down", Boolean(avgDrawdown !== null && avgDrawdown > RISK_EPSILON));
+    el.statRiskReturn.classList.toggle("up", avgRiskReturn === Infinity || Boolean(
+      avgRiskReturn !== null && avgRiskReturn > 0,
+    ));
+    el.statRiskReturn.classList.toggle("down", Boolean(
+      avgRiskReturn !== null
+      && avgRiskReturn !== Infinity
+      && avgRiskReturn < 0,
+    ));
     el.statScore.classList.toggle("up", Boolean(avgScore !== null && avgScore > 0));
     el.statScore.classList.toggle("down", Boolean(avgScore !== null && avgScore < 0));
   }

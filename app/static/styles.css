@@ -3520,12 +3520,17 @@ body.chart-panning {
 
 .day-game-page .day-game-kpi-grid #dtg-unrealized.up,
 .day-game-page .day-game-kpi-grid #dtg-realized.up,
+.day-game-page .day-game-kpi-grid #dtg-return.up,
+.day-game-page .day-game-kpi-grid #dtg-risk-return.up,
 .day-game-page .day-game-kpi-grid #dtg-score.up {
   color: var(--green);
 }
 
 .day-game-page .day-game-kpi-grid #dtg-unrealized.down,
 .day-game-page .day-game-kpi-grid #dtg-realized.down,
+.day-game-page .day-game-kpi-grid #dtg-return.down,
+.day-game-page .day-game-kpi-grid #dtg-drawdown.down,
+.day-game-page .day-game-kpi-grid #dtg-risk-return.down,
 .day-game-page .day-game-kpi-grid #dtg-score.down {
   color: var(--red);
 }

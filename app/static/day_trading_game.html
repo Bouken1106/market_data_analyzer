@@ -7,7 +7,7 @@
   <title>Day Trading Game</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="/static/styles.css?v=20260523a" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260523b" />
 </head>
 
 <body class="monitor-page terminal-page day-game-page">
@@ -106,6 +106,14 @@
           <span id="dtg-stat-return">-</span>
         </div>
         <div class="status-box">
+          <span class="label">Avg DD</span>
+          <span id="dtg-stat-drawdown">-</span>
+        </div>
+        <div class="status-box">
+          <span class="label">Avg R/R</span>
+          <span id="dtg-stat-risk-return">-</span>
+        </div>
+        <div class="status-box">
           <span class="label">Avg Score</span>
           <span id="dtg-stat-score">-</span>
         </div>
@@ -153,6 +161,18 @@
           <div class="kpi-item">
             <span class="label">Position</span>
             <span id="dtg-position">Flat</span>
+          </div>
+          <div class="kpi-item">
+            <span class="label">Return</span>
+            <span id="dtg-return">-</span>
+          </div>
+          <div class="kpi-item">
+            <span class="label">Max DD</span>
+            <span id="dtg-drawdown">-</span>
+          </div>
+          <div class="kpi-item">
+            <span class="label">R/R Ratio</span>
+            <span id="dtg-risk-return">-</span>
           </div>
           <div class="kpi-item">
             <span class="label">Unrealized</span>
@@ -222,7 +242,7 @@
     </div>
   </main>
 
-  <script src="/static/day_trading_game.js?v=20260523e" defer></script>
+  <script src="/static/day_trading_game.js?v=20260523f" defer></script>
   <script src="/static/page_menu.js?v=20260321a" defer></script>
 </body>
 
