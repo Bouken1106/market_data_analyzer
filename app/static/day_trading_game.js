@@ -5,11 +5,13 @@
     { key: "short", label: "MA5", window: 5 },
     { key: "mid", label: "MA20", window: 20 },
   ];
+  const DETAIL_CHART_INTERVAL = "5m";
 
   const state = {
     selectedMarket: "us",
     selectedMode: "intraday",
     selectedTradeMode: "long_only",
+    activeChartInterval: "15m",
     loading: false,
     session: null,
     revealedCount: 0,
@@ -44,6 +46,9 @@
     clock: $("dtg-clock"),
     progressLabel: $("dtg-progress-label"),
     progressStrip: $("dtg-progress-strip-text"),
+    chartFrameSwitch: $("dtg-chart-frame-switch"),
+    chartFramePrimary: $("dtg-chart-frame-primary"),
+    chartFrame5m: $("dtg-chart-frame-5m"),
     chart: $("dtg-chart"),
     chartEmpty: $("dtg-chart-empty"),
     currentTime: $("dtg-current-time"),
@@ -156,6 +161,135 @@
     return Boolean(session && (session.mode === "daily" || session.interval === "1d"));
   }
 
+  function primaryChartInterval(session) {
+    return String(session?.interval || (state.selectedMode === "daily" ? "1d" : "15m"));
+  }
+
+  function chartIntervalLabel(interval) {
+    if (interval === "1d") return "日足";
+    return String(interval || "-");
+  }
+
+  function chartTimeframes(session) {
+    if (!session) return [];
+    const primary = primaryChartInterval(session);
+    const frames = Array.isArray(session.chart_timeframes) ? session.chart_timeframes : [];
+    const normalized = frames
+      .map((frame) => ({
+        interval: String(frame?.interval || frame?.key || ""),
+        label: String(frame?.label || frame?.interval || frame?.key || ""),
+        chartLabel: String(frame?.chart_label || ""),
+      }))
+      .filter((frame) => frame.interval);
+    if (!normalized.some((frame) => frame.interval === primary)) {
+      normalized.unshift({
+        interval: primary,
+        label: chartIntervalLabel(primary),
+        chartLabel: String(session.chart_label || ""),
+      });
+    }
+    return normalized;
+  }
+
+  function chartCandlesForInterval(session, interval) {
+    if (!session) return [];
+    const key = String(interval || primaryChartInterval(session));
+    const charts = session.chart_candles && typeof session.chart_candles === "object"
+      ? session.chart_candles
+      : {};
+    if (Array.isArray(charts[key])) return charts[key];
+    if (key === primaryChartInterval(session) && Array.isArray(session.candles)) return session.candles;
+    return [];
+  }
+
+  function hasChartInterval(session, interval) {
+    return chartCandlesForInterval(session, interval).length > 0;
+  }
+
+  function defaultChartInterval(session) {
+    const primary = primaryChartInterval(session);
+    if (hasChartInterval(session, primary)) return primary;
+    return chartTimeframes(session).find((frame) => hasChartInterval(session, frame.interval))?.interval || primary;
+  }
+
+  function effectiveChartInterval(session) {
+    if (!session) return state.activeChartInterval || primaryChartInterval(session);
+    const selected = state.activeChartInterval || defaultChartInterval(session);
+    if (hasChartInterval(session, selected)) return selected;
+    return defaultChartInterval(session);
+  }
+
+  function intervalMinutes(interval) {
+    const normalized = String(interval || "").trim().toLowerCase();
+    const match = normalized.match(/^(\d+)\s*m(?:in)?$/);
+    if (!match) return null;
+    const minutes = Number(match[1]);
+    return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
+  }
+
+  function candleTimestampMs(candle) {
+    if (!candle) return null;
+    const direct = Date.parse(String(candle.timestamp || ""));
+    if (Number.isFinite(direct)) return direct;
+    if (candle.date && candle.time) {
+      const fallback = Date.parse(`${candle.date}T${candle.time}:00`);
+      if (Number.isFinite(fallback)) return fallback;
+    }
+    return null;
+  }
+
+  function chartRevealCutoffMs(session, candle) {
+    const base = candleTimestampMs(candle);
+    if (base === null) return null;
+    const minutes = intervalMinutes(primaryChartInterval(session));
+    if (minutes === null) return base;
+    return base + minutes * 60 * 1000;
+  }
+
+  function revealedChartSeries(session) {
+    const interval = effectiveChartInterval(session);
+    const allCandles = chartCandlesForInterval(session, interval);
+    if (!session || !allCandles.length || state.revealedCount <= 0) {
+      return { interval, allCandles, visible: [] };
+    }
+
+    const primary = primaryChartInterval(session);
+    if (interval === primary) {
+      return {
+        interval,
+        allCandles,
+        visible: allCandles.slice(0, state.revealedCount),
+      };
+    }
+
+    const current = Array.isArray(session.candles) ? session.candles[state.revealedCount - 1] : null;
+    const cutoff = chartRevealCutoffMs(session, current);
+    if (cutoff !== null) {
+      const visible = allCandles.filter((candle) => {
+        const timestamp = candleTimestampMs(candle);
+        return timestamp !== null && timestamp < cutoff;
+      });
+      if (visible.length) return { interval, allCandles, visible };
+    }
+
+    const primaryMinutes = intervalMinutes(primary);
+    const detailMinutes = intervalMinutes(interval);
+    const ratio = primaryMinutes && detailMinutes ? primaryMinutes / detailMinutes : 1;
+    const count = Math.max(0, Math.ceil(state.revealedCount * ratio));
+    return {
+      interval,
+      allCandles,
+      visible: allCandles.slice(0, count),
+    };
+  }
+
+  function chartTitleText(session) {
+    if (!session) return state.selectedMode === "daily" ? "Daily Chart" : "Intraday Chart";
+    const interval = effectiveChartInterval(session);
+    if (isDailySession(session)) return "Daily Chart";
+    return `${chartIntervalLabel(interval)} Chart`;
+  }
+
   function formatCandleTime(candle) {
     if (!candle) return "-";
     if (isDailySession(state.session)) return candle.date || "-";
@@ -192,6 +326,7 @@
 
   function resetGame(session) {
     state.session = session;
+    state.activeChartInterval = defaultChartInterval(session);
     state.revealedCount = 0;
     state.position = null;
     state.realized = 0;
@@ -432,6 +567,7 @@
     el.long.disabled = !canAct || Boolean(state.position);
     el.short.disabled = !canAct || isLongOnlyTradeMode() || Boolean(state.position);
     el.close.disabled = !canAct || !state.position;
+    renderChartFrameControls(state.session);
   }
 
   function render() {
@@ -463,10 +599,35 @@
       ? `${session.mode_label} Replay`
       : state.selectedMode === "daily" ? "Daily Replay" : "15m Replay";
     el.modeSubtitle.textContent = `${replayLabel} / ${tradeModeLabel()}`;
-    el.chartTitle.textContent = isDailySession(session) ? "Daily Chart" : "Intraday Chart";
+    el.chartTitle.textContent = chartTitleText(session);
+    if (el.chart) {
+      const activeFrame = chartTimeframes(session).find((frame) => frame.interval === effectiveChartInterval(session));
+      el.chart.setAttribute("aria-label", activeFrame?.chartLabel || session?.chart_label || chartTitleText(session));
+    }
+    renderChartFrameControls(session);
     if (el.tradeSubtitle) {
       el.tradeSubtitle.textContent = tradeModeLabel();
     }
+  }
+
+  function renderChartFrameControls(session) {
+    if (!el.chartFrameSwitch || !el.chartFramePrimary || !el.chartFrame5m) return;
+
+    const primary = primaryChartInterval(session);
+    const active = effectiveChartInterval(session);
+    const hasPrimary = hasChartInterval(session, primary);
+    const hasDetail = hasChartInterval(session, DETAIL_CHART_INTERVAL);
+    const showSwitch = Boolean(session && !isDailySession(session) && hasDetail);
+
+    el.chartFrameSwitch.classList.toggle("hidden", !showSwitch);
+    el.chartFramePrimary.textContent = chartIntervalLabel(primary);
+    el.chartFrame5m.textContent = chartIntervalLabel(DETAIL_CHART_INTERVAL);
+    el.chartFramePrimary.classList.toggle("active", active === primary);
+    el.chartFrame5m.classList.toggle("active", active === DETAIL_CHART_INTERVAL);
+    el.chartFramePrimary.setAttribute("aria-pressed", active === primary ? "true" : "false");
+    el.chartFrame5m.setAttribute("aria-pressed", active === DETAIL_CHART_INTERVAL ? "true" : "false");
+    el.chartFramePrimary.disabled = state.loading || !hasPrimary;
+    el.chartFrame5m.disabled = state.loading || !hasDetail;
   }
 
   function renderKpis() {
@@ -531,7 +692,9 @@
   function drawChart() {
     clearSvg(el.chart);
     const session = state.session;
-    const visible = session ? session.candles.slice(0, state.revealedCount) : [];
+    const chartSeries = revealedChartSeries(session);
+    const visible = chartSeries.visible;
+    const allCandles = chartSeries.allCandles;
     el.chartEmpty.classList.toggle("hidden", visible.length > 0);
     if (!session || !visible.length) return;
 
@@ -560,7 +723,7 @@
     maxPrice += padding;
     minPrice = Math.max(0, minPrice - padding);
 
-    const total = Math.max(session.candles.length - 1, 1);
+    const total = Math.max(allCandles.length - 1, 1);
     const step = plotW / total;
     const candleW = Math.max(4, Math.min(16, step * 0.55));
     const xFor = (index) => pad.left + step * index;
@@ -667,7 +830,7 @@
 
     drawMovingAverageLines(visible, { xFor, yFor, configs: movingAverageConfigs });
 
-    const labelEvery = Math.max(1, Math.ceil(session.candles.length / 6));
+    const labelEvery = Math.max(1, Math.ceil(allCandles.length / 6));
     visible.forEach((item, index) => {
       if (index !== 0 && index !== visible.length - 1 && index % labelEvery !== 0) return;
       const x = xFor(index);
@@ -861,12 +1024,21 @@
     render();
   }
 
+  function setChartInterval(interval) {
+    if (!state.session || !hasChartInterval(state.session, interval)) return;
+    if (state.activeChartInterval === interval) return;
+    state.activeChartInterval = interval;
+    render();
+  }
+
   el.marketUs.addEventListener("click", () => setMarket("us"));
   el.marketJp.addEventListener("click", () => setMarket("jp"));
   el.modeIntraday.addEventListener("click", () => setMode("intraday"));
   el.modeDaily.addEventListener("click", () => setMode("daily"));
   el.tradeModeLongOnly.addEventListener("click", () => setTradeMode("long_only"));
   el.tradeModeLongShort.addEventListener("click", () => setTradeMode("long_short"));
+  el.chartFramePrimary.addEventListener("click", () => setChartInterval(primaryChartInterval(state.session)));
+  el.chartFrame5m.addEventListener("click", () => setChartInterval(DETAIL_CHART_INTERVAL));
   el.newGame.addEventListener("click", loadNewGame);
   el.next.addEventListener("click", revealNext);
   el.long.addEventListener("click", () => openPosition("long"));

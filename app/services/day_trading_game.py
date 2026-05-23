@@ -19,6 +19,10 @@ from ..utils import finite_float_or_none, normalize_symbol
 DEFAULT_GAME_MODE = "intraday"
 MAX_PRICE_DISPLAY_DIGITS = 4
 SCORE_EPSILON = 1e-12
+INTRADAY_DETAIL_CHART_INTERVAL = "5m"
+INTRADAY_DETAIL_CHART_LABEL = "5m"
+INTRADAY_DETAIL_CHART_PERIOD = "60d"
+INTRADAY_DETAIL_CHART_TITLE = "5-minute OHLC chart"
 
 GAME_MODE_PROFILES: dict[str, dict[str, Any]] = {
     "intraday": {
@@ -522,6 +526,17 @@ async def build_day_trading_session(
                 for date_key in date_keys
                 for candle in candles_by_date[date_key]
             ]
+            chart_candles = {str(profile["interval"]): candles}
+            if mode_key == "intraday":
+                detail_candles = await _intraday_detail_chart_candles(
+                    fetcher,
+                    candidate,
+                    config=config,
+                    date_keys=date_keys,
+                    moving_averages=profile["moving_averages"],
+                )
+                if detail_candles:
+                    chart_candles[INTRADAY_DETAIL_CHART_INTERVAL] = detail_candles
             return _build_session_payload(
                 market_key=market_key,
                 mode_key=mode_key,
@@ -531,6 +546,7 @@ async def build_day_trading_session(
                 symbol_name=_symbol_name(config, candidate),
                 date_keys=date_keys,
                 candles=candles,
+                chart_candles=chart_candles,
             )
         except DayTradingGameDependencyError:
             raise
@@ -600,22 +616,70 @@ def _mode_profile(mode: str) -> tuple[str, dict[str, Any]]:
 
 
 async def _call_history_fetcher(fetcher: HistoryFetcher, symbol: str, *, profile: dict[str, Any]) -> Any:
+    return await _call_history_fetcher_for_interval(
+        fetcher,
+        symbol,
+        interval=str(profile["interval"]),
+        period=str(profile["period"]),
+        allow_plain_fetcher=True,
+    )
+
+
+async def _call_history_fetcher_for_interval(
+    fetcher: HistoryFetcher,
+    symbol: str,
+    *,
+    interval: str,
+    period: str,
+    allow_plain_fetcher: bool,
+) -> Any:
     if fetcher is fetch_yfinance_history:
         return await fetch_yfinance_history(
             symbol,
-            interval=str(profile["interval"]),
-            period=str(profile["period"]),
+            interval=interval,
+            period=period,
         )
 
     if _accepts_fetcher_options(fetcher):
         return await _maybe_await(
             fetcher(
                 symbol,
-                interval=str(profile["interval"]),
-                period=str(profile["period"]),
+                interval=interval,
+                period=period,
             )
         )
+    if not allow_plain_fetcher:
+        raise DayTradingGameDataError("History fetcher cannot request a secondary interval.")
     return await _maybe_await(fetcher(symbol))
+
+
+async def _intraday_detail_chart_candles(
+    fetcher: HistoryFetcher,
+    symbol: str,
+    *,
+    config: dict[str, Any],
+    date_keys: tuple[str, ...],
+    moving_averages: Iterable[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    try:
+        history = await _call_history_fetcher_for_interval(
+            fetcher,
+            symbol,
+            interval=INTRADAY_DETAIL_CHART_INTERVAL,
+            period=INTRADAY_DETAIL_CHART_PERIOD,
+            allow_plain_fetcher=False,
+        )
+        candles_by_date = _candles_by_session_date(history, timezone_name=str(config["timezone"]))
+        _apply_moving_averages(candles_by_date, moving_averages=moving_averages)
+        return [
+            candle
+            for date_key in date_keys
+            for candle in candles_by_date.get(date_key, [])
+        ]
+    except DayTradingGameError:
+        return []
+    except Exception:
+        return []
 
 
 def _accepts_fetcher_options(fetcher: HistoryFetcher) -> bool:
@@ -1038,6 +1102,7 @@ def _build_session_payload(
     symbol_name: str | None,
     date_keys: tuple[str, ...],
     candles: list[dict[str, Any]],
+    chart_candles: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     first = candles[0]
     last = candles[-1]
@@ -1071,6 +1136,8 @@ def _build_session_payload(
         "execution_price_rule": "close, then median, then IQR midpoint, then OHLC median",
         "step_label": profile["step_label"],
         "chart_label": profile["chart_label"],
+        "chart_timeframes": _chart_timeframes(profile, chart_candles or {str(profile["interval"]): candles}),
+        "chart_candles": chart_candles or {str(profile["interval"]): candles},
         "moving_averages": list(profile["moving_averages"]),
         "trade_modes": [
             {"key": key, **value}
@@ -1082,6 +1149,33 @@ def _build_session_payload(
         "session_end": last["date"] if mode_key == "daily" else last["time"],
         "candles": candles,
     }
+
+
+def _chart_timeframes(
+    profile: dict[str, Any],
+    chart_candles: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    primary_interval = str(profile["interval"])
+    timeframes = [
+        {
+            "key": primary_interval,
+            "label": str(profile["label"]),
+            "interval": primary_interval,
+            "chart_label": str(profile["chart_label"]),
+            "candle_count": len(chart_candles.get(primary_interval, [])),
+        }
+    ]
+    if INTRADAY_DETAIL_CHART_INTERVAL in chart_candles:
+        timeframes.append(
+            {
+                "key": INTRADAY_DETAIL_CHART_INTERVAL,
+                "label": INTRADAY_DETAIL_CHART_LABEL,
+                "interval": INTRADAY_DETAIL_CHART_INTERVAL,
+                "chart_label": INTRADAY_DETAIL_CHART_TITLE,
+                "candle_count": len(chart_candles[INTRADAY_DETAIL_CHART_INTERVAL]),
+            }
+        )
+    return timeframes
 
 
 def _price_display_digits(candles: Iterable[dict[str, Any]], *, fallback_digits: int) -> int:

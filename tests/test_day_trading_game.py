@@ -24,13 +24,14 @@ def _intraday_index(
     dates: tuple[str, ...],
     *,
     periods_per_day: int = 12,
+    freq: str = "15min",
     timezone: str = "America/New_York",
 ) -> pd.DatetimeIndex:
     indexes = [
         pd.date_range(
             f"{date_key} 09:30",
             periods=periods_per_day,
-            freq="15min",
+            freq=freq,
             tz=timezone,
         )
         for date_key in dates
@@ -101,6 +102,54 @@ class DayTradingGameServiceTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["candles"][-1]["date"], "2026-04-03")
         self.assertIsNone(payload["candles"][0]["moving_averages"]["short"])
         self.assertEqual(payload["candles"][4]["moving_averages"]["short"], 102.5)
+
+    async def test_intraday_session_includes_matching_five_minute_chart_candles(self) -> None:
+        dates = ("2026-04-01", "2026-04-02", "2026-04-03")
+        index_15m = _intraday_index(dates)
+        index_5m = _intraday_index(dates, periods_per_day=36, freq="5min")
+
+        frame_15m = pd.DataFrame(
+            {
+                "Open": [100 + step for step in range(len(index_15m))],
+                "High": [101 + step for step in range(len(index_15m))],
+                "Low": [99 + step for step in range(len(index_15m))],
+                "Close": [100.5 + step for step in range(len(index_15m))],
+            },
+            index=index_15m,
+        )
+        frame_5m = pd.DataFrame(
+            {
+                "Open": [50 + step / 10 for step in range(len(index_5m))],
+                "High": [51 + step / 10 for step in range(len(index_5m))],
+                "Low": [49 + step / 10 for step in range(len(index_5m))],
+                "Close": [50.5 + step / 10 for step in range(len(index_5m))],
+            },
+            index=index_5m,
+        )
+
+        async def fake_fetch(symbol: str, *, interval: str, period: str) -> pd.DataFrame:
+            self.assertEqual(symbol, "AAPL")
+            self.assertEqual(period, "60d")
+            if interval == "15m":
+                return frame_15m
+            if interval == "5m":
+                return frame_5m
+            self.fail(f"Unexpected interval: {interval}")
+
+        payload = await build_day_trading_session(
+            market="us",
+            symbol="AAPL",
+            rng=random.Random(1),
+            fetch_history=fake_fetch,
+        )
+
+        self.assertEqual(payload["chart_timeframes"][0]["interval"], "15m")
+        self.assertEqual(payload["chart_timeframes"][1]["interval"], "5m")
+        self.assertEqual(payload["chart_timeframes"][1]["candle_count"], 108)
+        self.assertEqual(payload["chart_candles"]["15m"], payload["candles"])
+        self.assertEqual(len(payload["chart_candles"]["5m"]), 108)
+        self.assertEqual(payload["chart_candles"]["5m"][0]["time"], "09:30")
+        self.assertEqual(payload["chart_candles"]["5m"][-1]["date"], "2026-04-03")
 
     async def test_build_session_falls_back_to_iqr_midpoint_when_close_is_missing(self) -> None:
         index = _intraday_index(("2026-04-02", "2026-04-03", "2026-04-06"))
