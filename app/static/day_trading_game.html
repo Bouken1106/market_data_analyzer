@@ -7,7 +7,7 @@
   <title>Day Trading Game</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="/static/styles.css?v=20260522e" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260523a" />
 </head>
 
 <body class="monitor-page terminal-page day-game-page">
@@ -93,6 +93,21 @@
         <div class="day-game-mini-row">
           <span>Execution</span>
           <strong id="dtg-rule">-</strong>
+        </div>
+      </div>
+
+      <div class="portfolio-metrics terminal-portfolio-metrics day-game-stats-grid" aria-label="今回のプレイ統計">
+        <div class="status-box">
+          <span class="label">Games</span>
+          <span id="dtg-stat-games">0</span>
+        </div>
+        <div class="status-box">
+          <span class="label">Avg Return</span>
+          <span id="dtg-stat-return">-</span>
+        </div>
+        <div class="status-box">
+          <span class="label">Avg Score</span>
+          <span id="dtg-stat-score">-</span>
         </div>
       </div>
     </section>
@@ -207,7 +222,7 @@
     </div>
   </main>
 
-  <script src="/static/day_trading_game.js?v=20260523d" defer></script>
+  <script src="/static/day_trading_game.js?v=20260523e" defer></script>
   <script src="/static/page_menu.js?v=20260321a" defer></script>
 </body>
 

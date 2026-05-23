@@ -21,6 +21,13 @@
     closedPositions: [],
     actedIndexes: new Set(),
     gameDone: false,
+    stats: {
+      completedGames: 0,
+      returnTotal: 0,
+      returnCount: 0,
+      scoreTotal: 0,
+      scoreCount: 0,
+    },
   };
 
   const el = {
@@ -57,6 +64,9 @@
     unrealized: $("dtg-unrealized"),
     realized: $("dtg-realized"),
     score: $("dtg-score"),
+    statGames: $("dtg-stat-games"),
+    statReturn: $("dtg-stat-return"),
+    statScore: $("dtg-stat-score"),
     entry: $("dtg-entry"),
     last: $("dtg-last"),
     side: $("dtg-side"),
@@ -134,6 +144,16 @@
       minimumFractionDigits: 1,
       maximumFractionDigits: 1,
     });
+  }
+
+  function formatPercent(value) {
+    const numeric = finiteNumber(value);
+    if (numeric === null) return "-";
+    const sign = numeric > 0 ? "+" : "";
+    return `${sign}${(numeric * 100).toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}%`;
   }
 
   function formatDateRange(session) {
@@ -374,9 +394,30 @@
         closePosition("Auto Close");
       }
       state.gameDone = true;
-      setMessage(`Game complete: ${formatSessionIdentity(state.session)} / Score ${formatScore(finalScoreValue())}`);
+      const finalScore = finalScoreValue();
+      recordCompletedGame({
+        playerReturnValue: playerReturn(),
+        finalScore,
+      });
+      setMessage(`Game complete: ${formatSessionIdentity(state.session)} / Score ${formatScore(finalScore)}`);
     }
     render();
+  }
+
+  function recordCompletedGame({ playerReturnValue, finalScore }) {
+    state.stats.completedGames += 1;
+
+    const returnValue = finiteNumber(playerReturnValue);
+    if (returnValue !== null) {
+      state.stats.returnTotal += returnValue;
+      state.stats.returnCount += 1;
+    }
+
+    const scoreValue = finiteNumber(finalScore);
+    if (scoreValue !== null) {
+      state.stats.scoreTotal += scoreValue;
+      state.stats.scoreCount += 1;
+    }
   }
 
   function openPosition(side) {
@@ -573,6 +614,7 @@
   function render() {
     renderSessionMeta();
     renderKpis();
+    renderStats();
     renderTrades();
     drawChart();
     updateControls();
@@ -654,6 +696,26 @@
     el.realized.classList.toggle("down", state.realized < 0);
     el.score.classList.toggle("up", Boolean(state.gameDone && finalScore !== null && finalScore > 0));
     el.score.classList.toggle("down", Boolean(state.gameDone && finalScore !== null && finalScore < 0));
+  }
+
+  function renderStats() {
+    if (!el.statGames || !el.statReturn || !el.statScore) return;
+
+    const avgReturn = state.stats.returnCount > 0
+      ? state.stats.returnTotal / state.stats.returnCount
+      : null;
+    const avgScore = state.stats.scoreCount > 0
+      ? state.stats.scoreTotal / state.stats.scoreCount
+      : null;
+
+    el.statGames.textContent = String(state.stats.completedGames);
+    el.statReturn.textContent = state.stats.returnCount > 0 ? formatPercent(avgReturn) : "-";
+    el.statScore.textContent = state.stats.scoreCount > 0 ? formatScore(avgScore) : "-";
+
+    el.statReturn.classList.toggle("up", Boolean(avgReturn !== null && avgReturn > 0));
+    el.statReturn.classList.toggle("down", Boolean(avgReturn !== null && avgReturn < 0));
+    el.statScore.classList.toggle("up", Boolean(avgScore !== null && avgScore > 0));
+    el.statScore.classList.toggle("down", Boolean(avgScore !== null && avgScore < 0));
   }
 
   function renderTrades() {

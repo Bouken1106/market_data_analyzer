@@ -3351,6 +3351,28 @@ body.chart-panning {
   overflow-wrap: anywhere;
 }
 
+.day-game-page .day-game-stats-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.day-game-page .day-game-stats-grid .status-box {
+  min-width: 0;
+  padding-inline: 8px;
+}
+
+.day-game-page .day-game-stats-grid .status-box span:not(.label) {
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.day-game-page .day-game-stats-grid .status-box span.up:not(.label) {
+  color: var(--green);
+}
+
+.day-game-page .day-game-stats-grid .status-box span.down:not(.label) {
+  color: var(--red);
+}
+
 .day-game-page .day-game-progress-strip {
   justify-content: space-between;
   padding: 5px 8px;
